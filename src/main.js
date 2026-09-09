@@ -25,11 +25,18 @@ const noa = new Engine({
   // Minecraft's daytime sky. noa's default is a paler blue that reads as fog.
   clearColor: [0.47, 0.655, 1.0],
 
-  // WARNING: `debug: true` runs a block noa itself labels "temp hacks for
-  // development", and one of those hacks sets airJumps = 999 on the player.
-  // physics.js resets it. If jumping ever goes infinite again, look here first.
-  debug: true,
-  showFPS: true,
+  // Dev only, both of them.
+  //
+  // `debug: true` runs a block noa itself labels "temp hacks for development",
+  // and one of those hacks sets airJumps = 999 on the player -- that was the
+  // original infinite-jump bug. physics.js resets it either way, but shipping
+  // noa's dev hacks to visitors is asking for the next one to go unnoticed.
+  // `showFPS: true` draws a counter in the corner, which visitors don't want.
+  //
+  // import.meta.env.DEV is replaced with a literal at build time, so the
+  // production bundle gets `false` and the branches vanish.
+  debug: import.meta.env.DEV,
+  showFPS: import.meta.env.DEV,
 
   // noa's chunk size is unrelated to Minecraft's 16. It's just how many
   // voxels get meshed into one draw call. The "3x3 chunks" footprint lives
