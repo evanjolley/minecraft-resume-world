@@ -7,3 +7,4 @@ dist
 # Untracked on purpose: `npm run textures:vanilla` writes Mojang assets here,
 # which must not be committed to a public repo.
 public/textures/
+public/ui/

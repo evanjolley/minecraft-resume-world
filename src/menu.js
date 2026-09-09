@@ -52,7 +52,7 @@ export function requestLockPersistently(noa) {
   }, 150)
 }
 
-export function installMenu(noa, { inputLock, inventory, survival }) {
+export function installMenu(noa, { inputLock, inventory, inventoryScreen, survival }) {
   const screen = document.getElementById('pause')
   const controls = document.getElementById('controls')
   const buttonRows = document.getElementById('pause-buttons')
@@ -75,6 +75,9 @@ export function installMenu(noa, { inputLock, inventory, survival }) {
   }
 
   const setOpen = (open) => {
+    // Only one screen at a time. Escape normally closes the inventory before
+    // ever reaching here, but nothing else guarantees it.
+    if (open && inventory.open) inventoryScreen.setOpen(false)
     screen.classList.toggle('hidden', !open)
     document.body.classList.toggle('menu-open', open)
     if (open) {

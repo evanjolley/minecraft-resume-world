@@ -1,5 +1,6 @@
 import { BLOCK_BY_ID } from './blocks.js'
 import { createBlockIcon } from './blockIcon.js'
+import { SCALE as HUD_SCALE } from './hud.js'
 
 /*
  * Inventory model + the inventory screen.
@@ -134,37 +135,59 @@ export function createInventory() {
 }
 
 /*
- * The inventory screen. Built once and shown/hidden, rather than rebuilt on
- * open: 36 slots of DOM is cheap to keep around and expensive to thrash.
+ * The inventory screen, drawn over Minecraft's own container sprite.
+ *
+ * Slot positions are Minecraft's, in GUI pixels, scaled up:
+ *   main 3x9 grid  x = 8 + col*18, y = 84 + row*18
+ *   hotbar row     x = 8 + col*18, y = 142
+ *   items          16x16
+ *
+ * Built once and shown/hidden rather than rebuilt on open: 36 slots of DOM is
+ * cheap to keep and expensive to thrash.
  */
+const GUI_W = 176, GUI_H = 166
+const SLOT_PITCH = 18, SLOT_SIZE = 16
+const GRID_X = 8, GRID_Y = 84, BAR_Y = 142
+
 export function installInventoryScreen(noa, inv, inputLock) {
   const screen = document.getElementById('inventory')
-  const grid = document.getElementById('inv-grid')
-  const bar = document.getElementById('inv-hotbar')
+  const panel = document.getElementById('inv-panel')
   const carried = document.getElementById('inv-carried')
 
+  const px = (n) => `${n * HUD_SCALE}px`
+  panel.style.width = px(GUI_W)
+  panel.style.height = px(GUI_H)
+  panel.style.backgroundImage = 'url(/ui/inventory.png)'
+  carried.style.width = carried.style.height = px(SLOT_SIZE)
+
   const cells = []
-  const makeCell = (index, parent) => {
+  const makeCell = (index, gx, gy) => {
     const cell = document.createElement('div')
     cell.className = 'slot'
+    cell.style.left = px(gx)
+    cell.style.top = px(gy)
+    cell.style.width = cell.style.height = px(SLOT_SIZE)
     cell.addEventListener('mousedown', (e) => {
       e.preventDefault()
       inv.clickSlot(index, e.button === 2 ? 'right' : 'left')
     })
     cell.addEventListener('contextmenu', e => e.preventDefault())
-    parent.appendChild(cell)
+    panel.appendChild(cell)
     cells[index] = cell
   }
 
-  // 9-35 in the main grid, then 0-8 in the hotbar row beneath it, which is
-  // the same visual order Minecraft uses.
-  for (let i = HOTBAR_SIZE; i < TOTAL_SLOTS; i++) makeCell(i, grid)
-  for (let i = 0; i < HOTBAR_SIZE; i++) makeCell(i, bar)
+  // 9-35 fill the main grid, 0-8 the hotbar row beneath it -- the same
+  // mapping Minecraft uses, which is why shift-clicking works the way it does.
+  for (let i = HOTBAR_SIZE; i < TOTAL_SLOTS; i++) {
+    const n = i - HOTBAR_SIZE
+    makeCell(i, GRID_X + (n % 9) * SLOT_PITCH, GRID_Y + Math.floor(n / 9) * SLOT_PITCH)
+  }
+  for (let i = 0; i < HOTBAR_SIZE; i++) makeCell(i, GRID_X + i * SLOT_PITCH, BAR_Y)
 
   const paintSlot = (cell, stack) => {
     cell.textContent = ''
     if (!stack) return
-    cell.appendChild(createBlockIcon(stack.id, 32))
+    cell.appendChild(createBlockIcon(stack.id, SLOT_SIZE * HUD_SCALE))
     if (stack.count > 1) {
       const n = document.createElement('span')
       n.className = 'count'
@@ -179,11 +202,12 @@ export function installInventoryScreen(noa, inv, inputLock) {
     carried.classList.toggle('hidden', !inv.carried)
   })
 
-  // The carried stack follows the pointer. Only while the screen is open,
-  // otherwise this listener fires on every mouse move during play.
+  // The carried stack follows the pointer, but only while the screen is open:
+  // otherwise this listener runs on every mouse move during play.
   document.addEventListener('mousemove', (e) => {
     if (!inv.open) return
-    carried.style.transform = `translate(${e.clientX + 8}px, ${e.clientY + 8}px)`
+    const half = (SLOT_SIZE * HUD_SCALE) / 2
+    carried.style.transform = `translate(${e.clientX - half}px, ${e.clientY - half}px)`
   })
 
   const setOpen = (open) => {
@@ -194,10 +218,10 @@ export function installInventoryScreen(noa, inv, inputLock) {
     screen.classList.toggle('hidden', !open)
     document.body.classList.toggle('inv-open', open)
 
-    // Pointer lock and a mouse-driven UI are mutually exclusive; releasing
-    // the lock is what brings the cursor back. The world keeps ticking, so
-    // the sky moves and other players would keep walking around behind it,
-    // exactly as Minecraft multiplayer does.
+    // Pointer lock and a mouse-driven UI are mutually exclusive; releasing the
+    // lock is what brings the cursor back. The world keeps ticking, so the sky
+    // moves and other players would keep walking behind it, as in Minecraft
+    // multiplayer.
     if (open) inputLock.lock('inventory')
     else inputLock.unlock('inventory')
     noa.container.setPointerLock(!open)
@@ -206,7 +230,6 @@ export function installInventoryScreen(noa, inv, inputLock) {
   noa.inputs.bind('inventory', 'KeyE')
   noa.inputs.down.on('inventory', () => setOpen(!inv.open))
 
-  // Escape closes the screen rather than only releasing the cursor.
   document.addEventListener('keydown', (e) => {
     if (e.code === 'Escape' && inv.open) setOpen(false)
   })

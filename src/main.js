@@ -124,11 +124,11 @@ installInteraction(noa, inventory, { crack, held })
 const inputLock = createInputLock(noa)
 
 installHotbarControls(noa, inventory)
-installInventoryScreen(noa, inventory, inputLock)
+const inventoryScreen = installInventoryScreen(noa, inventory, inputLock)
 installRespawn(noa, survival, inputLock)
 installHUD(noa, { inventory, survival })
 
-const menu = installMenu(noa, { inputLock, inventory, survival })
+const menu = installMenu(noa, { inputLock, inventory, inventoryScreen, survival })
 
 // Starter kit. Minecraft survival starts you empty-handed, but this world is
 // meant to be poked at within seconds of arriving, so seed the hotbar.

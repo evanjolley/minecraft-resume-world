@@ -20,6 +20,7 @@ import sharp from 'sharp'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = join(ROOT, 'public', 'textures')
+const UI = join(ROOT, 'public', 'ui')
 const source = (process.argv.find(a => a.startsWith('--source=')) || '--source=ce').split('=')[1]
 
 /* Block key -> texture file name in a vanilla Minecraft jar. */
@@ -39,6 +40,32 @@ for (const k of Object.keys(VANILLA)) {
 }
 
 const png = (name) => join(OUT, `${name}.png`)
+const ui = (name) => join(UI, `${name}.png`)
+
+/*
+ * Normalised UI sprite set, so the HUD can be written once against fixed
+ * names and sizes regardless of which source is active.
+ *
+ * The two sources are shaped completely differently: classic packs pack
+ * everything into a few atlases at fixed offsets, while Minecraft 1.21 ships
+ * one file per sprite. Both are reduced to the same output here.
+ */
+const UI_ATLAS_CROPS = {
+  // from widgets.png
+  widgets: {
+    hotbar: [0, 0, 182, 22],
+    hotbar_selection: [0, 22, 24, 24],
+    button: [0, 66, 200, 20],
+    button_hover: [0, 86, 200, 20],
+  },
+  // from icons.png
+  icons: {
+    heart_empty: [16, 0, 9, 9], heart_full: [52, 0, 9, 9], heart_half: [61, 0, 9, 9],
+    food_empty: [16, 27, 9, 9], food_full: [52, 27, 9, 9], food_half: [61, 27, 9, 9],
+    xp_bg: [0, 64, 182, 5], xp_fill: [0, 69, 182, 5],
+  },
+  inventory: { inventory: [0, 0, 176, 166] },
+}
 
 async function buildHeldAtlases() {
   mkdirSync(join(OUT, 'held'), { recursive: true })
@@ -54,6 +81,42 @@ async function buildHeldAtlases() {
   }
 }
 
+async function uiFromAtlases(dir) {
+  mkdirSync(UI, { recursive: true })
+  for (const [atlas, crops] of Object.entries(UI_ATLAS_CROPS)) {
+    const file = join(dir, `${atlas}.png`)
+    for (const [name, [left, top, width, height]] of Object.entries(crops)) {
+      await sharp(file).extract({ left, top, width, height }).png().toFile(ui(name))
+    }
+  }
+  console.log(`  sliced ${Object.values(UI_ATLAS_CROPS).reduce((n, c) => n + Object.keys(c).length, 0)} UI sprites from atlases`)
+}
+
+async function uiFromVanilla(jar, tmp) {
+  mkdirSync(UI, { recursive: true })
+  const SPRITES = {
+    hotbar: 'gui/sprites/hud/hotbar', hotbar_selection: 'gui/sprites/hud/hotbar_selection',
+    heart_full: 'gui/sprites/hud/heart/full', heart_half: 'gui/sprites/hud/heart/half',
+    heart_empty: 'gui/sprites/hud/heart/container',
+    food_full: 'gui/sprites/hud/food_full', food_half: 'gui/sprites/hud/food_half',
+    food_empty: 'gui/sprites/hud/food_empty',
+    xp_bg: 'gui/sprites/hud/experience_bar_background',
+    xp_fill: 'gui/sprites/hud/experience_bar_progress',
+    button: 'gui/sprites/widget/button', button_hover: 'gui/sprites/widget/button_highlighted',
+  }
+  execFileSync('unzip', ['-q', '-o', '-j', jar,
+    ...Object.values(SPRITES).map(p => `assets/minecraft/textures/${p}.png`),
+    'assets/minecraft/textures/gui/container/inventory.png', '-d', tmp])
+  for (const [name, path] of Object.entries(SPRITES)) {
+    copyFileSync(join(tmp, `${path.split('/').pop()}.png`), ui(name))
+  }
+  // The container sheet is a 256x256 page; the inventory GUI is its top-left
+  // 176x166. Minecraft draws it by blitting exactly that region.
+  await sharp(join(tmp, 'inventory.png'))
+    .extract({ left: 0, top: 0, width: 176, height: 166 }).png().toFile(ui('inventory'))
+  console.log(`  extracted ${Object.keys(SPRITES).length + 1} UI sprites`)
+}
+
 async function fromCE() {
   const SRC = join(ROOT, 'textures-src', 'ce')
   mkdirSync(join(OUT, 'held'), { recursive: true })
@@ -64,6 +127,7 @@ async function fromCE() {
   for (const f of readdirSync(join(SRC, 'held'))) {
     copyFileSync(join(SRC, 'held', f), join(OUT, 'held', f))
   }
+  await uiFromAtlases(join(SRC, 'gui'))
   console.log(`built ${readdirSync(OUT).length - 1} textures from Pixel Perfection CE`)
 }
 
@@ -154,6 +218,8 @@ async function fromVanilla() {
     copyFileSync(join(ROOT, 'textures-src', 'ce', f), join(OUT, f))
   }
 
+  await uiFromVanilla(jar, tmp)
+
   rmSync(tmp, { recursive: true, force: true })
   console.log(`extracted vanilla textures from Minecraft ${picked}`)
   console.log('\n  These are Mojang assets. Fine on your own machine; do NOT')
@@ -162,6 +228,7 @@ async function fromVanilla() {
 }
 
 rmSync(OUT, { recursive: true, force: true })
+rmSync(UI, { recursive: true, force: true })
 mkdirSync(OUT, { recursive: true })
 if (source === 'vanilla') await fromVanilla()
 else await fromCE()
