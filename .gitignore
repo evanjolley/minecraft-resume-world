@@ -8,3 +8,4 @@ dist
 # which must not be committed to a public repo.
 public/textures/
 public/ui/
+public/skins/

@@ -12,6 +12,8 @@ import { installHUD } from './hud.js'
 import { createInputLock } from './inputLock.js'
 import { installMenu, requestLockPersistently } from './menu.js'
 import { installHeldItem } from './heldItem.js'
+import { createSkinMaterial } from './playerModel.js'
+import { installPerspective } from './perspective.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky } from './sky.js'
 import { installHighlightStyle } from './highlight.js'
@@ -86,24 +88,11 @@ noa.world.on('worldDataNeeded', (id, data, x, y, z) => {
   noa.world.setChunkData(id, data)
 })
 
-/* Player body. Invisible in first person, visible once F5 pulls the camera out. */
-const scene = noa.rendering.getScene()
-const pos = noa.ents.getPositionData(noa.playerEntity)
-const body = CreateBox('player', {}, scene)
-body.scaling.set(pos.width, pos.height, pos.width)
-body.material = noa.rendering.makeStandardMaterial()
-noa.ents.addComponent(noa.playerEntity, noa.ents.names.mesh, {
-  mesh: body,
-  // noa anchors entities at their feet, Babylon anchors a box at its centre,
-  // so without this the body renders half-buried in the ground.
-  offset: [0, pos.height / 2, 0],
-})
+/*
+ * The player is drawn by perspective.js as a real Minecraft model wearing a
+ * skin. It replaced a plain white box.
+ */
 noa.camera.zoomDistance = 0
-noa.on('tick', () => {
-  // Hide our own body when the camera is inside it, otherwise first person
-  // is spent staring at the inner faces of a white box.
-  body.setEnabled(noa.camera.zoomDistance > 0.5)
-})
 
 /* ---- systems ---- */
 const move = installPhysics(noa)
@@ -113,15 +102,21 @@ const move = installPhysics(noa)
 const survival = createSurvival(noa)
 installSpeedModes(noa, move, survival)
 
+// One material shared by the third-person model and the first-person arm, so
+// a custom skin later only has to be swapped in one place. Declared before
+// anything that uses it -- const is not hoisted.
+const skinMaterial = createSkinMaterial(noa, '/skins/default.png')
+const inputLock = createInputLock(noa)
+
 const inventory = createInventory()
 
 const sky = installSky(noa)
 installHighlightStyle(noa)
 const crack = installCrackOverlay(noa)
-const held = installHeldItem(noa, inventory)
+const held = installHeldItem(noa, inventory, skinMaterial)
 installInteraction(noa, inventory, { crack, held })
 
-const inputLock = createInputLock(noa)
+const perspective = installPerspective(noa, { skinMaterial, inputLock })
 
 installHotbarControls(noa, inventory)
 const inventoryScreen = installInventoryScreen(noa, inventory, inputLock)
@@ -177,4 +172,4 @@ noa.container.on('lostPointerLock', () => {
 })
 
 window.noa = noa
-window.game = { inventory, survival, move, sky, menu, inputLock }
+window.game = { inventory, survival, move, sky, menu, inputLock, perspective, skinMaterial }

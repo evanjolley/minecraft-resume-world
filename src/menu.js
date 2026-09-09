@@ -27,7 +27,7 @@ const CONTROLS = [
   ['Right click', 'Place a block'],
   ['1 - 9, or scroll', 'Change hotbar slot'],
   ['E', 'Inventory'],
-  ['F5', 'Change camera view'],
+  ['F5', 'Camera: first person, behind, then facing you'],
   ['Esc', 'This menu'],
 ]
 

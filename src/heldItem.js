@@ -2,6 +2,7 @@ import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Vector4 } from '@babylonjs/core/Maths/math.vector'
 import { BLOCK_BY_ID } from './blocks.js'
+import { createFirstPersonArm, MODEL_SCALE } from './playerModel.js'
 
 /*
  * The first-person hand and held block.
@@ -43,7 +44,7 @@ const REST = { x: 0.42, y: -0.30, z: 0.72 }
 const SCALE = 0.34
 const YAW = Math.PI / 4   // the 45 degrees from block.json
 
-export function installHeldItem(noa, inventory) {
+export function installHeldItem(noa, inventory, skinMaterial) {
   const scene = noa.rendering.getScene()
   const camera = noa.rendering.camera
 
@@ -81,6 +82,18 @@ export function installHeldItem(noa, inventory) {
   // never drawn -- no error, no warning, it just isn't there.
   noa.rendering.addMeshToScene(mesh)
 
+  /*
+   * The empty hand is the real arm from the player model, sharing the skin
+   * material, so a custom skin shows on the hand as well. It was previously a
+   * plain white box, which is why holding nothing looked wrong.
+   */
+  const arm = createFirstPersonArm(noa, skinMaterial)
+  arm.parent = camera
+  arm.renderingGroupId = 1
+  arm.scaling.setAll(MODEL_SCALE)
+  arm.position.set(0.62, -0.62, 0.68)
+  arm.rotation.set(0.15, 0, -0.22)
+
   const textures = new Map()
   const textureFor = (path) => {
     if (!textures.has(path)) {
@@ -97,12 +110,10 @@ export function installHeldItem(noa, inventory) {
   const setHeld = (stack) => {
     const def = stack ? BLOCK_BY_ID.get(stack.id) : null
     holdingBlock = !!def
-    mesh.material.diffuseTexture = def
-      ? textureFor(`/textures/held/${def.key}.png`)
-      : textureFor('/textures/hand.png')
-    // The bare hand reads as a forearm, not a cube: thin, tall, angled in.
-    if (holdingBlock) mesh.scaling.setAll(SCALE)
-    else mesh.scaling.set(SCALE * 0.55, SCALE * 1.5, SCALE * 0.55)
+    if (def) mesh.material.diffuseTexture = textureFor(`/textures/held/${def.key}.png`)
+    // Show the block or the bare arm, never both.
+    mesh.setEnabled(holdingBlock)
+    arm.setEnabled(!holdingBlock)
   }
 
   inventory.onChange((inv) => setHeld(inv.slots[inv.selected]))
@@ -147,7 +158,12 @@ export function installHeldItem(noa, inventory) {
     )
 
     // Minecraft hides the viewmodel in third person.
-    mesh.setEnabled(noa.camera.zoomDistance < 0.5)
+    const firstPerson = noa.camera.zoomDistance < 0.5
+    mesh.setEnabled(firstPerson && holdingBlock)
+    arm.setEnabled(firstPerson && !holdingBlock)
+    // The arm swings with the same arc as a held block.
+    arm.position.set(0.62 - s * 0.10, -0.62 - s * 0.16, 0.68 - s * 0.06)
+    arm.rotation.set(0.15 + s * 0.9, 0, -0.22)
   })
 
   return {

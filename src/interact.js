@@ -109,13 +109,7 @@ export function installHotbarControls(noa, inv) {
     if (scroll !== 0) inv.select(inv.selected + (scroll > 0 ? 1 : -1))
   })
 
-  // F5 cycles first person -> third person -> third person front, same as MC.
-  const DISTANCES = [0, 5, 5]
-  let mode = 0
-  document.addEventListener('keydown', (e) => {
-    if (e.code !== 'F5') return
-    e.preventDefault()
-    mode = (mode + 1) % 3
-    noa.camera.zoomDistance = DISTANCES[mode]
-  })
+  // F5 perspective cycling lives in perspective.js, which owns the player
+  // model it has to show and hide.
+
 }

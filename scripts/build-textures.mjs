@@ -21,6 +21,7 @@ import sharp from 'sharp'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = join(ROOT, 'public', 'textures')
 const UI = join(ROOT, 'public', 'ui')
+const SKINS = join(ROOT, 'public', 'skins')
 const source = (process.argv.find(a => a.startsWith('--source=')) || '--source=ce').split('=')[1]
 
 /* Block key -> texture file name in a vanilla Minecraft jar. */
@@ -128,6 +129,10 @@ async function fromCE() {
     copyFileSync(join(SRC, 'held', f), join(OUT, 'held', f))
   }
   await uiFromAtlases(join(SRC, 'gui'))
+  mkdirSync(SKINS, { recursive: true })
+  // Normalised to RGBA: skins ship as palette PNGs, and the model's material
+  // needs a predictable alpha channel for the hat/jacket overlay layers.
+  await sharp(join(SRC, 'entity', 'steve.png')).ensureAlpha().png().toFile(join(SKINS, 'default.png'))
   console.log(`built ${readdirSync(OUT).length - 1} textures from Pixel Perfection CE`)
 }
 
@@ -206,11 +211,29 @@ async function fromVanilla() {
   })
   await sharp(strip, { raw: { width: 16, height: 160, channels: 4 } }).png().toFile(png('crack'))
 
-  await sharp(t('sun')).png().toFile(png('sun'))
+  /*
+   * Sun and moon ship with NO alpha channel -- they are solid squares on
+   * black, and Minecraft hides the black with additive blending. Rather than
+   * fight Babylon's blend modes, alpha is derived from luminance here: black
+   * becomes fully transparent and the disc keeps its soft edge. Same visual
+   * result as additive, but plain alpha blending renders it.
+   */
+  const alphaFromLuminance = async (input, out) => {
+    const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    for (let i = 0; i < data.length; i += 4) {
+      const lum = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114)
+      data[i + 3] = Math.min(255, Math.round(lum * 1.25))
+    }
+    await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+      .png().toFile(out)
+  }
+
+  await alphaFromLuminance(t('sun'), png('sun'))
   const moon = await sharp(t('moon_phases')).metadata()
   const cell = Math.floor(moon.width / 4)
-  await sharp(t('moon_phases')).extract({ left: 0, top: 0, width: cell, height: cell })
-    .png().toFile(png('moon'))
+  const moonCell = await sharp(t('moon_phases'))
+    .extract({ left: 0, top: 0, width: cell, height: cell }).png().toBuffer()
+  await alphaFromLuminance(moonCell, png('moon'))
 
   // Clouds and the first-person hand have no vanilla equivalent we can use,
   // so they stay on the CC-licensed pack.
@@ -219,6 +242,13 @@ async function fromVanilla() {
   }
 
   await uiFromVanilla(jar, tmp)
+
+  // The default player skin. 64x64 wide (classic 4px arms) -- the model in
+  // playerModel.js is UV-mapped for that layout, not the 3px slim variant.
+  mkdirSync(SKINS, { recursive: true })
+  execFileSync('unzip', ['-q', '-o', '-j', jar,
+    'assets/minecraft/textures/entity/player/wide/steve.png', '-d', tmp])
+  await sharp(join(tmp, 'steve.png')).ensureAlpha().png().toFile(join(SKINS, 'default.png'))
 
   rmSync(tmp, { recursive: true, force: true })
   console.log(`extracted vanilla textures from Minecraft ${picked}`)
@@ -229,6 +259,7 @@ async function fromVanilla() {
 
 rmSync(OUT, { recursive: true, force: true })
 rmSync(UI, { recursive: true, force: true })
+rmSync(SKINS, { recursive: true, force: true })
 mkdirSync(OUT, { recursive: true })
 if (source === 'vanilla') await fromVanilla()
 else await fromCE()

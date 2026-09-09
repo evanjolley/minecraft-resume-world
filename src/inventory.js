@@ -146,6 +146,34 @@ export function createInventory() {
  * cheap to keep and expensive to thrash.
  */
 const GUI_W = 176, GUI_H = 166
+
+/*
+ * The character shown in the inventory window.
+ *
+ * Minecraft renders a live 3D model there. This composes the same skin as a
+ * flat front-facing figure from the skin's front-facing rects, which reads
+ * correctly at this size and costs nothing -- a second WebGL camera and
+ * render target for a 52x70 window would be far more machinery than the
+ * result justifies.
+ *
+ * Rects are the FRONT faces of the standard 64x64 wide layout.
+ */
+const DOLL = [
+  { name: 'head',  rect: [8, 8, 8, 8],   x: 4,  y: 0 },
+  { name: 'body',  rect: [20, 20, 8, 12], x: 4, y: 8 },
+  { name: 'armR',  rect: [44, 20, 4, 12], x: 0, y: 8 },
+  { name: 'armL',  rect: [36, 52, 4, 12], x: 12, y: 8 },
+  { name: 'legR',  rect: [4, 20, 4, 12],  x: 4, y: 20 },
+  { name: 'legL',  rect: [20, 52, 4, 12], x: 8, y: 20 },
+]
+/*
+ * Minecraft's preview window spans x 26-78, y 8-78 in GUI pixels, and in
+ * modern versions the sprite paints that recess opaque BLACK -- the figure is
+ * meant to sit on it, so the dark window is correct rather than a hole.
+ * Origin centres the 16x32 figure inside it.
+ */
+const DOLL_SCALE = 4
+const DOLL_ORIGIN = { x: 36, y: 11 }
 const SLOT_PITCH = 18, SLOT_SIZE = 16
 const GRID_X = 8, GRID_Y = 84, BAR_Y = 142
 
@@ -159,6 +187,26 @@ export function installInventoryScreen(noa, inv, inputLock) {
   panel.style.height = px(GUI_H)
   panel.style.backgroundImage = 'url(/ui/inventory.png)'
   carried.style.width = carried.style.height = px(SLOT_SIZE)
+
+  /* ---- character preview ---- */
+  const doll = document.createElement('div')
+  doll.id = 'inv-doll'
+  doll.style.left = px(DOLL_ORIGIN.x)
+  doll.style.top = px(DOLL_ORIGIN.y)
+  for (const part of DOLL) {
+    const el = document.createElement('div')
+    el.className = 'doll-part'
+    const [sx, sy, w, h] = part.rect
+    el.style.width = `${w * DOLL_SCALE}px`
+    el.style.height = `${h * DOLL_SCALE}px`
+    el.style.left = `${part.x * DOLL_SCALE}px`
+    el.style.top = `${part.y * DOLL_SCALE}px`
+    el.style.backgroundImage = 'url(/skins/default.png)'
+    el.style.backgroundSize = `${64 * DOLL_SCALE}px ${64 * DOLL_SCALE}px`
+    el.style.backgroundPosition = `-${sx * DOLL_SCALE}px -${sy * DOLL_SCALE}px`
+    doll.appendChild(el)
+  }
+  panel.appendChild(doll)
 
   const cells = []
   const makeCell = (index, gx, gy) => {

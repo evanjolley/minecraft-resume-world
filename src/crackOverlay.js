@@ -69,9 +69,11 @@ export function installCrackOverlay(noa) {
       if (frac <= 0 || !blockPos) { mesh.setEnabled(false); return }
 
       const stage = Math.min(FRAMES - 1, Math.floor(frac * FRAMES))
-      // Babylon's V runs bottom-up while the strip reads top-down, so frame
-      // order has to be flipped or mining plays the crack in reverse.
-      tex.vOffset = 1 - (stage + 1) / FRAMES
+      // The Texture is constructed with invertY = false, so V is NOT flipped
+      // and image row 0 (the smallest crack) sits at v = 0. Flipping the
+      // order here as well played the animation backwards: cracks started
+      // fully shattered and healed as you mined.
+      tex.vOffset = stage / FRAMES
 
       noa.globalToLocal(blockPos, null, local)
       mesh.position.set(local[0] + 0.5, local[1] + 0.5, local[2] + 0.5)

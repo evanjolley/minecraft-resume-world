@@ -127,13 +127,24 @@ export function installSky(noa) {
     const tex = new Texture(file, scene, true, false, Texture.NEAREST_SAMPLINGMODE)
     tex.hasAlpha = true
     const mat = noa.rendering.makeStandardMaterial(`${name}-mat`)
-    mat.diffuseTexture = tex
-    mat.useAlphaFromDiffuseTexture = true
-    mat.disableLighting = true
+    /*
+     * emissiveTexture for the colour, opacityTexture for the cutout.
+     *
+     * Minecraft's sun and moon have no alpha channel -- they are discs on
+     * solid black, hidden by additive blending. build-textures derives alpha
+     * from luminance so plain alpha blending works, and opacityTexture reads
+     * that channel explicitly. useAlphaFromDiffuseTexture did not apply here
+     * and left a black square around the sun.
+     */
+    mat.emissiveTexture = tex
+    mat.opacityTexture = tex
+    mat.diffuseColor = new Color3(0, 0, 0)
     mat.emissiveColor = new Color3(1, 1, 1)
     // noa leaves ambientColor white and Babylon adds that term even with
-    // lighting disabled, which turns the transparent margin into a grey box.
+    // lighting disabled, which lifts the cutout back into a grey box.
     mat.ambientColor = new Color3(0, 0, 0)
+    mat.specularColor = new Color3(0, 0, 0)
+    mat.disableLighting = true
     mat.backFaceCulling = false
 
     const mesh = CreatePlane(name, { size }, scene)
