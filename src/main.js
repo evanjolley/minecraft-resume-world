@@ -123,9 +123,11 @@ const overlay = document.getElementById('overlay')
 overlay.addEventListener('click', () => noa.container.setPointerLock(true))
 noa.container.on('gainedPointerLock', () => overlay.classList.add('hidden'))
 noa.container.on('lostPointerLock', () => {
-  // Opening the inventory intentionally releases the lock, so don't throw
-  // the click-to-enter curtain back up on top of it.
-  if (!inventory.open) overlay.classList.remove('hidden')
+  // Two cases intentionally release the lock and must NOT get the
+  // click-to-enter curtain thrown back up on top of them: opening the
+  // inventory, and dying (the death screen needs a visible cursor so the
+  // Respawn button is clickable).
+  if (!inventory.open && !survival.dead) overlay.classList.remove('hidden')
 })
 
 window.noa = noa
