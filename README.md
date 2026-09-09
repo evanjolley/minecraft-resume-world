@@ -62,6 +62,23 @@ Two traps found while calibrating, both worth knowing if you retune:
   gravity silently doubles. Jump impulse is therefore *calibrated*, not
   derived; re-run the binary search if you change gravity or air drag.
 
+The world is 80x80 (5x5 Minecraft chunks) running from grass at y=64 down to
+bedrock at y=0, with 1.16-era strata. Ore rarity is solved against Minecraft's
+real frequencies rather than hand-tuned -- coal 1.0%, iron 0.7%, redstone
+0.15%, gold 0.1%, diamond 0.08%, lapis 0.05% of the stone region.
+
+1.16 rather than 1.18+ because the texture pack (Pixel Perfection Continued
+Edition, an actual Minecraft pack) predates Caves & Cliffs and has no
+deepslate, copper or tuff. The strata match the era the art comes from.
+
+Sprint follows Minecraft's real rules: double-tap forward within 7 ticks, or
+hold Ctrl, cancelled by releasing forward / sneaking / dropping to 6 food.
+Base FOV is Minecraft's 70 degrees, kicking to 77 while sprinting -- without
+that cue a 30% speed change is nearly imperceptible.
+
+Day/night runs Minecraft's clock: 24000 ticks at 20/sec, measured at 19.95,
+so a 20.1 minute day against Minecraft's 20.
+
 Also implemented: hold-to-break with per-block times and the destroy-stage
 crack overlay, Minecraft's drop rules (grass gives dirt, stone gives
 cobblestone), placement blocked when it would trap the player, stack-merging
@@ -77,7 +94,11 @@ switched off via `HUNGER_DRAIN_ENABLED` in `survival.js`, because a visitor
 reading a resume plot shouldn't starve while doing it.
 
 Not yet done: resume content (the whole point -- the island is still empty),
-multiplayer presence, sounds, and block-breaking particles. Fog was
+multiplayer presence, sounds, and block-breaking particles.
+
+The block palette is 17 full cubes. Importing real Minecraft builds will need
+it widened, and needs a decision on stairs and slabs (non-cube geometry, which
+noa supports via blockMesh but which nothing here uses yet). Fog was
 investigated and rejected: noa's terrain shader has no fog handling at all,
 so Babylon scene fog would tint the sky and leave the world untouched.
 
