@@ -6,8 +6,7 @@
   <title>world.evanjolley.com</title>
   <style>
     /* Monocraft, a Minecraft-inspired typeface by Idrees Hassan, SIL OFL 1.1.
-       The font is the single most recognisable part of Minecraft's UI, and
-       Mojang's own is not redistributable. License ships in public/fonts/. */
+       Mojang's own font is not redistributable. License in public/fonts/. */
     @font-face {
       font-family: 'Monocraft';
       src: url('/fonts/Monocraft.ttf') format('truetype');
@@ -19,21 +18,19 @@
       -webkit-user-select: none; user-select: none; }
 
     #game { position: absolute; inset: 0; }
-
     img, .icon-face { image-rendering: pixelated; }
+    .hidden { display: none !important; }
 
     /* ---------------- crosshair ----------------
-       Minecraft's crosshair isn't white, it inverts whatever is behind it.
-       mix-blend-mode: difference is what reproduces that, and it's why the
-       crosshair stays visible against both sky and dirt. */
+       Minecraft's crosshair inverts what's behind it rather than being white,
+       which is why it stays readable against both sky and dirt. */
     #crosshair { position: absolute; left: 50%; top: 50%; width: 18px; height: 18px;
       margin: -9px 0 0 -9px; pointer-events: none; mix-blend-mode: difference; z-index: 5; }
     #crosshair::before, #crosshair::after { content: ''; position: absolute; background: #fff; }
     #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; margin-left: -1px; }
     #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; margin-top: -1px; }
 
-    /* ---------------- block icons ----------------
-       Three faces of a real cube, rotated into Minecraft's inventory angle. */
+    /* ---------------- block icons ---------------- */
     .block-icon { position: relative; width: var(--icon-size, 32px); height: var(--icon-size, 32px);
       transform-style: preserve-3d; transform: rotateX(-30deg) rotateY(-45deg);
       --face: calc(var(--icon-size, 32px) * 0.58); pointer-events: none; }
@@ -43,77 +40,103 @@
     .icon-top { transform: rotateX(90deg) translateZ(calc(var(--face) / 2)); }
     .icon-front { transform: translateZ(calc(var(--face) / 2)); }
     .icon-side { transform: rotateY(90deg) translateZ(calc(var(--face) / 2)); }
-
     .count { position: absolute; right: 2px; bottom: 0; font-size: 14px; font-weight: 700;
       color: #fff; text-shadow: 2px 2px 0 #3f3f3f; pointer-events: none; }
 
     /* ---------------- hotbar + status ---------------- */
     #hud { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column;
       align-items: center; gap: 2px; padding-bottom: 6px; pointer-events: none; z-index: 4; }
-
     #held-name { font-size: 13px; text-shadow: 2px 2px 0 #000; opacity: 0;
       transition: opacity 400ms; height: 18px; }
     #held-name.visible { opacity: 1; }
-
     #xp-row { display: flex; align-items: center; justify-content: center; position: relative;
       width: 364px; height: 12px; }
     #xp-bar { width: 100%; height: 10px; background: #000; border: 1px solid #1d1d1d; }
     #xp-fill { height: 100%; width: 0%; background: #80ff20; }
     #xp-level { position: absolute; font-size: 14px; font-weight: 700; color: #80ff20;
       text-shadow: 2px 2px 0 #000; }
-
     #status { display: flex; justify-content: space-between; width: 364px; padding: 2px 0; }
     #hearts, #hunger { display: flex; gap: 1px; }
     #hunger { flex-direction: row-reverse; }
     .icon-slot { position: relative; width: 18px; height: 18px; }
     .icon-slot img { position: absolute; inset: 0; width: 18px; height: 18px; }
     .icon-bg { filter: brightness(0) opacity(0.45); }
-
-    #hotbar { display: flex; background: rgba(0,0,0,0.5); border: 2px solid #8b8b8b;
-      padding: 2px; gap: 0; }
+    #hotbar { display: flex; background: rgba(0,0,0,0.5); border: 2px solid #8b8b8b; padding: 2px; }
     .hotbar-slot { position: relative; width: 40px; height: 40px; display: grid;
       place-items: center; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); }
     .hotbar-slot.selected { outline: 2px solid #fff; outline-offset: 1px; z-index: 1; }
-
     #coords { position: absolute; left: 10px; top: 10px; font-size: 12px; opacity: 0.55;
       text-shadow: 1px 1px 0 #000; pointer-events: none; z-index: 4; }
 
-    /* ---------------- inventory screen ---------------- */
+    /* ---------------- inventory ---------------- */
     #inventory { position: absolute; inset: 0; display: grid; place-content: center;
       background: rgba(0,0,0,0.55); z-index: 20; }
-    #inventory.hidden, #death.hidden, #overlay.hidden { display: none; }
-    /* Minecraft hides the whole in-game HUD behind the inventory screen. */
-    body.inv-open #hud, body.inv-open #crosshair { display: none; }
     .panel { background: #c6c6c6; border: 4px solid; border-color: #fff #545454 #545454 #fff;
       padding: 14px; display: flex; flex-direction: column; gap: 12px; }
     .panel h2 { margin: 0; font-size: 13px; color: #3f3f3f; letter-spacing: 0.08em;
       text-transform: uppercase; }
-    #inv-grid { display: grid; grid-template-columns: repeat(9, 44px); gap: 2px; }
-    #inv-hotbar { display: grid; grid-template-columns: repeat(9, 44px); gap: 2px; }
+    #inv-grid, #inv-hotbar { display: grid; grid-template-columns: repeat(9, 44px); gap: 2px; }
     .slot { position: relative; width: 44px; height: 44px; background: #8b8b8b;
       border: 2px solid; border-color: #545454 #fff #fff #545454; display: grid;
       place-items: center; cursor: pointer; }
     .slot:hover { background: #a8a8a8; }
     #inv-carried { position: fixed; left: 0; top: 0; width: 44px; height: 44px;
       display: grid; place-items: center; pointer-events: none; z-index: 30; }
+    body.inv-open #hud, body.inv-open #crosshair,
+    body.menu-open #hud, body.menu-open #crosshair { display: none; }
 
-    /* ---------------- overlays ---------------- */
+    /* ---------------- Minecraft buttons ----------------
+       Rebuilt in CSS rather than sliced from the texture pack: that pack
+       restyles Minecraft's grey stone buttons as ornate gold frames, which is
+       exactly the drift we're trying to get away from. */
+    .mc-button {
+      display: block; width: 100%; box-sizing: border-box;
+      font: inherit; font-size: 15px; line-height: 1;
+      padding: 11px 10px; text-align: center; text-decoration: none; cursor: pointer;
+      color: #e0e0e0; text-shadow: 2px 2px 0 #3f3f3f;
+      background: linear-gradient(180deg, #8d8d8d 0%, #8a8a8a 48%, #6f6f6f 52%, #6b6b6b 100%);
+      border: 2px solid #000;
+      box-shadow: inset 0 2px 0 rgba(255,255,255,0.28), inset 0 -2px 0 rgba(0,0,0,0.32);
+    }
+    /* Minecraft's hover is a blue-grey lift with the label turning pale yellow. */
+    .mc-button:hover {
+      background: linear-gradient(180deg, #a9b7d9 0%, #93a3c7 48%, #6f81a9 52%, #6a7ca4 100%);
+      border-color: #fff; color: #ffffa0;
+    }
+    .button-row { display: flex; gap: 8px; }
+    .button-row .mc-button { flex: 1; }
+
+    /* ---------------- pause menu ---------------- */
+    #pause { position: absolute; inset: 0; z-index: 22;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 18px; background: rgba(0,0,0,0.62); }
+    #pause h1 { margin: 0 0 6px; font-size: 20px; font-weight: 400; color: #fff;
+      text-shadow: 2px 2px 0 #3f3f3f; }
+    #pause-buttons { display: flex; flex-direction: column; gap: 8px; width: 400px; }
+
+    /* ---------------- controls ---------------- */
+    #controls { position: absolute; inset: 0; z-index: 24;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 16px; background: rgba(0,0,0,0.82); }
+    #controls h1 { margin: 0; font-size: 20px; font-weight: 400; color: #fff;
+      text-shadow: 2px 2px 0 #3f3f3f; }
+    #controls-list { display: grid; grid-template-columns: auto 1fr; gap: 8px 22px;
+      margin: 0; font-size: 13px; max-width: 560px; }
+    #controls-list dt { color: #ffffa0; text-shadow: 2px 2px 0 #3f3f3f; white-space: nowrap; }
+    #controls-list dd { margin: 0; color: #d8d8d8; text-shadow: 2px 2px 0 #3f3f3f; }
+    #controls-close { width: 200px; }
+
+    /* ---------------- death ---------------- */
     #death { position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
       gap: 14px; background: rgba(120, 0, 0, 0.45); z-index: 25; }
     #death h1 { margin: 0; font-size: 30px; text-shadow: 3px 3px 0 #000; }
-    #death button { font: inherit; font-size: 14px; padding: 10px 22px; cursor: pointer;
-      background: #c6c6c6; color: #1d1d1d; border: 3px solid;
-      border-color: #fff #545454 #545454 #fff; }
+    #death .mc-button { width: 260px; }
 
-    #overlay { position: absolute; inset: 0; display: grid; place-content: center; gap: 10px;
-      text-align: center; background: rgba(11,13,16,0.72); backdrop-filter: blur(3px);
-      cursor: pointer; z-index: 40; }
-    #overlay h1 { margin: 0; font-size: 15px; font-weight: 500; letter-spacing: 0.14em;
-      text-transform: uppercase; }
-    #overlay p { margin: 0; font-size: 12px; opacity: 0.5; line-height: 1.7; }
-    /* CC-BY-SA requires attribution wherever the work is distributed, and the
-       page is the distribution, so this can't live only in the README. */
-    #credit { margin-top: 18px; font-size: 10px; opacity: 0.3; line-height: 1.6; }
+    /* Attribution: CC-BY-SA requires it wherever the work is distributed, and
+       the page IS the distribution. With the entry screen gone it lives here. */
+    #credit { position: absolute; right: 8px; bottom: 6px; z-index: 4;
+      font-size: 9px; opacity: 0.28; line-height: 1.5; text-align: right;
+      pointer-events: auto; text-shadow: 1px 1px 0 #000; }
     #credit a { color: inherit; }
   </style>
 </head>
@@ -145,20 +168,26 @@
   </div>
   <div id="inv-carried" class="hidden"></div>
 
-  <div id="death" class="hidden">
-    <h1>You Died!</h1>
-    <button id="respawn-btn">Respawn</button>
+  <div id="pause" class="hidden">
+    <h1>Game Menu</h1>
+    <div id="pause-buttons"></div>
   </div>
 
-  <div id="overlay">
-    <h1>click to enter</h1>
-    <p>WASD move &middot; space jump &middot; ctrl sprint &middot; shift sneak<br />
-       left click mine &middot; right click place &middot; E inventory &middot; F5 camera<br />
-       1&ndash;9 or scroll to change slot &middot; esc to release the cursor</p>
-    <p id="credit">textures: Pixel Perfection by Hugh &ldquo;XSSheep&rdquo; Rutland,
-      <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a><br />
-      type: Monocraft by Idrees Hassan, SIL OFL 1.1</p>
+  <div id="controls" class="hidden">
+    <h1>Controls</h1>
+    <dl id="controls-list"></dl>
+    <button id="controls-close" class="mc-button">Done</button>
   </div>
+
+  <div id="death" class="hidden">
+    <h1>You Died!</h1>
+    <button id="respawn-btn" class="mc-button">Respawn</button>
+  </div>
+
+  <p id="credit">
+    textures: Pixel Perfection CE, <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>
+    &middot; type: Monocraft, SIL OFL 1.1
+  </p>
 
   <script type="module" src="/src/main.js"></script>
 </body>

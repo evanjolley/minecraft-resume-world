@@ -7,55 +7,19 @@ import { SPAWN, VOID_Y } from './island.js'
  * does, deliberately. In Minecraft that kills you rather than teleporting
  * you home, so it routes through survival state and the death screen.
  */
-export function installRespawn(noa, survival) {
+export function installRespawn(noa, survival, inputLock) {
   const player = noa.playerEntity
   const body = () => noa.ents.getPhysics(player).body
 
-  // Captured, not hardcoded to 1, so a future sensitivity setting survives
-  // a death without being silently reset.
-  const baseSensitivity = noa.camera.sensitivityMult
-
-  let frozen = false
-
   /*
-   * Freezing a dead player takes three separate things, and missing any one
-   * of them leaves the death screen half-broken:
-   *
-   *  1. Release pointer lock. Without this the cursor stays captured and the
-   *     Respawn button is literally unclickable -- the bug that started this.
-   *  2. Zero camera sensitivity. noa's applyInputsToCamera() early-returns
-   *     when sensitivity is 0, which stops looking around for free.
-   *  3. Detach the `receivesInputs` component. That component copies
-   *     noa.inputs.state into the movement component every tick, so merely
-   *     zeroing movement fields gets overwritten on the next tick. Removing
-   *     the component is the only reliable stop. Road not taken: zeroing
-   *     noa.inputs.state each tick, which races with the component depending
-   *     on system ordering.
+   * Death freezes input through the shared lock, which also releases pointer
+   * lock so the cursor comes back and the Respawn button is clickable. The
+   * world keeps running behind the screen.
    */
   const setFrozen = (on) => {
-    if (on === frozen) return
-    frozen = on
-
-    if (on) {
-      noa.camera.sensitivityMult = 0
-      noa.ents.removeComponent(player, noa.ents.names.receivesInputs)
-
-      const move = noa.ents.getMovement(player)
-      move.running = false
-      move.jumping = false
-
-      // Kill horizontal drift so the corpse doesn't keep sliding.
-      const b = body()
-      b.velocity[0] = 0
-      b.velocity[2] = 0
-
-      noa.container.setPointerLock(false)
-    } else {
-      noa.camera.sensitivityMult = baseSensitivity
-      if (!noa.ents.hasComponent(player, noa.ents.names.receivesInputs)) {
-        noa.ents.addComponent(player, noa.ents.names.receivesInputs)
-      }
-    }
+    if (on) inputLock.lock('dead')
+    else inputLock.unlock('dead')
+    if (on) noa.container.setPointerLock(false)
   }
 
   survival.onChange((s) => setFrozen(s.dead))

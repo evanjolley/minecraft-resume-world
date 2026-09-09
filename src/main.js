@@ -9,6 +9,8 @@ import { createInventory, installInventoryScreen } from './inventory.js'
 import { installInteraction, installHotbarControls } from './interact.js'
 import { installRespawn } from './respawn.js'
 import { installHUD } from './hud.js'
+import { createInputLock } from './inputLock.js'
+import { installMenu } from './menu.js'
 import { installHeldItem } from './heldItem.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky } from './sky.js'
@@ -119,10 +121,14 @@ const crack = installCrackOverlay(noa)
 const held = installHeldItem(noa, inventory)
 installInteraction(noa, inventory, { crack, held })
 
+const inputLock = createInputLock(noa)
+
 installHotbarControls(noa, inventory)
-installInventoryScreen(noa, inventory)
-installRespawn(noa, survival)
+installInventoryScreen(noa, inventory, inputLock)
+installRespawn(noa, survival, inputLock)
 installHUD(noa, { inventory, survival })
+
+const menu = installMenu(noa, { inputLock, inventory, survival })
 
 // Starter kit. Minecraft survival starts you empty-handed, but this world is
 // meant to be poked at within seconds of arriving, so seed the hotbar.
@@ -130,18 +136,36 @@ inventory.add(ids.planks, 64)
 inventory.add(ids.cobblestone, 64)
 inventory.add(ids.dirt, 32)
 
-/* Pointer lock. noa never requests this itself, and browsers only grant it
- * from a real user gesture, so it has to hang off an actual click. */
-const overlay = document.getElementById('overlay')
-overlay.addEventListener('click', () => noa.container.setPointerLock(true))
-noa.container.on('gainedPointerLock', () => overlay.classList.add('hidden'))
+/*
+ * Pointer lock. There is no entry screen -- you spawn straight into the live
+ * world -- so the first click on it captures the mouse. A click is required
+ * because browsers only grant pointer lock from a real user gesture; there is
+ * no way to have it on page load.
+ */
+const gameEl = document.getElementById('game')
+gameEl.addEventListener('mousedown', () => {
+  if (inventory.open || menu.isOpen || survival.dead) return
+  if (!noa.container.hasPointerLock) noa.container.setPointerLock(true)
+})
+
+// Keyboard events reach noa through its container, which has to be focused.
+// Without this, WASD does nothing until the player happens to click.
+gameEl.focus()
+
+/*
+ * Escape opens the pause menu. It cannot be done with a keydown listener:
+ * the browser handles Escape itself to exit pointer lock and does NOT
+ * deliver the key to the page. The resulting lostPointerLock is the only
+ * signal we get, so the menu hangs off that.
+ *
+ * The guards matter -- the inventory, the menu and death all release pointer
+ * lock deliberately, and without them each would immediately stack the pause
+ * menu on top of itself.
+ */
 noa.container.on('lostPointerLock', () => {
-  // Two cases intentionally release the lock and must NOT get the
-  // click-to-enter curtain thrown back up on top of them: opening the
-  // inventory, and dying (the death screen needs a visible cursor so the
-  // Respawn button is clickable).
-  if (!inventory.open && !survival.dead) overlay.classList.remove('hidden')
+  if (inventory.open || survival.dead || menu.isOpen) return
+  menu.open()
 })
 
 window.noa = noa
-window.game = { inventory, survival, move, sky }
+window.game = { inventory, survival, move, sky, menu, inputLock }

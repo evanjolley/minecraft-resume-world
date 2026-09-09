@@ -137,7 +137,7 @@ export function createInventory() {
  * The inventory screen. Built once and shown/hidden, rather than rebuilt on
  * open: 36 slots of DOM is cheap to keep around and expensive to thrash.
  */
-export function installInventoryScreen(noa, inv) {
+export function installInventoryScreen(noa, inv, inputLock) {
   const screen = document.getElementById('inventory')
   const grid = document.getElementById('inv-grid')
   const bar = document.getElementById('inv-hotbar')
@@ -187,13 +187,19 @@ export function installInventoryScreen(noa, inv) {
   })
 
   const setOpen = (open) => {
+    // inv.open is set FIRST because releasing pointer lock below fires
+    // lostPointerLock, and main.js reads this flag to decide whether that
+    // event should open the pause menu.
     inv.open = open
     screen.classList.toggle('hidden', !open)
     document.body.classList.toggle('inv-open', open)
-    // SUBTLE: pointer lock and a mouse-driven UI are mutually exclusive.
-    // Releasing the lock is what lets the cursor reappear; noa keeps
-    // running, so the world stays live behind the screen exactly as
-    // Minecraft's does.
+
+    // Pointer lock and a mouse-driven UI are mutually exclusive; releasing
+    // the lock is what brings the cursor back. The world keeps ticking, so
+    // the sky moves and other players would keep walking around behind it,
+    // exactly as Minecraft multiplayer does.
+    if (open) inputLock.lock('inventory')
+    else inputLock.unlock('inventory')
     noa.container.setPointerLock(!open)
   }
 
