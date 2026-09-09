@@ -31,6 +31,10 @@ export const MC = {
 
   // Fall damage begins after 3 blocks, then 1 half-heart per extra block.
   FALL_SAFE_BLOCKS: 3,
+
+  // Minecraft adds 0.2 blocks/tick forward on a sprint jump; per second that
+  // is 0.2 / 0.05 = 4 blocks/s of extra horizontal launch.
+  SPRINT_JUMP_BOOST: 4,
 }
 
 // Calibrated, not derived. See the comment at its use site.
@@ -90,26 +94,95 @@ export function installPhysics(noa) {
   return move
 }
 
-/**
- * Sprint and sneak. Minecraft's bindings: Ctrl sprints, Shift sneaks.
- * Sneak also halves nothing else here yet; edge-protection (refusing to walk
- * off a ledge while sneaking) is a separate behaviour, noted in the README.
+/*
+ * Sprint and sneak, to Minecraft's actual rules.
+ *
+ * Minecraft starts a sprint two ways, and only one of them was implemented
+ * before, which is why sprinting felt broken: almost nobody holds Ctrl, they
+ * double-tap W.
+ *
+ *   - hold Ctrl while moving forward
+ *   - double-tap forward within 7 ticks (350 ms), which LATCHES until
+ *     something below cancels it
+ *
+ * A sprint ends when you release forward, start sneaking, or drop to 6 food
+ * or less (3 shanks). Minecraft also breaks it when you collide head-on with
+ * a wall; that one is skipped here because noa gives no clean head-on
+ * collision signal and the effect is barely noticeable.
+ *
+ * The FOV kick is not decoration. Sprinting is only 30% faster than walking,
+ * which is genuinely hard to perceive on its own -- the widening view is how
+ * Minecraft tells you it engaged.
  */
-export function installSpeedModes(noa, move) {
+
+// Minecraft's default vertical FOV, and the multiplier it applies to sprint.
+const BASE_FOV_DEG = 70
+const SPRINT_FOV_MULT = 1.1
+const DOUBLE_TAP_MS = 350
+
+export function installSpeedModes(noa, move, survival) {
   noa.inputs.bind('sprint', 'ControlLeft')
   noa.inputs.bind('sneak', 'ShiftLeft')
 
-  noa.on('tick', () => {
-    const sprinting = noa.inputs.state.sprint
-    const sneaking = noa.inputs.state.sneak
+  const camera = noa.rendering.camera
+  const baseFov = (BASE_FOV_DEG * Math.PI) / 180
+  camera.fov = baseFov
 
-    // Sneak wins when both are held, same as Minecraft.
-    move.maxSpeed = sneaking ? MC.SNEAK_SPEED
+  let sprinting = false
+  let lastForwardPress = -Infinity
+  let jumpWasDown = false
+
+  /*
+   * Double-tap detection hangs off noa's keydown EVENT, not off polling
+   * inputs.state each tick. A quick tap can begin and end entirely between
+   * two ticks, so polling misses the first press outright and the double-tap
+   * never registers -- which is exactly how this failed the first time.
+   */
+  noa.inputs.down.on('forward', () => {
+    const now = performance.now()
+    if (now - lastForwardPress < DOUBLE_TAP_MS) sprinting = true
+    lastForwardPress = now
+  })
+
+  noa.on('tick', (dt) => {
+    const S = noa.inputs.state
+    const forward = S.forward
+
+    if (S.sprint && forward) sprinting = true
+
+    // Cancels, in Minecraft's order of precedence.
+    if (!forward) sprinting = false
+    if (S.sneak) sprinting = false
+    if (survival && survival.food <= 6) sprinting = false
+
+    // Sneak beats sprint when both are somehow active.
+    move.maxSpeed = S.sneak ? MC.SNEAK_SPEED
       : sprinting ? MC.SPRINT_SPEED
       : MC.WALK_SPEED
 
-    if (sneaking) preventWalkingOffEdge(noa)
+    // Ease the FOV rather than snapping it, the way Minecraft does.
+    const targetFov = sprinting ? baseFov * SPRINT_FOV_MULT : baseFov
+    camera.fov += (targetFov - camera.fov) * Math.min(1, (dt / 1000) * 9)
+
+    /*
+     * Sprint-jumping. Minecraft adds a forward impulse on the tick a sprint
+     * jump starts, which is why sprint-jumping covers noticeably more ground
+     * than sprinting alone -- and the entire basis of parkour distance.
+     */
+    if (S.jump && !jumpWasDown && sprinting) {
+      const body = noa.ents.getPhysics(noa.playerEntity).body
+      if (body.atRestY() < 0) {
+        const h = move.heading
+        body.velocity[0] += Math.sin(h) * MC.SPRINT_JUMP_BOOST
+        body.velocity[2] += Math.cos(h) * MC.SPRINT_JUMP_BOOST
+      }
+    }
+    jumpWasDown = S.jump
+
+    if (S.sneak) preventWalkingOffEdge(noa)
   })
+
+  return { isSprinting: () => sprinting }
 }
 
 /*

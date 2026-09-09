@@ -40,7 +40,9 @@ export function installInteraction(noa, inv, fx) {
     if (!sameBlock(breaking, pos)) {
       const id = noa.getBlock(pos[0], pos[1], pos[2])
       const def = BLOCK_BY_ID.get(id)
-      if (!def) { breaking = null; showProgress(0); return }
+      // Infinity marks bedrock. Without this the timer runs forever and the
+      // crack overlay sits frozen on stage 0 while you chew on it.
+      if (!def || def.hardness === Infinity) { breaking = null; showProgress(0); return }
       breaking = { x: pos[0], y: pos[1], z: pos[2], id, elapsed: 0, total: def.hardness }
     }
 

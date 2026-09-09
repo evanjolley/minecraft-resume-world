@@ -39,10 +39,13 @@ const noa = new Engine({
   showFPS: import.meta.env.DEV,
 
   // noa's chunk size is unrelated to Minecraft's 16. It's just how many
-  // voxels get meshed into one draw call. The "3x3 chunks" footprint lives
+  // voxels get meshed into one draw call. The "5x5 chunks" footprint lives
   // in island.js as a count of blocks, which is the part that has to match
   // when we import real Minecraft builds later.
   chunkSize: 32,
+  // Horizontal 4 chunks = 128 blocks, comfortably past the 80-block island.
+  // Vertical 3 = 96, enough to hold the whole surface-to-bedrock column so
+  // the underside never pops in as you fly around it.
   chunkAddDistance: [4, 3],
   chunkRemoveDistance: [6, 5],
 
@@ -102,9 +105,12 @@ noa.on('tick', () => {
 
 /* ---- systems ---- */
 const move = installPhysics(noa)
-installSpeedModes(noa, move)
 
+// survival is created before installSpeedModes because sprinting depends on
+// the food level: Minecraft refuses to sprint at 6 food or less.
 const survival = createSurvival(noa)
+installSpeedModes(noa, move, survival)
+
 const inventory = createInventory()
 
 installSky(noa)
