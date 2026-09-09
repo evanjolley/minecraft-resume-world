@@ -113,7 +113,7 @@ installSpeedModes(noa, move, survival)
 
 const inventory = createInventory()
 
-installSky(noa)
+const sky = installSky(noa)
 installHighlightStyle(noa)
 const crack = installCrackOverlay(noa)
 const held = installHeldItem(noa, inventory)
@@ -144,4 +144,4 @@ noa.container.on('lostPointerLock', () => {
 })
 
 window.noa = noa
-window.game = { inventory, survival, move }
+window.game = { inventory, survival, move, sky }
