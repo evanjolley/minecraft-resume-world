@@ -107,5 +107,60 @@ export function installSpeedModes(noa, move) {
     move.maxSpeed = sneaking ? MC.SNEAK_SPEED
       : sprinting ? MC.SPRINT_SPEED
       : MC.WALK_SPEED
+
+    if (sneaking) preventWalkingOffEdge(noa)
   })
+}
+
+/*
+ * Sneak edge-protection: Minecraft refuses to let you walk off a ledge while
+ * sneaking. On an island surrounded entirely by void this stops being a
+ * nicety and becomes the difference between building near the rim and
+ * repeatedly dying at it.
+ *
+ * Done PER AXIS on purpose. Cancelling the whole horizontal velocity the
+ * moment any edge is near freezes you in place at a corner and feels broken;
+ * cancelling only the component that heads out over nothing lets you still
+ * slide along the rim, which is what Minecraft does.
+ */
+
+// Probed from the player's LEADING edge, not their centre. Testing the centre
+// (or "is any corner still supported") lets you creep forward until your rear
+// corner leaves the block, which strands you hanging off the rim instead of
+// stopping on it. Small, since half the player width is already added.
+const EDGE_LOOKAHEAD = 0.1
+
+function preventWalkingOffEdge(noa) {
+  const player = noa.playerEntity
+  const body = noa.ents.getPhysics(player).body
+
+  // Only while actually standing on something. Airborne, Minecraft lets you
+  // fall regardless of whether sneak is held.
+  if (body.atRestY() >= 0) return
+
+  const dat = noa.ents.getPositionData(player)
+  const [x, y, z] = dat.position
+  const half = dat.width / 2
+
+  // The block layer directly beneath the feet. The small bias matters: the
+  // player's y sits exactly ON the boundary when resting, and Math.floor of
+  // an exact integer would sample the block they're standing IN, not on.
+  const below = Math.floor(y - 0.1)
+
+  // Is the ground solid under the strip the leading edge is about to cross?
+  // Both ends of that strip are checked so a corner overhanging a diagonal
+  // gap still counts as unsupported.
+  const supported = (px, pz) =>
+    noa.getBlock(Math.floor(px), below, Math.floor(pz - half)) !== 0 ||
+    noa.getBlock(Math.floor(px), below, Math.floor(pz + half)) !== 0
+
+  const supportedZ = (px, pz) =>
+    noa.getBlock(Math.floor(px - half), below, Math.floor(pz)) !== 0 ||
+    noa.getBlock(Math.floor(px + half), below, Math.floor(pz)) !== 0
+
+  const v = body.velocity
+  const reach = half + EDGE_LOOKAHEAD
+
+  if (v[0] !== 0 && !supported(x + Math.sign(v[0]) * reach, z)) v[0] = 0
+  if (v[2] !== 0 && !supportedZ(x, z + Math.sign(v[2]) * reach)) v[2] = 0
 }
