@@ -6,13 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "textures": "node scripts/build-textures.mjs --source=ce",
+    "textures:vanilla": "node scripts/build-textures.mjs --source=vanilla",
+    "postinstall": "node scripts/build-textures.mjs --source=ce"
   },
   "dependencies": {
     "@babylonjs/core": "^6.49.0",
     "noa-engine": "^0.33.0"
   },
   "devDependencies": {
+    "sharp": "^0.35.4",
     "vite": "^8.2.2"
   }
 }
