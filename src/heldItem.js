@@ -22,10 +22,21 @@ import { BLOCK_BY_ID } from './blocks.js'
  *    cleared, which is exactly how real games draw viewmodels.
  */
 
-// Where the block sits in camera space. Tuned to Minecraft's framing:
-// low and to the right, tilted so you see the top and left faces.
-const REST = { x: 0.46, y: -0.40, z: 0.98 }
-const SCALE = 0.30
+/*
+ * Where the block sits in camera space, and how big it is.
+ *
+ * These two are coupled: apparent size is roughly SCALE/z, so the pair is
+ * chosen to hold the on-screen size while pushing the cube AWAY from the eye.
+ * Distance matters independently of size because Minecraft renders its
+ * viewmodel through a narrower FOV than the world; we can't easily do that
+ * with a camera-parented mesh, and a cube held very close to a wide-FOV
+ * camera splays out with obvious perspective distortion. Moving it back and
+ * scaling it up trades that distortion away for free.
+ *
+ * x and y scale with z so the block stays pinned in the lower-right corner.
+ */
+const REST = { x: 0.70, y: -0.61, z: 1.50 }
+const SCALE = 0.40
 
 export function installHeldItem(noa, inventory) {
   const scene = noa.rendering.getScene()

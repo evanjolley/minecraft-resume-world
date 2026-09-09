@@ -62,18 +62,24 @@ Two traps found while calibrating, both worth knowing if you retune:
   gravity silently doubles. Jump impulse is therefore *calibrated*, not
   derived; re-run the binary search if you change gravity or air drag.
 
-Also implemented: hold-to-break with per-block times, Minecraft's drop rules
-(grass gives dirt, stone gives cobblestone), placement blocked when it would
-trap the player, stack-merging inventory with left/right click semantics,
-hearts and hunger in half-units, XP bar, fall damage, void death.
+Also implemented: hold-to-break with per-block times and the destroy-stage
+crack overlay, Minecraft's drop rules (grass gives dirt, stone gives
+cobblestone), placement blocked when it would trap the player, stack-merging
+inventory with left/right click semantics, hearts and hunger in half-units,
+XP bar, fall damage, void death with a proper death screen, sneak
+edge-protection, first-person held item with view bob and swing, a geometry
+cloud layer, the sun, Minecraft's black wireframe block outline, and the
+Monocraft typeface.
 
 Deliberately NOT implemented: mobs, crafting, tool tiers and durability,
 day/night, block crack overlays, armor slots. Hunger *drain* is written but
 switched off via `HUNGER_DRAIN_ENABLED` in `survival.js`, because a visitor
 reading a resume plot shouldn't starve while doing it.
 
-Not yet done: sneak edge-protection (Minecraft stops you walking off a ledge
-while sneaking), which matters more than usual on an island made of void.
+Not yet done: resume content (the whole point -- the island is still empty),
+multiplayer presence, sounds, and block-breaking particles. Fog was
+investigated and rejected: noa's terrain shader has no fog handling at all,
+so Babylon scene fog would tint the sky and leave the world untouched.
 
 ## Layout
 
