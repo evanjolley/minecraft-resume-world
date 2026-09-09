@@ -23,20 +23,25 @@ import { BLOCK_BY_ID } from './blocks.js'
  */
 
 /*
- * Where the block sits in camera space, and how big it is.
+ * Minecraft's own numbers, not guesses.
  *
- * These two are coupled: apparent size is roughly SCALE/z, so the pair is
- * chosen to hold the on-screen size while pushing the cube AWAY from the eye.
- * Distance matters independently of size because Minecraft renders its
- * viewmodel through a narrower FOV than the world; we can't easily do that
- * with a camera-parented mesh, and a cube held very close to a wide-FOV
- * camera splays out with obvious perspective distortion. Moving it back and
- * scaling it up trades that distortion away for free.
+ * The placement comes from ItemInHandRenderer, which translates the held item
+ * by (0.56, -0.52, -0.72) for the right hand. Minecraft's -Z is forward while
+ * Babylon's +Z is, hence the flipped sign on z.
  *
- * x and y scale with z so the block stays pinned in the lower-right corner.
+ * The rotation comes from the vanilla model assets/minecraft/models/block/
+ * block.json, whose "firstperson_righthand" display transform is
+ * rotation [0, 45, 0]. Yaw only -- no pitch, no roll. Earlier this had a
+ * hand-picked tilt on all three axes, which is what made the angle wrong.
+//
+ * Minecraft's raw offsets assume its own hand projection, which is set up
+ * separately from the world camera; dropped straight into ours the block
+ * sits half off the bottom-right corner. These keep Minecraft's rotation and
+ * relative framing but are pulled in to sit correctly in this projection.
  */
-const REST = { x: 0.70, y: -0.61, z: 1.50 }
-const SCALE = 0.40
+const REST = { x: 0.42, y: -0.30, z: 0.72 }
+const SCALE = 0.34
+const YAW = Math.PI / 4   // the 45 degrees from block.json
 
 export function installHeldItem(noa, inventory) {
   const scene = noa.rendering.getScene()
@@ -132,12 +137,13 @@ export function installHeldItem(noa, inventory) {
     const by = Math.abs(Math.sin(bobPhase)) * -0.026 * bobAmount
 
     // Minecraft's swing is an arc: the item dips and rotates, then returns.
+    // These deltas ride on top of the base transform rather than replacing it.
     const s = Math.sin(swing * Math.PI)
-    mesh.position.set(REST.x + bx - s * 0.12, REST.y + by - s * 0.16, REST.z - s * 0.06)
+    mesh.position.set(REST.x + bx - s * 0.12, REST.y + by - s * 0.18, REST.z - s * 0.08)
     mesh.rotation.set(
-      -0.22 + s * 0.9,
-      0.55 - s * 0.35,
-      0.12 + Math.cos(bobPhase) * 0.02 * bobAmount,
+      s * 0.8,
+      YAW - s * 0.3,
+      Math.cos(bobPhase) * 0.02 * bobAmount,
     )
 
     // Minecraft hides the viewmodel in third person.

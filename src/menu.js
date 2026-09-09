@@ -31,6 +31,27 @@ const CONTROLS = [
   ['Esc', 'This menu'],
 ]
 
+/*
+ * Re-acquiring pointer lock after the menu closes.
+ *
+ * Browsers impose a cooldown (~1.25s in Chrome) after the USER presses Escape
+ * to exit pointer lock: requestPointerLock is silently rejected during it.
+ * That is the bug where closing the menu left a live OS cursor over a
+ * menu-less world until you clicked again.
+ *
+ * So: ask immediately, then keep asking until it takes. main.js also re-locks
+ * on any click as a backstop, since a click always carries fresh user
+ * activation.
+ */
+export function requestLockPersistently(noa) {
+  noa.container.setPointerLock(true)
+  let tries = 0
+  const timer = setInterval(() => {
+    if (noa.container.hasPointerLock || ++tries > 14) return clearInterval(timer)
+    noa.container.setPointerLock(true)
+  }, 150)
+}
+
 export function installMenu(noa, { inputLock, inventory, survival }) {
   const screen = document.getElementById('pause')
   const controls = document.getElementById('controls')
@@ -70,9 +91,7 @@ export function installMenu(noa, { inputLock, inventory, survival }) {
   backRow.className = 'button-row'
   backRow.appendChild(mkButton('Back to Game', () => {
     setOpen(false)
-    // Synchronously inside the click handler: browsers only grant pointer
-    // lock from a real user gesture.
-    noa.container.setPointerLock(true)
+    requestLockPersistently(noa)
   }, { wide: true }))
   buttonRows.appendChild(backRow)
 
@@ -125,7 +144,7 @@ export function installMenu(noa, { inputLock, inventory, survival }) {
     if (survival.dead) return
     if (!screen.classList.contains('hidden')) {
       setOpen(false)
-      noa.container.setPointerLock(true)
+      requestLockPersistently(noa)
     }
   })
 

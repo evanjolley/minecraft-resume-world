@@ -28,6 +28,9 @@ export const MC = {
   PLAYER_HEIGHT: 1.8,
   PLAYER_WIDTH: 0.6,
   EYE_HEIGHT: 1.62,
+  // Minecraft's sneaking eye height. The 0.35 drop from 1.62 is what you see.
+  SNEAK_EYE_HEIGHT: 1.27,
+  SNEAK_HEIGHT: 1.5,
 
   // Fall damage begins after 3 blocks, then 1 half-heart per extra block.
   FALL_SAFE_BLOCKS: 3,
@@ -133,6 +136,18 @@ export function installSpeedModes(noa, move, survival) {
   let jumpWasDown = false
 
   /*
+   * Sneak camera drop. Minecraft's eye height is 1.62 standing and 1.27
+   * sneaking, a 0.35 block drop, and seeing the view dip is most of how
+   * sneaking reads as sneaking.
+   *
+   * noa points its camera at a separate `cameraTarget` entity that follows
+   * the player with a fixed offset, so the drop is a change to that offset
+   * rather than anything touching the player body.
+   */
+  const follow = noa.ents.getState(noa.camera.cameraTarget, 'followsEntity')
+  let eyeHeight = MC.EYE_HEIGHT
+
+  /*
    * Double-tap detection hangs off noa's keydown EVENT, not off polling
    * inputs.state each tick. A quick tap can begin and end entirely between
    * two ticks, so polling misses the first press outright and the double-tap
@@ -159,6 +174,12 @@ export function installSpeedModes(noa, move, survival) {
     move.maxSpeed = S.sneak ? MC.SNEAK_SPEED
       : sprinting ? MC.SPRINT_SPEED
       : MC.WALK_SPEED
+
+    // Minecraft eases this over a few ticks rather than snapping, which is
+    // what stops it reading as a glitch.
+    const targetEye = S.sneak ? MC.SNEAK_EYE_HEIGHT : MC.EYE_HEIGHT
+    eyeHeight += (targetEye - eyeHeight) * Math.min(1, (dt / 1000) * 14)
+    follow.offset[1] = eyeHeight
 
     // Ease the FOV rather than snapping it, the way Minecraft does.
     const targetFov = sprinting ? baseFov * SPRINT_FOV_MULT : baseFov

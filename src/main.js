@@ -10,7 +10,7 @@ import { installInteraction, installHotbarControls } from './interact.js'
 import { installRespawn } from './respawn.js'
 import { installHUD } from './hud.js'
 import { createInputLock } from './inputLock.js'
-import { installMenu } from './menu.js'
+import { installMenu, requestLockPersistently } from './menu.js'
 import { installHeldItem } from './heldItem.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky } from './sky.js'
@@ -145,7 +145,7 @@ inventory.add(ids.dirt, 32)
 const gameEl = document.getElementById('game')
 gameEl.addEventListener('mousedown', () => {
   if (inventory.open || menu.isOpen || survival.dead) return
-  if (!noa.container.hasPointerLock) noa.container.setPointerLock(true)
+  if (!noa.container.hasPointerLock) requestLockPersistently(noa)
 })
 
 // Keyboard events reach noa through its container, which has to be focused.
@@ -162,7 +162,16 @@ gameEl.focus()
  * lock deliberately, and without them each would immediately stack the pause
  * menu on top of itself.
  */
+let wasLocked = false
+noa.container.on('gainedPointerLock', () => { wasLocked = true })
+
 noa.container.on('lostPointerLock', () => {
+  // Only a real locked -> unlocked transition should open the menu. A FAILED
+  // lock request also emits this, so without the guard the retry loop that
+  // works around Chrome's post-Escape cooldown would keep popping the menu
+  // back open while it retried.
+  if (!wasLocked) return
+  wasLocked = false
   if (inventory.open || survival.dead || menu.isOpen) return
   menu.open()
 })
