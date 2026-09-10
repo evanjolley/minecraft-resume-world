@@ -307,43 +307,86 @@ function installMovementFeedback(noa) {
  * slide along the rim, which is what Minecraft does.
  */
 
-// Probed from the player's LEADING edge, not their centre. Testing the centre
-// (or "is any corner still supported") lets you creep forward until your rear
-// corner leaves the block, which strands you hanging off the rim instead of
-// stopping on it. Small, since half the player width is already added.
-const EDGE_LOOKAHEAD = 0.1
+/*
+ * Sneak edge-protection.
+ *
+ * The first version zeroed body.velocity and that was NOT enough. noa's
+ * movement component pushes with body.applyForce(), and a queued force is
+ * integrated on the next physics step regardless of what velocity was set to.
+ * So each tick re-accelerated from zero and you crept off the rim at about a
+ * third speed -- a brake rather than a barrier. Measured: sneaking east from
+ * x=39.5 ended at x=40.58, y=62.73. Off the edge, just slowly.
+ *
+ * So this restores POSITION instead of trying to cancel motion. Per axis, so
+ * sliding along a rim still works: only the axis that left solid ground gets
+ * put back.
+ */
+
+// How far under the feet to look for support.
+const FOOT_PROBE = 0.1
+
+let safeX = null
+let safeZ = null
 
 function preventWalkingOffEdge(noa) {
   const player = noa.playerEntity
   const body = noa.ents.getPhysics(player).body
 
-  // Only while actually standing on something. Airborne, Minecraft lets you
-  // fall regardless of whether sneak is held.
-  if (body.atRestY() >= 0) return
+  // Airborne, Minecraft lets you fall whether or not sneak is held.
+  if (body.atRestY() >= 0) {
+    safeX = safeZ = null
+    return
+  }
 
   const dat = noa.ents.getPositionData(player)
   const [x, y, z] = dat.position
   const half = dat.width / 2
+  const below = Math.floor(y - FOOT_PROBE)
 
-  // The block layer directly beneath the feet. The small bias matters: the
-  // player's y sits exactly ON the boundary when resting, and Math.floor of
-  // an exact integer would sample the block they're standing IN, not on.
-  const below = Math.floor(y - 0.1)
+  /*
+   * EVERY corner of the player's box must be over solid ground, not just one.
+   *
+   * "Any corner" seems more permissive in a good way but isn't: it counts a
+   * four-thousandth of a block of overlap as support, so you slide to x=40.296
+   * with 99% of your body over the void and call it standing. Requiring all
+   * four stops you with the box fully on the block, which is where Minecraft
+   * stops you.
+   *
+   * This still allows a one-block-wide bridge -- the player is 0.6 wide, so
+   * all four corners fit inside a single block with room to spare.
+   */
+  const grounded = (px, pz) => {
+    for (const dx of [-half, half]) {
+      for (const dz of [-half, half]) {
+        if (noa.getBlock(Math.floor(px + dx), below, Math.floor(pz + dz)) === 0) return false
+      }
+    }
+    return true
+  }
 
-  // Is the ground solid under the strip the leading edge is about to cross?
-  // Both ends of that strip are checked so a corner overhanging a diagonal
-  // gap still counts as unsupported.
-  const supported = (px, pz) =>
-    noa.getBlock(Math.floor(px), below, Math.floor(pz - half)) !== 0 ||
-    noa.getBlock(Math.floor(px), below, Math.floor(pz + half)) !== 0
+  if (grounded(x, z)) {
+    safeX = x
+    safeZ = z
+    return
+  }
 
-  const supportedZ = (px, pz) =>
-    noa.getBlock(Math.floor(px - half), below, Math.floor(pz)) !== 0 ||
-    noa.getBlock(Math.floor(px + half), below, Math.floor(pz)) !== 0
+  // We're over nothing. Work out which axis did it and undo just that one.
+  const xIsSafe = safeX !== null && grounded(safeX, z)
+  const zIsSafe = safeZ !== null && grounded(x, safeZ)
 
-  const v = body.velocity
-  const reach = half + EDGE_LOOKAHEAD
+  let nx = x
+  let nz = z
+  if (xIsSafe) {
+    nx = safeX
+    body.velocity[0] = 0
+  } else if (zIsSafe) {
+    nz = safeZ
+    body.velocity[2] = 0
+  } else {
+    if (safeX !== null) { nx = safeX; body.velocity[0] = 0 }
+    if (safeZ !== null) { nz = safeZ; body.velocity[2] = 0 }
+  }
 
-  if (v[0] !== 0 && !supported(x + Math.sign(v[0]) * reach, z)) v[0] = 0
-  if (v[2] !== 0 && !supportedZ(x, z + Math.sign(v[2]) * reach)) v[2] = 0
+  if (nx !== x || nz !== z) noa.ents.setPosition(player, [nx, y, nz])
 }
+

@@ -275,6 +275,17 @@ export function installInventoryScreen(noa, inv, inputLock) {
     noa.container.setPointerLock(!open)
   }
 
+  /*
+   * noa's default bindings put KeyE on "alt-fire" (place block) alongside
+   * Mouse3, and bind() APPENDS rather than replaces -- so one press of E fired
+   * both handlers, placing a block on the way to opening the inventory. The
+   * alt-fire handler runs first, while inv.open is still false, so its own
+   * guard could never catch it.
+   *
+   * Rebind alt-fire to the mouse only before claiming E.
+   */
+  noa.inputs.unbind('alt-fire')
+  noa.inputs.bind('alt-fire', 'Mouse3')
   noa.inputs.bind('inventory', 'KeyE')
   noa.inputs.down.on('inventory', () => setOpen(!inv.open))
 
