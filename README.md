@@ -97,7 +97,7 @@ switched off via `HUNGER_DRAIN_ENABLED` in `survival.js`, because a visitor
 reading a resume plot shouldn't starve while doing it.
 
 Not yet done: resume content (the whole point -- the island is still empty),
-multiplayer presence, sounds, and block-breaking particles.
+multiplayer presence, and non-cube blocks (stairs, slabs, panes).
 
 The block palette is 355 full cubes on a paged texture atlas (128 layers per
 page, 5 pages) -- paged because WebGL2 only guarantees 256 array layers, so a

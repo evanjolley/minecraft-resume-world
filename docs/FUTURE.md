@@ -9,15 +9,12 @@ They came to find out who Evan is, and right now the world cannot tell them.
 Minecraft-accurate physics, survival HUD and inventory from Minecraft's own
 sprites, mining and placing, day/night on Minecraft's clock, a skinned player
 model with F5 perspectives and crouch, chat, block sounds, break/landing/sprint
-particles, a 355-block palette on a paged texture atlas, oak trees, and a
-62-test browser suite.
+particles, a 355-block palette on a paged texture atlas, oak trees, game modes
+with an OP-gated command system, and a 96-test browser suite.
 
 ## In flight
 
 - Damage and death sounds.
-- Gamemodes (adventure default, survival, creative, spectator), OP
-  authentication, and vanilla commands — built behind a single authority seam
-  so the server can take over without touching any command.
 - An item model distinct from blocks, crafting (2x2 and 3x3), armor, offhand.
 
 ## Blocked, and on what
@@ -29,13 +26,16 @@ Not forgotten — each is waiting on something specific.
   Waiting on the block-change seam being built with gamemodes, which is
   exactly what a drop should hang off. Doing both at once means writing it
   twice.
-- **Tool mining speed.** The material tiers and multipliers are being defined
-  with crafting, but wiring them into break times needs `interact.js`, which
-  another agent holds.
-- **Right-clicking a crafting table** to open the 3x3 grid — same file, same
-  reason.
-- **Armor damage reduction.** The formula and the HUD bar come with crafting;
-  applying it needs `survival.js`.
+- **Tool mining speed.** Tiers and multipliers are being defined with crafting;
+  wiring them into break times is now unblocked.
+- **Right-clicking a crafting table** to open the 3x3 grid — unblocked.
+- **Armor damage reduction.** The formula and HUD bar come with crafting;
+  applying it in `survival.js` is now unblocked.
+- **Weather.** `/weather` parses and reports honestly that it isn't
+  implemented, deliberately: rain done properly is a camera-following particle
+  volume that skips sheltered columns, a sky and light-level change, an ambient
+  loop and a thunder timer. A `/weather` that flipped a boolean nothing
+  rendered would be worse than one that admits the truth.
 
 ## Sequencing
 
@@ -150,6 +150,40 @@ links, and build the kill switch on day one rather than the day it's needed.
 Worth considering: ship multiplayer with commands and system messages
 ("Evan joined the game") but WITHOUT player-to-player messaging. That keeps
 the Minecraft feel and the useful half, and leaves the abuse surface closed.
+
+---
+
+## 3b. OP authority, and where the server takes over
+
+`src/authority.js` is the only module that grants or denies anything. It is
+written on the assumption that the client is untrusted, even though today it is
+the client doing the deciding.
+
+**What lands with the Durable Object.** `isOperator()` becomes a token check.
+`/op` posts the passphrase to the room, the room holds the real secret (a
+Worker env var, never in the bundle) and returns a short-lived signed token.
+Every `request*` method carries it and the DO decides. The `world` adapter in
+`main.js` does not change: it is how a confirmed change reaches the game, and
+that is the same job whether the confirmation came from a local branch or a
+socket.
+
+**What is already correct for that world.** Nothing outside the authority calls
+`noa.setBlock`, so `requestBlockChange` and `requestFill` are the only two
+functions the server has to validate. `/fill` is one request rather than a loop,
+because a server must validate a volume as a volume — 32768 round trips is not
+something that can be made to work later. Game modes are granted rather than
+assigned. Every request is a promise, so no call site assumes a synchronous
+answer.
+
+**What is not.** The passphrase constant. It ships in the bundle, devtools
+reads it in ten seconds, and the localStorage key can be forged without it. The
+file says so at length. The fix when multiplayer lands is not a longer string
+or a hash — it is the room holding the secret.
+
+**Do not** add anti-cheat, a login UI, or client-side crypto. The list of
+things the server must refuse is short: block changes outside an allowed
+region, game mode grants, and `/fill` volume. Everything else a visitor can do
+affects only their own tab.
 
 ---
 
