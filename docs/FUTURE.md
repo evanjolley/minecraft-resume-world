@@ -8,8 +8,34 @@ They came to find out who Evan is, and right now the world cannot tell them.
 
 Minecraft-accurate physics, survival HUD and inventory from Minecraft's own
 sprites, mining and placing, day/night on Minecraft's clock, a skinned player
-model with F5 perspectives and crouch, chat, block sounds, particles, a
-355-block palette on a paged texture atlas, and a 62-test browser suite.
+model with F5 perspectives and crouch, chat, block sounds, break/landing/sprint
+particles, a 355-block palette on a paged texture atlas, oak trees, and a
+62-test browser suite.
+
+## In flight
+
+- Damage and death sounds.
+- Gamemodes (adventure default, survival, creative, spectator), OP
+  authentication, and vanilla commands — built behind a single authority seam
+  so the server can take over without touching any command.
+- An item model distinct from blocks, crafting (2x2 and 3x3), armor, offhand.
+
+## Blocked, and on what
+
+Not forgotten — each is waiting on something specific.
+
+- **Dropped item entities.** Mined blocks currently teleport into the
+  inventory; they should fall on the ground and be picked up, with Q to drop.
+  Waiting on the block-change seam being built with gamemodes, which is
+  exactly what a drop should hang off. Doing both at once means writing it
+  twice.
+- **Tool mining speed.** The material tiers and multipliers are being defined
+  with crafting, but wiring them into break times needs `interact.js`, which
+  another agent holds.
+- **Right-clicking a crafting table** to open the 3x3 grid — same file, same
+  reason.
+- **Armor damage reduction.** The formula and the HUD bar come with crafting;
+  applying it needs `survival.js`.
 
 ## Sequencing
 
@@ -25,6 +51,11 @@ model with F5 perspectives and crouch, chat, block sounds, particles, a
 The ordering rule: anything that makes the world worth visiting beats anything
 that makes it more elaborate. Engine polish has been the easy, fun work; it is
 not the work that makes the site do its job.
+
+The numbered sections below are detail, not priority — read the sequencing
+above for order. Keep this file honest: when something ships it moves up to
+"Already built" and its section goes, and anything deferred lands in
+"Blocked" with the reason rather than being quietly dropped.
 
 ---
 
@@ -103,26 +134,22 @@ everyone teleport ten times a second.
 
 ---
 
-## 3. Commands, and my case against chat
+## 3. Chat moderation, when chat becomes multiplayer
 
-**Commands are worth building.** A `/` interface is instantly recognisable and
-genuinely useful here: `/tp <plot>` to jump to a resume section, `/time` to
-force day or night, `/skin <name>`, `/help` to orient a lost visitor. Purely
-client-side to start. Perhaps half a day.
+Chat itself is built, and commands are in flight. What is NOT built, and must
+be before chat carries anyone else's words, is moderation.
 
-**Chat I'd push back on.** Player-to-player text on a personal domain,
-attached to Evan's name and next to his resume, is a moderation liability with
-almost no upside for someone who is there for three minutes. The realistic
-outcomes are an empty chat box or one you have to police.
+Today chat is local: you are talking to yourself, so there is nothing to
+police. The moment messages travel between visitors, player-to-player text on
+a personal domain — attached to Evan's name, next to his resume — becomes a
+liability with little upside for someone who is there for three minutes.
 
-If it ships anyway: rate limit per connection, cap length, strip links, and
-build the kill switch on day one rather than the day you need it. That's ~3
-days once moderation is taken seriously, against ~1 day if it isn't — and the
-1-day version is the one that becomes a problem.
+Before chat goes multiplayer: rate limit per connection, cap length, strip
+links, and build the kill switch on day one rather than the day it's needed.
 
-The Minecraft *feel* comes from the `/` interface and the chat-styled overlay
-for system messages ("Evan joined the game"). That's available without any
-user-to-user messaging at all.
+Worth considering: ship multiplayer with commands and system messages
+("Evan joined the game") but WITHOUT player-to-player messaging. That keeps
+the Minecraft feel and the useful half, and leaves the abuse surface closed.
 
 ---
 
