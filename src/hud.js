@@ -18,6 +18,17 @@ import { MAX_HEALTH, MAX_FOOD } from './survival.js'
  *   xp bar         182 x 5
  */
 export const SCALE = 2
+
+/*
+ * Minecraft's font advances 6 GUI pixels per character. Monocraft's advance is
+ * 2/3 em, so font-size = 6 * SCALE / (2/3) = 18px at SCALE 2 lands exactly on
+ * that grid.
+ *
+ * The sprite geometry here was always GUI-exact; these text sizes were not --
+ * they were eyeballed at 13px and 15px, which is why chat (built to the grid)
+ * came out visibly larger than the item counts.
+ */
+export const FONT_PX = SCALE * 6 / (2 / 3)
 const HOTBAR_W = 182, HOTBAR_H = 22
 const SLOT_PITCH = 20, SLOT_INSET = 3, SLOT_SIZE = 16
 const SEL_SIZE = 24

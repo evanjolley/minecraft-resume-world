@@ -52,7 +52,7 @@
     #hud { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%);
       display: flex; flex-direction: column; align-items: center;
       pointer-events: none; z-index: 4; }
-    #held-name { font-size: 13px; text-shadow: 2px 2px 0 #000; opacity: 0;
+    #held-name { font-size: 18px; text-shadow: 2px 2px 0 #000; opacity: 0;
       transition: opacity 400ms; height: 18px; }
     #held-name.visible { opacity: 1; }
     /* Minecraft stacks these bottom-up: hotbar, XP bar, then hearts and food.
@@ -69,13 +69,13 @@
       image-rendering: pixelated; }
     #xp-fill { position: absolute; left: 0; top: 0; background-repeat: no-repeat;
       background-position: left top; image-rendering: pixelated; }
-    #xp-level { position: absolute; font-size: 15px; color: #80ff20;
+    #xp-level { position: absolute; font-size: 18px; color: #80ff20;
       text-shadow: 2px 2px 0 #000; bottom: calc(100% - 3px); }
     #hotbar { position: relative; background-repeat: no-repeat; background-size: 100% 100%;
       image-rendering: pixelated; }
     .hotbar-slot { position: absolute; display: grid; place-items: center; }
     #hotbar-selection { position: absolute; z-index: 2; pointer-events: none; }
-    .count { position: absolute; right: -2px; bottom: -4px; font-size: 15px;
+    .count { position: absolute; right: -2px; bottom: -4px; font-size: 18px;
       color: #fff; text-shadow: 2px 2px 0 #3f3f3f; pointer-events: none; z-index: 3; }
     #coords { position: absolute; left: 10px; top: 10px; font-size: 12px; opacity: 0.55;
       text-shadow: 1px 1px 0 #000; pointer-events: none; z-index: 4; }
