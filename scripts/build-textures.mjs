@@ -11,7 +11,10 @@
  * to a public repo or serving them from a public site is redistribution.
  * Keeping the output untracked makes the wrong thing hard to do by accident.
  */
-import { mkdirSync, rmSync, readdirSync, copyFileSync, existsSync, readFileSync } from 'node:fs'
+import {
+  mkdirSync, rmSync, readdirSync, copyFileSync, existsSync, readFileSync,
+  writeFileSync, renameSync,
+} from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,10 +22,46 @@ import { homedir, tmpdir } from 'node:os'
 import sharp from 'sharp'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const OUT = join(ROOT, 'public', 'textures')
-const UI = join(ROOT, 'public', 'ui')
-const SKINS = join(ROOT, 'public', 'skins')
-const source = (process.argv.find(a => a.startsWith('--source=')) || '--source=ce').split('=')[1]
+const PUBLIC = join(ROOT, 'public')
+
+/*
+ * Output is built into a staging directory and swapped in at the end.
+ *
+ * Building in place meant deleting public/textures first and regenerating it
+ * over several seconds, during which a running dev server 404s every texture
+ * and the world renders as missing-texture checkerboard. Staging reduces that
+ * window to a directory rename.
+ */
+const STAGE = join(PUBLIC, '.build')
+const OUT = join(STAGE, 'textures')
+const UI = join(STAGE, 'ui')
+const SKINS = join(STAGE, 'skins')
+
+// Records which source produced the current build, so `npm install` can
+// rebuild the SAME one instead of silently reverting a vanilla build to CE.
+const MARKER = join(PUBLIC, 'textures', '.source')
+
+const arg = (name, fallback) => {
+  const found = process.argv.find(a => a.startsWith(`--${name}=`))
+  return found ? found.split('=')[1] : fallback
+}
+
+const ensureOnly = process.argv.includes('--ensure')
+let source = arg('source', null)
+
+if (!source) {
+  source = existsSync(MARKER) ? readFileSync(MARKER, 'utf8').trim() : 'ce'
+}
+
+/*
+ * --ensure is what postinstall runs. If a usable build is already present it
+ * does nothing at all, so installing a dependency never disturbs the textures
+ * a developer deliberately chose.
+ */
+if (ensureOnly && existsSync(MARKER) && readdirSync(join(PUBLIC, 'textures')).length > 5) {
+  console.log(`textures already built from "${source}" -- leaving them alone`)
+  process.exit(0)
+}
 
 /* Block key -> texture file name in a vanilla Minecraft jar. */
 const VANILLA = {
@@ -257,11 +296,26 @@ async function fromVanilla() {
   console.log('  gitignored so this stays hard to do by accident.\n')
 }
 
-rmSync(OUT, { recursive: true, force: true })
-rmSync(UI, { recursive: true, force: true })
-rmSync(SKINS, { recursive: true, force: true })
+rmSync(STAGE, { recursive: true, force: true })
 mkdirSync(OUT, { recursive: true })
 if (source === 'vanilla') await fromVanilla()
 else await fromCE()
 await buildHeldAtlases()
 console.log(`held atlases: ${readdirSync(join(OUT, 'held')).length}`)
+
+writeFileSync(join(OUT, '.source'), source)
+
+// Swap the staged build in. Renames are near-instant, so a dev server sees at
+// most a flicker rather than seconds of missing textures.
+for (const name of ['textures', 'ui', 'skins']) {
+  const live = join(PUBLIC, name)
+  const staged = join(STAGE, name)
+  if (!existsSync(staged)) continue
+  const old = `${live}.old`
+  rmSync(old, { recursive: true, force: true })
+  if (existsSync(live)) renameSync(live, old)
+  renameSync(staged, live)
+  rmSync(old, { recursive: true, force: true })
+}
+rmSync(STAGE, { recursive: true, force: true })
+console.log(`active texture source: ${source}`)

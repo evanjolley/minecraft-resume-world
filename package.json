@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "textures": "node scripts/build-textures.mjs --source=ce",
     "textures:vanilla": "node scripts/build-textures.mjs --source=vanilla",
-    "postinstall": "node scripts/build-textures.mjs --source=ce"
+    "postinstall": "node scripts/build-textures.mjs --ensure"
   },
   "dependencies": {
     "@babylonjs/core": "^6.49.0",
