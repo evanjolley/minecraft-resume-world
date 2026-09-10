@@ -427,28 +427,12 @@ export function installSounds(noa, deps = {}) {
     }))
 
     /*
-     * Death goes through a latch rather than straight off onDeath, because
-     * there are two ways to die here and only one of them emits. Falling into
-     * the void -- the death every visitor finds first, on purpose -- runs
-     * survival.onVoidFall(), which zeroes health and calls changed() without
-     * ever going through damage(), so an onDeath-only wiring would leave the
-     * signature death of this world silent.
-     *
-     * The latch is also the dedupe. On a lethal hit changed() runs BEFORE
-     * died.emit, so both paths fire for one death; whichever arrives first
-     * makes the sound and the other is a no-op until reset() clears the flag.
+     * Every way to die emits this -- damage(), onVoidFall() and /kill all end
+     * in died.emit -- so one subscription covers all three. It did not always:
+     * onVoidFall used to zero health without emitting, and the void is the
+     * death every visitor of this world finds first, on purpose.
      */
-    let announced = false
-    const announceDeath = () => {
-      if (announced) return
-      announced = true
-      play('death')
-    }
-    unsubscribe.push(survival.onDeath(announceDeath))
-    unsubscribe.push(survival.onChange((s) => {
-      if (s.dead) announceDeath()
-      else announced = false
-    }))
+    unsubscribe.push(survival.onDeath(() => play('death')))
   }
 
   /*
