@@ -11,6 +11,7 @@ import { installRespawn } from './respawn.js'
 import { installHUD } from './hud.js'
 import { createInputLock } from './inputLock.js'
 import { installMenu, requestLockPersistently } from './menu.js'
+import { installChat } from './chat.js'
 import { installHeldItem } from './heldItem.js'
 import { createSkinMaterial } from './playerModel.js'
 import { createSwing } from './swing.js'
@@ -129,6 +130,47 @@ installHUD(noa, { inventory, survival })
 
 const menu = installMenu(noa, { inputLock, inventory, inventoryScreen, survival })
 
+/*
+ * Chat. Local only for now -- there is no transport, so your messages come
+ * straight back to you. The name lives here rather than in chat.js because it
+ * is identity, which is what a network layer will want to own.
+ */
+const PLAYER_NAME = 'Evan'
+const chat = installChat(noa, {
+  inputLock, inventory, menu, survival,
+  name: PLAYER_NAME,
+  // Chat has to give the mouse back so you can see what you type, and take it
+  // again on close. requestLockPersistently is menu.js's workaround for the
+  // browser cooldown that follows an Escape -- reused rather than reinvented.
+  requestPointerLock: () => requestLockPersistently(noa),
+})
+
+// Registering a command is one line. These two are the useful ones today;
+// /tp <plot> for the resume plots goes here once the plots exist.
+chat.command('time', 'Sets the time of day: day, night, or a tick count', ([arg]) => {
+  const t = arg === 'day' ? 1000 : arg === 'night' ? 13000 : Number(arg)
+  if (!Number.isFinite(t)) {
+    chat.addMessage({ text: 'Expected "day", "night" or a tick count', kind: 'error' })
+    return
+  }
+  sky.setTime(t)
+  chat.addMessage({ text: `Set the time to ${Math.floor(t)}`, kind: 'system' })
+})
+
+chat.command('tp', 'Teleports you to x y z', (args) => {
+  const [x, y, z] = args.map(Number)
+  if (![x, y, z].every(Number.isFinite)) {
+    chat.addMessage({ text: 'Expected three numbers: /tp x y z', kind: 'error' })
+    return
+  }
+  noa.ents.setPosition(noa.playerEntity, x, y, z)
+  chat.addMessage({ text: `Teleported ${PLAYER_NAME} to ${x}, ${y}, ${z}`, kind: 'system' })
+})
+
+// The join notice, yellow, exactly as a server would announce it. Emitting it
+// locally keeps that path real rather than something to be written later.
+chat.announceJoin(PLAYER_NAME)
+
 // Starter kit. Minecraft survival starts you empty-handed, but this world is
 // meant to be poked at within seconds of arriving, so seed the hotbar.
 inventory.add(ids.planks, 64)
@@ -143,7 +185,7 @@ inventory.add(ids.dirt, 32)
  */
 const gameEl = document.getElementById('game')
 gameEl.addEventListener('mousedown', () => {
-  if (inventory.open || menu.isOpen || survival.dead) return
+  if (inventory.open || menu.isOpen || survival.dead || chat.isOpen) return
   if (!noa.container.hasPointerLock) requestLockPersistently(noa)
 })
 
@@ -171,9 +213,12 @@ noa.container.on('lostPointerLock', () => {
   // back open while it retried.
   if (!wasLocked) return
   wasLocked = false
-  if (inventory.open || survival.dead || menu.isOpen) return
+  // Chat is in this list for the same reason as the others: it releases the
+  // lock on purpose, and without the guard opening chat would stack the pause
+  // menu on top of it.
+  if (inventory.open || survival.dead || menu.isOpen || chat.isOpen) return
   menu.open()
 })
 
 window.noa = noa
-window.game = { inventory, survival, move, sky, menu, inputLock, perspective, skinMaterial }
+window.game = { inventory, survival, move, sky, menu, chat, inputLock, perspective, skinMaterial }

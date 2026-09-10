@@ -137,6 +137,36 @@
     #controls-list dd { margin: 0; color: #d8d8d8; text-shadow: 2px 2px 0 #3f3f3f; }
     #controls-close { width: 200px; }
 
+    /* ---------------- chat ----------------
+       Sizes and offsets come from chat.js in Minecraft GUI pixels, like the
+       rest of the HUD. What lives here is only positioning and the two
+       background alphas, which are Minecraft's own: the log's rows are
+       0x7F000000 (alpha 127) and the input bar is 0x80000000 (alpha 128).
+       They differ by one because they come from different code paths, and
+       matching them would be the wrong kind of tidy. */
+    #chat { position: absolute; left: 0; z-index: 6; pointer-events: none;
+      display: flex; flex-direction: column; justify-content: flex-end;
+      overflow: hidden; }
+    /* Wrapped lines are not indented in Minecraft, and each row's background
+       is the full chat width rather than hugging the text. pre-wrap plus a
+       fixed width gets both for free. */
+    .chat-line { background: rgba(0, 0, 0, 0.498); white-space: pre-wrap;
+      overflow-wrap: break-word; }
+    #chat-bar { position: absolute; z-index: 7; background: rgba(0, 0, 0, 0.502); }
+    #chat-input { display: block; width: 100%; height: 100%; box-sizing: border-box;
+      background: none; border: 0; outline: 0; padding: 0; font: inherit;
+      color: #e0e0e0; text-shadow: 2px 2px 0 #383838;
+      /* Minecraft draws its own cursor, so the browser's is hidden and
+         #chat-caret is drawn in its place. */
+      caret-color: transparent; }
+    #chat-caret { position: absolute; top: 0; color: #e0e0e0;
+      text-shadow: 2px 2px 0 #383838; pointer-events: none; white-space: pre; }
+    /* Mid-string the cursor becomes a thin bar instead of an underscore. */
+    #chat-caret.bar { color: transparent; text-shadow: none; background: #d0d0d0;
+      width: var(--caret-w); height: var(--caret-h); top: var(--caret-top); }
+    body.inv-open #chat, body.menu-open #chat,
+    body.inv-open #chat-bar, body.menu-open #chat-bar { display: none; }
+
     /* ---------------- death ---------------- */
     #death { position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
       gap: 14px; background: rgba(120, 0, 0, 0.45); z-index: 25; }
@@ -168,6 +198,13 @@
       <div id="xp-level"></div>
     </div>
     <div id="hotbar"></div>
+  </div>
+
+  <div id="chat"><div id="chat-lines"></div></div>
+  <div id="chat-bar" class="hidden">
+    <input id="chat-input" type="text" autocomplete="off" autocorrect="off"
+           autocapitalize="off" spellcheck="false" />
+    <span id="chat-caret"></span>
   </div>
 
   <div id="inventory" class="hidden">
