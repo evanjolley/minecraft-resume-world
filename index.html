@@ -42,6 +42,11 @@
     .icon-side { transform: rotateY(90deg) translateZ(calc(var(--face) / 2)); }
     .count { position: absolute; right: 2px; bottom: 0; font-size: 14px; font-weight: 700;
       color: #fff; text-shadow: 2px 2px 0 #3f3f3f; pointer-events: none; }
+    /* Non-block items are FLAT sprites, not cubes. They fill the slot rather
+       than being inset like the cube: the 16x16 art already has its own
+       padding, so shrinking it again leaves it swimming. */
+    .item-icon { background-repeat: no-repeat; background-size: 100% 100%;
+      image-rendering: pixelated; pointer-events: none; }
 
     /* ---------------- HUD ----------------
        Every size and offset is set from JS in Minecraft GUI pixels times a
@@ -60,7 +65,10 @@
        which Minecraft draws sitting on top of the bar. */
     #status { display: flex; justify-content: space-between; width: 100%;
       position: relative; margin-bottom: 5px; }
-    #hearts, #hunger { position: relative; }
+    #hearts, #hunger, #armor { position: relative; }
+    /* Minecraft stacks the armor row directly above the hearts, left-aligned,
+       and removes it entirely at zero points -- hud.js does the removing. */
+    #armor-row { display: flex; width: 100%; margin-bottom: 1px; }
     .icon-slot { position: absolute; top: 0; }
     .icon-slot .fill { z-index: 1; }
     #xp-row { position: relative; display: flex; align-items: center;
@@ -81,18 +89,30 @@
       text-shadow: 1px 1px 0 #000; pointer-events: none; z-index: 4; }
 
     /* ---------------- inventory ---------------- */
-    #inventory { position: absolute; inset: 0; display: grid; place-content: center;
+    /* Two container screens share every rule: the inventory (2x2 crafting,
+       armor, offhand) and the crafting table (3x3). Only the background
+       sprite and the slot positions differ, both set from inventory.js. */
+    #inventory, #crafting { position: absolute; inset: 0; display: grid; place-content: center;
       background: rgba(0,0,0,0.55); z-index: 20; }
     /* The sprite leaves the player-preview window transparent, which showed
        the page's black through it. Minecraft's panel grey sits behind so it
        reads as a recess. The 3D character render belongs here later. */
-    #inv-panel { position: relative; background-repeat: no-repeat; background-size: 100% 100%;
-      background-color: #c6c6c6; image-rendering: pixelated; }
+    #inv-panel, #craft-panel { position: relative; background-repeat: no-repeat;
+      background-size: 100% 100%; background-color: #c6c6c6; image-rendering: pixelated; }
     #inv-doll { position: absolute; }
     .doll-part { position: absolute; background-repeat: no-repeat;
       image-rendering: pixelated; }
-    .slot { position: absolute; display: grid; place-items: center; cursor: pointer; }
-    .slot:hover { background: rgba(255,255,255,0.35); }
+    /* Every cell on a container panel. `.slot` is the narrower class for the
+       player's own 36 -- see the comment in inventory.js. */
+    .gui-slot { position: absolute; display: grid; place-items: center; cursor: pointer;
+      background-repeat: no-repeat; background-size: 100% 100%; image-rendering: pixelated; }
+    /* Container titles. Minecraft draws them with no shadow, unlike the HUD. */
+    .gui-label { position: absolute; line-height: 1; pointer-events: none; }
+    /* background-COLOR, not the `background` shorthand: the shorthand resets
+       background-size and background-repeat to their initial values, which
+       made the hint outline in an empty armor or offhand slot tile 2x2 the
+       moment the pointer touched it. */
+    .gui-slot:hover { background-color: rgba(255,255,255,0.35); }
     #inv-carried { position: fixed; left: 0; top: 0; display: grid; place-items: center;
       pointer-events: none; z-index: 30; }
     body.inv-open #hud, body.inv-open #crosshair,
@@ -189,6 +209,7 @@
 
   <div id="hud">
     <div id="held-name"></div>
+    <div id="armor-row" class="hidden"><div id="armor"></div></div>
     <div id="status">
       <div id="hearts"></div>
       <div id="hunger"></div>
@@ -209,6 +230,9 @@
 
   <div id="inventory" class="hidden">
     <div id="inv-panel"></div>
+  </div>
+  <div id="crafting" class="hidden">
+    <div id="craft-panel"></div>
   </div>
   <div id="inv-carried" class="hidden"></div>
 

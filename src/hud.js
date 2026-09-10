@@ -1,6 +1,7 @@
-import { createBlockIcon } from './blockIcon.js'
-import { BLOCK_BY_ID } from './blocks.js'
+import { createItemIcon } from './blockIcon.js'
+import { itemName } from './items.js'
 import { HOTBAR_SIZE } from './inventory.js'
+import { armorPoints } from './armor.js'
 import { MAX_HEALTH, MAX_FOOD } from './survival.js'
 
 /*
@@ -15,9 +16,13 @@ import { MAX_HEALTH, MAX_FOOD } from './survival.js'
  *   hotbar sprite   182 x 22, item slots 16x16 at x = 3 + i*20, y = 3
  *   selection       24 x 24, drawn at x = i*20 - 1, y = -1
  *   hearts / food    9 x 9, pitch 8 (they overlap by a pixel)
+ *   armor            9 x 9, same row geometry, drawn ABOVE the hearts
  *   xp bar         182 x 5
  */
 export const SCALE = 2
+
+/** Full diamond is 20 points, the same 10-icon scale as hearts and hunger. */
+export const MAX_ARMOR = 20
 
 /*
  * Minecraft's font advances 6 GUI pixels per character. Monocraft's advance is
@@ -45,9 +50,15 @@ function spriteEl(src, w, h) {
 }
 
 /*
- * Health and food are in HALF units (20 = 10 icons), so each icon is full,
- * half or empty. Rendering `value / 2` rounded is the classic bug that makes
- * half-hearts disappear, so each icon is decided explicitly.
+ * Health, food and armor are all in HALF units (20 = 10 icons), so each icon
+ * is full, half or empty. Rendering `value / 2` rounded is the classic bug
+ * that makes half-hearts disappear, so each icon is decided explicitly.
+ *
+ * The half case tests `points > 0`, not `points === 1`, because health is a
+ * FLOAT once armor is involved -- armor.js reduces 4 damage to 3.28, not to
+ * 3. An exact comparison renders that sliver of a heart as empty, which is
+ * how you get a player who looks dead and isn't. Minecraft rounds the icon
+ * up for exactly this reason.
  */
 function iconRow(container, count, kind, rightToLeft) {
   const icons = []
@@ -75,7 +86,7 @@ function paintRow(icons, value) {
     if (points >= 2) {
       fill.style.backgroundImage = `url(/ui/${kind}_full.png)`
       fill.style.opacity = '1'
-    } else if (points === 1) {
+    } else if (points > 0) {
       fill.style.backgroundImage = `url(/ui/${kind}_half.png)`
       fill.style.opacity = '1'
     } else {
@@ -123,7 +134,7 @@ export function installHUD(noa, { inventory, survival }) {
       cell.textContent = ''
       const stack = inv.slots[i]
       if (!stack) continue
-      cell.appendChild(createBlockIcon(stack.id, SLOT_SIZE * SCALE))
+      cell.appendChild(createItemIcon(stack.id, SLOT_SIZE * SCALE))
       if (stack.count > 1) {
         const n = document.createElement('span')
         n.className = 'count'
@@ -138,14 +149,32 @@ export function installHUD(noa, { inventory, survival }) {
     if (inv.selected !== lastNamed) {
       lastNamed = inv.selected
       const stack = inv.slots[inv.selected]
-      label.textContent = stack ? (BLOCK_BY_ID.get(stack.id)?.name ?? '') : ''
+      label.textContent = stack ? itemName(stack.id) : ''
       label.classList.toggle('visible', !!stack)
       clearTimeout(labelTimer)
       labelTimer = setTimeout(() => label.classList.remove('visible'), 2000)
     }
   })
 
-  /* ---- hearts, food, xp ---- */
+  /* ---- armor, hearts, food, xp ---- */
+  /*
+   * Minecraft hides the armor bar entirely at zero points rather than showing
+   * ten empty outlines -- the row is simply absent until you put something on,
+   * and the hearts move down to fill the space. Reproducing that is one
+   * classList toggle and it is most of what makes the bar look native.
+   */
+  const armorEl = document.getElementById('armor')
+  const armorRow = document.getElementById('armor-row')
+  armorEl.style.height = px(9)
+  armorEl.style.width = px(9 + 8 * (MAX_ARMOR / 2 - 1))
+  const armorIcons = iconRow(armorEl, MAX_ARMOR / 2, 'armor', false)
+
+  inventory.onChange((inv) => {
+    const points = armorPoints(inv)
+    armorRow.classList.toggle('hidden', points <= 0)
+    paintRow(armorIcons, points)
+  })
+
   const heartsEl = document.getElementById('hearts')
   const hungerEl = document.getElementById('hunger')
   heartsEl.style.height = hungerEl.style.height = px(9)
