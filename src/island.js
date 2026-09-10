@@ -105,11 +105,99 @@ const VARIANTS = [
   { key: 'granite',  scale: 0.060, rarity: 0.8367, seed: 1171 },
 ]
 
+/*
+ * Trees.
+ *
+ * Placed on a coarse grid with one candidate per cell, jittered inside it, so
+ * they scatter without clumping and without any two ever overlapping. The
+ * alternative -- a per-column probability -- gives clusters and bald patches,
+ * and on an island this small that reads as a bug rather than as nature.
+ *
+ * Like everything else here this is a pure function of position: a voxel high
+ * in a canopy has to be able to work out which trunk it belongs to on its own,
+ * because noa may ask for that chunk without ever having asked for the ground
+ * beneath it.
+ */
+const TREE_CELL = 11
+const TREE_DENSITY = 0.55
+const CANOPY_R = 2
+// Leave the spawn point clear so you don't materialise inside a trunk.
+const SPAWN_CLEAR = 7
+
+/** @returns {null | {x, z, height}} the tree owned by a grid cell, if any. */
+function treeInCell(cellX, cellZ) {
+  if (hash01(cellX, 7, cellZ, 5150) > TREE_DENSITY) return null
+
+  // Jitter inside the cell, inset by the canopy radius so a tree can never
+  // straddle two cells -- that inset is what makes the 3x3 search below
+  // sufficient.
+  const span = TREE_CELL - CANOPY_R * 2
+  const x = cellX * TREE_CELL + CANOPY_R + Math.floor(hash01(cellX, 8, cellZ, 61) * span)
+  const z = cellZ * TREE_CELL + CANOPY_R + Math.floor(hash01(cellX, 9, cellZ, 71) * span)
+
+  // Keep the whole canopy on the island, and off the spawn point.
+  const edge = HALF - CANOPY_R - 1
+  if (x < -edge || x > edge || z < -edge || z > edge) return null
+  if (Math.abs(x) <= SPAWN_CLEAR && Math.abs(z) <= SPAWN_CLEAR) return null
+
+  const height = 4 + Math.floor(hash01(cellX, 10, cellZ, 81) * 3)   // 4..6
+  return { x, z, height }
+}
+
+/** @returns the block id this tree contributes at a voxel, or 0. */
+function treeVoxelFor(tree, x, y, z, ids) {
+  const dx = x - tree.x
+  const dz = z - tree.z
+  const dy = y - SURFACE_Y                 // 0 is the first block above grass
+  const topY = tree.height - 1             // trunk's top block, in dy
+
+  if (dx === 0 && dz === 0 && dy >= 0 && dy <= topY) return ids.oak_log
+
+  /*
+   * Minecraft's oak canopy: two wide layers around the top of the trunk with
+   * their corners cut, then two narrow layers above, the highest also cut.
+   * The corner cuts are what stop it reading as a cube of leaves.
+   */
+  const ax = Math.abs(dx)
+  const az = Math.abs(dz)
+  const wide = dy === topY - 2 || dy === topY - 1
+  const narrow = dy === topY || dy === topY + 1
+
+  if (wide && ax <= 2 && az <= 2 && !(ax === 2 && az === 2)) return ids.oak_leaves
+  if (narrow && ax <= 1 && az <= 1) {
+    if (dy === topY + 1 && ax === 1 && az === 1) return 0   // cut the top corners
+    if (dx === 0 && dz === 0 && dy <= topY) return ids.oak_log
+    return ids.oak_leaves
+  }
+  return 0
+}
+
+function treeAt(x, y, z, ids) {
+  // A tree is inset from its cell edge by the canopy radius, so anything
+  // overlapping this voxel must belong to one of the nine nearest cells.
+  const cellX = Math.floor(x / TREE_CELL)
+  const cellZ = Math.floor(z / TREE_CELL)
+  for (let i = -1; i <= 1; i++) {
+    for (let j = -1; j <= 1; j++) {
+      const tree = treeInCell(cellX + i, cellZ + j)
+      if (!tree) continue
+      const id = treeVoxelFor(tree, x, y, z, ids)
+      if (id) return id
+    }
+  }
+  return 0
+}
+
 /**
  * @returns the block id at a world coordinate, or 0 for air/void.
  */
 export function getVoxelID(x, y, z, ids) {
-  if (y >= SURFACE_Y || y < 0) return 0
+  // Above the surface is air, except where a tree stands.
+  if (y >= SURFACE_Y) {
+    if (x < -HALF || x >= HALF || z < -HALF || z >= HALF) return 0
+    return treeAt(x, y, z, ids)
+  }
+  if (y < 0) return 0
 
   // Square footprint. Road not taken: a round island, or a noisy coastline.
   // Square won because resume plots are easier to lay out on a hard grid.
