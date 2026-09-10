@@ -25,6 +25,14 @@
  * `dig/stone3.ogg`) rather than the modern `block/grass/step1.ogg` naming used
  * in sounds.json. Both exist in the asset tree; the flat one is what's
  * actually present for every group we need, so that's what gets read.
+ *
+ * Two tables come out of that index, not one. GROUPS x KINDS is the block
+ * grid -- every SoundType family crossed with step and dig. SETS is everything
+ * that has no block behind it: the player's own hurt, death and fall sounds,
+ * and the GUI click. They're separate because the block grid is a cross
+ * product with discovered variant counts and SETS is an explicit list of
+ * paths, and folding either into the other's shape costs more than a second
+ * loop.
  */
 import {
   mkdirSync, rmSync, readdirSync, copyFileSync, existsSync, readFileSync,
@@ -65,6 +73,31 @@ const ensureOnly = process.argv.includes('--ensure')
  */
 const GROUPS = ['grass', 'stone', 'wood', 'gravel', 'sand', 'snow']
 const KINDS = { step: 8, dig: 8 } // upper bounds; the real count is discovered
+
+/*
+ * The sounds with no block behind them: sample set -> the asset paths vanilla's
+ * own sounds.json draws that set from, verbatim.
+ *
+ * Still the original flat layout. `entity/player/hurt/*` DOES exist in the
+ * index and is the tempting-looking modern name, but it only holds the
+ * drowning, freezing, fire and berry-bush variants -- the plain hurt every
+ * damage type in this world uses is `damage/hit1-3`, one directory over.
+ *
+ * hurt and death share `damage/hit1-3`. That reads like a copy-paste slip and
+ * isn't: entity.player.hurt and entity.player.death list the same three
+ * samples in sounds.json, and are distinguished by WHEN they play rather than
+ * by what they play. Giving death its own sample would be inventing one.
+ *
+ * fallbig/fallsmall are one sample each and unnumbered, which is the other
+ * reason these can't ride on the group grid -- that loop counts upward from 1
+ * until it misses.
+ */
+const SETS = {
+  hurt: ['damage/hit1', 'damage/hit2', 'damage/hit3'],
+  fallBig: ['damage/fallbig'],
+  fallSmall: ['damage/fallsmall'],
+  uiClick: ['random/click_stereo'],
+}
 
 function loadIndex() {
   const indexes = join(ASSETS, 'indexes')
@@ -144,6 +177,35 @@ for (const kind of Object.keys(KINDS)) {
   }
 }
 
+/*
+ * Unlike the group loop, a missing entry here does NOT stop the set. That loop
+ * breaks on the first gap because the numbering is contiguous and a gap IS the
+ * end; these are an enumeration, so a hole is just a hole and the samples
+ * after it are still worth having.
+ */
+manifest.sets = {}
+for (const [set, paths] of Object.entries(SETS)) {
+  const kept = []
+  for (const path of paths) {
+    const logical = `minecraft/sounds/${path}.ogg`
+    const entry = objects[logical]
+    if (!entry) { missing.push(logical); continue }
+    const blob = join(ASSETS, 'objects', entry.hash.slice(0, 2), entry.hash)
+    if (!existsSync(blob)) { missing.push(logical); continue }
+    // Copied out under their real vanilla paths, so public/sounds mirrors the
+    // asset tree and the manifest can name a sample with the same string the
+    // client fetches. A flattened name would need a second mapping to undo.
+    mkdirSync(join(OUT, dirname(path)), { recursive: true })
+    copyFileSync(blob, join(OUT, `${path}.ogg`))
+    kept.push(path)
+    files++; bytes += entry.size
+  }
+  // An empty set is omitted rather than written as []: sounds.js reads a
+  // present set as a promise that those files are there to fetch, and a
+  // missing one as nothing to play.
+  if (kept.length) manifest.sets[set] = kept
+}
+
 if (files === 0) throw new Error('extracted nothing -- is this a fresh Minecraft install that has never launched?')
 
 /*
@@ -172,6 +234,9 @@ rmSync(STAGE, { recursive: true, force: true })
 console.log(`extracted ${files} sounds (${(bytes / 1024).toFixed(0)} KB) from ${label}`)
 for (const [group, kinds] of Object.entries(manifest.groups)) {
   console.log(`  ${group.padEnd(7)} step x${kinds.step}  dig x${kinds.dig}`)
+}
+for (const [set, paths] of Object.entries(manifest.sets)) {
+  console.log(`  ${set.padEnd(9)} x${paths.length}  ${paths.join(' ')}`)
 }
 if (missing.length) console.log(`  not in the asset index: ${missing.join(', ')}`)
 console.log('\n  These are Mojang assets. Fine on your own machine; do NOT')

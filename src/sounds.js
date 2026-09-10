@@ -10,6 +10,11 @@ import { BLOCK_BY_ID } from './blocks.js'
  * silence rather than throwing. A world with no sound is fine; a world that
  * dies on startup because someone skipped a build step is not.
  *
+ * Not everything here hangs off a block. The player's own sounds -- hurt,
+ * death, the two fall-damage thumps -- and the GUI click come from a flat list
+ * of samples rather than the block grid, and are wired to survival.js's hurt
+ * and death events. Same manifest, same voices, different lookup.
+ *
  * FIDELITY. Minecraft doesn't give blocks individual sounds, it gives them a
  * SoundType -- one of about a dozen families, six of which this palette can
  * reach. Each family has a handful of numbered samples and the game picks one
@@ -77,7 +82,47 @@ const MIX = {
   land: { set: 'step', volume: 0.55, pitch: 0.75 },
   break: { set: 'dig', volume: 0.8, pitch: 0.8 },
   place: { set: 'dig', volume: 0.8, pitch: 0.8 },
+
+  /*
+   * `shared` marks the sets that aren't keyed by block family -- there is one
+   * hurt sound for the whole game, not one per material -- so play() looks
+   * them up in manifest.sets and ignores whatever block it was handed.
+   *
+   * hurt and death deliberately name the SAME set. Vanilla's
+   * entity.player.death and entity.player.hurt both list damage/hit1-3; they
+   * are two events over one set of samples, and inventing a distinct death
+   * sample to make them differ would be less faithful, not more.
+   *
+   * `vary` is Minecraft's getVoicePitch: (rand - rand) * 0.2 + 1.0. Two rolls
+   * subtracted, not one scaled, which gives a triangular spread clustered near
+   * 1.0. It matters far more here than on a footstep -- three samples heard
+   * back to back while something is chewing through your hearts read as a
+   * three-note loop without it.
+   */
+  hurt: { set: 'hurt', shared: true, volume: 0.85, pitch: 1.0, vary: 0.2 },
+  death: { set: 'hurt', shared: true, volume: 0.85, pitch: 1.0, vary: 0.2 },
+
+  /*
+   * Vanilla plays both fall thumps at full volume and lets the samples carry
+   * the difference, and that's kept -- but they sit under the hurt sound here
+   * rather than level with it. A damaging fall fires three sounds into the
+   * same frame (fall thump, landing thud, hurt) and three voices near 0.85
+   * into a 0.9 master is a sum that clips. That's a mix decision, not a
+   * fidelity claim.
+   */
+  fallBig: { set: 'fallBig', shared: true, volume: 0.7, pitch: 1.0 },
+  fallSmall: { set: 'fallSmall', shared: true, volume: 0.7, pitch: 1.0 },
+
+  // Minecraft's GUI clicks are quiet on purpose: SimpleSoundInstance.forUI
+  // hardcodes volume 0.25 while everything else in this table plays at 1.0.
+  // Lifted with the rest of the mix, kept the quietest thing in it.
+  uiClick: { set: 'uiClick', shared: true, volume: 0.35, pitch: 1.0 },
 }
+
+// Minecraft's LivingEntity.getFallDamageSound: more than 4 half-hearts of fall
+// damage is a "big" fall. Not a distance -- the damage number is what's tested,
+// which is why a fall onto slime or with feather falling stays quiet.
+const BIG_FALL_DAMAGE = 4
 
 // Minecraft plays the mining hit sound every 4 ticks while you hold the button.
 const HIT_INTERVAL = 0.2
@@ -99,7 +144,7 @@ const POSITIONAL_VOICES = 16
 const FLAT_VOICES = 8
 
 export function installSounds(noa, deps = {}) {
-  const { interaction, movement } = deps
+  const { interaction, movement, survival } = deps
 
   let ctx = null
   let master = null
@@ -125,17 +170,23 @@ export function installSounds(noa, deps = {}) {
       manifest = m
       encoded = new Map()
       const jobs = []
+      const grab = (name) => jobs.push(fetch(`/sounds/${name}.ogg`)
+        .then(r => (r.ok ? r.arrayBuffer() : null))
+        .then(buf => { if (buf) encoded.set(name, buf) })
+        .catch(() => {}))
+
       for (const [group, sets] of Object.entries(m.groups)) {
         for (const [set, count] of Object.entries(sets)) {
-          for (let i = 1; i <= count; i++) {
-            const name = `${set}/${group}${i}`
-            jobs.push(fetch(`/sounds/${name}.ogg`)
-              .then(r => (r.ok ? r.arrayBuffer() : null))
-              .then(buf => { if (buf) encoded.set(name, buf) })
-              .catch(() => {}))
-          }
+          for (let i = 1; i <= count; i++) grab(`${set}/${group}${i}`)
         }
       }
+      // `sets` is the non-block half of the manifest, and it names its samples
+      // by their real vanilla path (`damage/hit1`) instead of deriving one from
+      // a count -- fallbig and fallsmall aren't numbered, so there is nothing to
+      // count. Optional so a public/sounds built before these existed still
+      // loads its block sounds instead of throwing.
+      for (const paths of Object.values(m.sets ?? {})) paths.forEach(grab)
+
       await Promise.all(jobs)
       if (ctx) await decodeAll()
     })
@@ -213,28 +264,46 @@ export function installSounds(noa, deps = {}) {
     window.addEventListener(ev, unlock, true)
   }
 
-  /** Pick one of a family's numbered variants at random, the way Minecraft does. */
-  function sample(set, group) {
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
+
+  /**
+   * Pick one variant at random, the way Minecraft does, and return its logical
+   * name rather than its buffer -- the name is what `lastPlayed` reports, and a
+   * decoded AudioBuffer tells a caller nothing about which sample it is.
+   *
+   * @param group a SoundType family, or null for one of the shared sets.
+   */
+  function sampleName(set, group) {
     if (!manifest) return null
+    if (!group) {
+      const paths = manifest.sets?.[set]
+      return paths?.length ? pick(paths) : null
+    }
     const count = manifest.groups[group]?.[set]
-    if (!count) return null
-    return buffers.get(`${set}/${group}${1 + Math.floor(Math.random() * count)}`) ?? null
+    return count ? `${set}/${group}${1 + Math.floor(Math.random() * count)}` : null
   }
 
   const local = [0, 0, 0]
+  let lastPlayed = null
 
   /**
    * @param event one of MIX's keys
-   * @param group a SoundType family name, or a block id to derive one from
+   * @param group a SoundType family name, or a block id to derive one from.
+   *              Ignored for the `shared` events, which have no block.
    * @param worldPos [x,y,z] to play it at, or null for a non-positional sound
    */
-  function play(event, group, worldPos = null) {
+  function play(event, group = null, worldPos = null) {
     if (!ctx || ctx.state !== 'running') return false
     const mix = MIX[event]
     if (!mix) return false
-    if (typeof group === 'number') group = groupForBlock(group)
-    if (!group) return false
-    const buf = sample(mix.set, group)
+    if (mix.shared) group = null
+    else {
+      if (typeof group === 'number') group = groupForBlock(group)
+      // No family means air, or a block id blocks.js has never heard of.
+      if (!group) return false
+    }
+    const name = sampleName(mix.set, group)
+    const buf = name && buffers.get(name)
     if (!buf) return false
 
     const voice = worldPos
@@ -246,8 +315,10 @@ export function installSounds(noa, deps = {}) {
     // Minecraft pitches by resampling, so playbackRate is the faithful knob --
     // a lower pitch is genuinely a longer sound, which is why the mining tick
     // at 0.5 reads as a heavy thunk rather than a clipped one.
-    src.playbackRate.value = mix.pitch
-    voice.gain.gain.value = mix.volume * (GROUP_VOLUME[group] ?? 1)
+    src.playbackRate.value = mix.vary
+      ? mix.pitch * (1 + (Math.random() - Math.random()) * mix.vary)
+      : mix.pitch
+    voice.gain.gain.value = mix.volume * (group ? GROUP_VOLUME[group] ?? 1 : 1)
 
     if (worldPos) {
       /*
@@ -272,6 +343,7 @@ export function installSounds(noa, deps = {}) {
     // Sources are garbage once played; dropping the connection keeps a
     // stopped node from pinning the pooled gain in the graph.
     src.onended = () => { try { src.disconnect() } catch { /* already gone */ } }
+    lastPlayed = { event, set: mix.set, name }
     return true
   }
 
@@ -327,6 +399,74 @@ export function installSounds(noa, deps = {}) {
     }))
   }
 
+  if (survival) {
+    /*
+     * Vanilla plays EITHER the hurt sound or the death sound on a hit, never
+     * both -- LivingEntity.hurt branches on isDeadOrDying() and the killing
+     * blow gets only the death sound. survival emits hurt and then death, so
+     * the hurt handler is the one that has to stand down.
+     */
+    unsubscribe.push(survival.onHurt(({ amount, health, cause }) => {
+      /*
+       * The fall thump is its OWN event, on top of the hurt sound, and it is
+       * not the landing thud already wired below: that one is the block you
+       * hit, played on every landing, and this one is your legs, played only
+       * when the landing cost you hearts.
+       */
+      if (cause === 'fall') play(amount > BIG_FALL_DAMAGE ? 'fallBig' : 'fallSmall')
+
+      /*
+       * Every cause this world can produce -- fall, starve, void, generic --
+       * takes the plain hurt sound. Vanilla only swaps it for damage types
+       * carrying a DamageEffects other than HURT, which is fire, drowning,
+       * freezing and sweet berry bushes, none of which exist here. There are
+       * samples for all four in the asset index; wiring them to causes that
+       * can't happen would be inventing fidelity.
+       */
+      if (health > 0) play('hurt')
+    }))
+
+    /*
+     * Death goes through a latch rather than straight off onDeath, because
+     * there are two ways to die here and only one of them emits. Falling into
+     * the void -- the death every visitor finds first, on purpose -- runs
+     * survival.onVoidFall(), which zeroes health and calls changed() without
+     * ever going through damage(), so an onDeath-only wiring would leave the
+     * signature death of this world silent.
+     *
+     * The latch is also the dedupe. On a lethal hit changed() runs BEFORE
+     * died.emit, so both paths fire for one death; whichever arrives first
+     * makes the sound and the other is a no-op until reset() clears the flag.
+     */
+    let announced = false
+    const announceDeath = () => {
+      if (announced) return
+      announced = true
+      play('death')
+    }
+    unsubscribe.push(survival.onDeath(announceDeath))
+    unsubscribe.push(survival.onChange((s) => {
+      if (s.dead) announceDeath()
+      else announced = false
+    }))
+  }
+
+  /*
+   * ui.button.click, delegated off the document instead of wired per button.
+   * The pause menu builds its rows at runtime and the death screen's button is
+   * static markup -- neither file is this module's to edit, and a listener
+   * that goes looking for .mc-button when the click happens needs no
+   * cooperation from either.
+   *
+   * Capture phase for the same reason the gesture gate uses it: screens that
+   * stop propagation would otherwise swallow their own click sound.
+   */
+  const onUiClick = (e) => {
+    if (e.target instanceof Element && e.target.closest('.mc-button')) play('uiClick')
+  }
+  document.addEventListener('click', onUiClick, true)
+  unsubscribe.push(() => document.removeEventListener('click', onUiClick, true))
+
   if (movement) {
     // Non-positional: it's your own feet. A panner would put them a fraction of
     // a block below the listener and pan them as you look down.
@@ -348,6 +488,15 @@ export function installSounds(noa, deps = {}) {
     get manifest() { return manifest },
     get decoded() { return buffers.size },
     get decodeErrors() { return decodeErrors },
+    /*
+     * Which sample the last play() actually reached for, as
+     * { event, set, name }. Here because the graph can't answer it: a started
+     * AudioBufferSourceNode exposes a decoded buffer, not the file it came
+     * from, and hurt and death share a sample set -- so "did dying make a
+     * different sound than getting hit" is otherwise unanswerable from
+     * outside. Null until something plays.
+     */
+    get lastPlayed() { return lastPlayed },
     /** Resolves once the samples are fetched; decoding still waits on a gesture. */
     ready: () => loading,
     dispose() { unsubscribe.forEach(fn => fn()) },
