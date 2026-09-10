@@ -21,6 +21,10 @@ import { installSky } from './sky.js'
 import { installSounds } from './sounds.js'
 import { installParticles } from './particles.js'
 import { installHighlightStyle } from './highlight.js'
+import { createAuthority } from './authority.js'
+import { installGamemode } from './gamemode.js'
+import { installCommands } from './commands.js'
+import { BLOCK_BY_ID } from './blocks.js'
 
 const noa = new Engine({
   // Without this noa builds its own fixed-position container and appends it
@@ -76,6 +80,16 @@ const noa = new Engine({
   blockTestDistance: 5, // Minecraft's survival reach is about 4.5 blocks
 })
 
+/*
+ * noa's Engine is an EventEmitter, and Node's default warning threshold of ten
+ * listeners is a leak detector for handlers added in a loop. Every listener
+ * here is added exactly once at startup by a different system, and there are
+ * about fifteen of them, so the warning is a false positive -- and a
+ * misleading one, because it names whichever system happened to be the
+ * eleventh rather than anything actually wrong.
+ */
+noa.setMaxListeners?.(32)
+
 const ids = registerBlocks(noa)
 
 // noa asks for chunk contents whenever its loader decides it needs them and
@@ -99,11 +113,34 @@ noa.world.on('worldDataNeeded', (id, data, x, y, z) => {
 noa.camera.zoomDistance = 0
 
 /* ---- systems ---- */
+
+/*
+ * Identity. Lives here rather than in chat.js because it is exactly what a
+ * network layer will want to own, and half the command messages quote it.
+ */
+const PLAYER_NAME = 'Evan'
+
 const move = installPhysics(noa)
 
-// survival is created before installSpeedModes because sprinting depends on
-// the food level: Minecraft refuses to sprint at 6 food or less.
-const survival = createSurvival(noa)
+/*
+ * survival is created before installSpeedModes because sprinting depends on
+ * the food level: Minecraft refuses to sprint at 6 food or less.
+ *
+ * The two rules it is handed reach FORWARD to `authority`, which is built
+ * about forty lines below. That is deliberate rather than sloppy ordering:
+ * survival must not import the authority (it would then have an opinion about
+ * game modes and operators), and the authority must be able to kill you, so
+ * one of the two has to be a closure. Arrow functions read the binding when
+ * they run, and neither runs before the first tick.
+ */
+const survival = createSurvival(noa, {
+  allowDamage: (cause) => {
+    if (!authority.caps().damage) return false
+    if (cause === 'fall' && !authority.gamerule('fallDamage')) return false
+    return true
+  },
+  allowRegen: () => authority.gamerule('naturalRegeneration'),
+})
 const movement = installSpeedModes(noa, move, survival)
 
 // One material shared by the third-person model and the first-person arm, so
@@ -121,9 +158,67 @@ const sky = installSky(noa)
 installHighlightStyle(noa)
 const crack = installCrackOverlay(noa)
 const held = installHeldItem(noa, inventory, skinMaterial, swing)
-const interaction = installInteraction(noa, inventory, { crack, held, swing, inputLock })
 
 const perspective = installPerspective(noa, { skinMaterial, inputLock, inventory, swing })
+
+/*
+ * Game modes, then the authority, then everything that asks it for permission.
+ *
+ * gamemode.js only APPLIES a mode -- what flies, what collides, what is drawn.
+ * It is installed first because the authority is what decides which mode you
+ * are in, and it needs something to apply.
+ */
+const gamemode = installGamemode({ flight: movement.flight, perspective, held })
+
+/*
+ * THE trust boundary. See authority.js: this is the module a Cloudflare
+ * Durable Object replaces the decision half of, and the object below is the
+ * half that survives that swap -- how a change that has already been approved
+ * actually reaches the game.
+ */
+const authority = createAuthority({
+  world: {
+    playerName: PLAYER_NAME,
+    applyGamemode: (mode) => gamemode.apply(mode),
+    setBlock: (id, x, y, z) => noa.setBlock(id, x, y, z),
+    getTime: () => sky.getTime(),
+    setTime: (t) => { sky.setTime(t); pinnedTime = null },
+    teleport: (x, y, z) => {
+      noa.ents.setPosition(noa.playerEntity, [x, y, z])
+      const body = noa.ents.getPhysics(noa.playerEntity).body
+      body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
+      // Same trap as respawn.js: without this you land at the destination and
+      // are immediately billed for the height you were teleported from.
+      survival.clearFallTracking()
+    },
+    give: (id, count) => inventory.add(id, count),
+    blockName: (id) => BLOCK_BY_ID.get(id)?.name ?? String(id),
+    kill: () => survival.kill(),
+  },
+})
+
+const interaction = installInteraction(noa, inventory,
+  { crack, held, swing, inputLock }, authority)
+
+/*
+ * The doDaylightCycle game rule.
+ *
+ * sky.js owns the clock and advances it on its own tick, and it is not this
+ * agent's file to change, so the rule is enforced by pinning the clock back
+ * each tick instead of by stopping it. That reads as a hack and half is: the
+ * honest version is a `running` flag inside sky.js. It is observably correct
+ * -- getTime() does not move -- and it costs one comparison a tick.
+ *
+ * Registered after installSky, which matters: noa fires tick listeners in
+ * registration order, so this runs after the clock has advanced and puts it
+ * back, rather than before and being immediately overwritten.
+ */
+let pinnedTime = null
+noa.on('tick', () => {
+  if (authority.gamerule('doDaylightCycle')) { pinnedTime = null; return }
+  if (pinnedTime === null) pinnedTime = sky.getTime()
+  sky.setTime(pinnedTime)
+})
 
 installHotbarControls(noa, inventory, inputLock)
 const inventoryScreen = installInventoryScreen(noa, inventory, inputLock)
@@ -142,10 +237,8 @@ const menu = installMenu(noa, { inputLock, inventory, inventoryScreen, survival 
 
 /*
  * Chat. Local only for now -- there is no transport, so your messages come
- * straight back to you. The name lives here rather than in chat.js because it
- * is identity, which is what a network layer will want to own.
+ * straight back to you.
  */
-const PLAYER_NAME = 'Evan'
 const chat = installChat(noa, {
   inputLock, inventory, menu, survival,
   name: PLAYER_NAME,
@@ -155,27 +248,9 @@ const chat = installChat(noa, {
   requestPointerLock: () => requestLockPersistently(noa),
 })
 
-// Registering a command is one line. These two are the useful ones today;
-// /tp <plot> for the resume plots goes here once the plots exist.
-chat.command('time', 'Sets the time of day: day, night, or a tick count', ([arg]) => {
-  const t = arg === 'day' ? 1000 : arg === 'night' ? 13000 : Number(arg)
-  if (!Number.isFinite(t)) {
-    chat.addMessage({ text: 'Expected "day", "night" or a tick count', kind: 'error' })
-    return
-  }
-  sky.setTime(t)
-  chat.addMessage({ text: `Set the time to ${Math.floor(t)}`, kind: 'system' })
-})
-
-chat.command('tp', 'Teleports you to x y z', (args) => {
-  const [x, y, z] = args.map(Number)
-  if (![x, y, z].every(Number.isFinite)) {
-    chat.addMessage({ text: 'Expected three numbers: /tp x y z', kind: 'error' })
-    return
-  }
-  noa.ents.setPosition(noa.playerEntity, x, y, z)
-  chat.addMessage({ text: `Teleported ${PLAYER_NAME} to ${x}, ${y}, ${z}`, kind: 'system' })
-})
+// The whole command set is one call. /tp <plot> for the resume plots goes in
+// commands.js once the plots exist.
+const commands = installCommands(chat, authority, { noa, playerName: PLAYER_NAME })
 
 // The join notice, yellow, exactly as a server would announce it. Emitting it
 // locally keeps that path real rather than something to be written later.
@@ -231,4 +306,8 @@ noa.container.on('lostPointerLock', () => {
 })
 
 window.noa = noa
-window.game = { inventory, survival, move, sky, menu, chat, inputLock, perspective, skinMaterial, sounds, particles }
+window.game = {
+  inventory, survival, move, sky, menu, chat, inputLock, perspective,
+  skinMaterial, sounds, particles,
+  authority, gamemode, commands, interaction, flight: movement.flight,
+}

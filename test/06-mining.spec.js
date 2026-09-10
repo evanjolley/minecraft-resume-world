@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.js'
 import {
   ID, SURFACE_Y, HEADING, aim, holdMouse, targetedBlock, getBlock, setBlock,
-  teleport, settleOnGround, waitTicks,
+  teleport, settleOnGround, waitTicks, useGamemode, gamemode,
 } from './helpers/world.js'
 import { shotRegion } from './helpers/shots.js'
 
@@ -16,7 +16,20 @@ const invCount = (page, id) => page.evaluate((want) => window.game.inventory.slo
   .filter(s => s && s.id === want)
   .reduce((n, s) => n + s.count, 0), id)
 
+/*
+ * EVERY test below asks for survival mode first, and that is the point of the
+ * change rather than a workaround for it: ADVENTURE IS NOW THE DEFAULT, so
+ * "hold left click and the block goes away" is no longer true of the world a
+ * visitor lands in. Mining is a survival-mode fact and these tests now say so.
+ *
+ * The adventure half of the same behaviour is asserted in 10-gamemode.spec.js.
+ */
 test.describe('mining', () => {
+  test.beforeEach(async ({ page }) => {
+    await useGamemode(page, 'survival')
+    expect(await gamemode(page)).toBe('survival')
+  })
+
   test('breaking grass drops dirt, not grass', async ({ page, terrain }) => {
     await terrain.keep([0, SURFACE_Y - 1, 0], [0, SURFACE_Y - 1, 0])
     await aim(page, { pitch: DOWN })
@@ -60,17 +73,37 @@ test.describe('mining', () => {
     expect(await getBlock(page, 0, 0, 0)).toBe(ID.bedrock)
     expect(await targetedBlock(page)).toMatchObject({ position: [0, 0, 0] })
 
-    // More than twice the slowest breakable block's time (ores, 15 s) would be
-    // silly; 3 s is over three times grass's, which is what would break here
-    // if the Infinity guard were dropped.
-    await holdMouse(page, 3000)
+    /*
+     * Progress is recorded while the button is held, because "unbreakable"
+     * must not mean "silent". Vanilla keeps ticking the hit sound on bedrock;
+     * returning early before the progress event -- which is what this did --
+     * made punching it produce nothing at all.
+     */
+    await page.mouse.down({ button: 'left' })
+    // Three seconds is over three times grass's break time, which is what
+    // would break here if the Infinity guard were dropped.
+    const hits = await page.evaluate(() => new Promise((resolve) => {
+      const seen = []
+      const off = window.game.interaction.onBreakProgress(
+        (e) => { if (e.position) seen.push(e.frac) })
+      setTimeout(() => { off(); resolve(seen) }, 3000)
+    }))
+    await page.mouse.up({ button: 'left' })
+    await waitTicks(page, 2)
 
     expect(await getBlock(page, 0, 0, 0)).toBe(ID.bedrock)
     expect(await invCount(page, ID.bedrock)).toBe(0)
+    expect(hits.length, 'punching bedrock published no progress at all')
+      .toBeGreaterThan(10)
+    // ...and none of it is progress. Any non-zero frac would draw a crack
+    // overlay on a block that is never going to break.
+    expect(hits.every(f => f === 0), 'bedrock accumulated break progress').toBe(true)
   })
 })
 
 test.describe('placing', () => {
+  test.beforeEach(async ({ page }) => { await useGamemode(page, 'survival') })
+
   /*
    * A 1-block wall two east of spawn, at eye level. Looking at it flat gives a
    * target whose adjacent face is the empty block between it and the player --

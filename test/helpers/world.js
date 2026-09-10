@@ -19,6 +19,17 @@ export const ID = {
   air: 0, grass: 1, dirt: 2, stone: 3, cobblestone: 4, planks: 5, bedrock: 6,
 }
 
+/**
+ * The OP passphrase, duplicated from src/authority.js for the same reason the
+ * block ids above are: if someone changes it, these tests should fail loudly
+ * rather than silently follow along. It is not a secret -- authority.js says
+ * at length why not.
+ */
+export const OP_PASSPHRASE = 'diamond-pickaxe'
+
+/** Every game rule resetWorld has to put back. Vanilla defaults are all true. */
+const GAMERULES = ['doDaylightCycle', 'fallDamage', 'naturalRegeneration']
+
 /** Heading in noa is measured so that direction = (sin h, cos h). */
 export const HEADING = {
   southPlusZ: 0,
@@ -56,7 +67,15 @@ const ALL_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'Control
 export async function bootWorld(page) {
   await muteHmr(page)
   await page.goto('/', { waitUntil: 'domcontentloaded' })
+  return waitForWorld(page)
+}
 
+/**
+ * The three gates on their own, so a test that RELOADS the page can wait the
+ * same way instead of re-deriving them. Persistence tests need exactly this:
+ * localStorage only proves anything across a real navigation.
+ */
+export async function waitForWorld(page) {
   await page.waitForFunction(() => !!(window.noa && window.game), null,
     { timeout: 30_000, polling: 100 })
 
@@ -75,6 +94,13 @@ export async function bootWorld(page) {
   await enableScriptedCamera(page)
   await page.evaluate(() => document.getElementById('game').focus())
   return page
+}
+
+/** Reload and wait it out. The whole point is that the module graph is rebuilt
+ *  from scratch, so anything that survives came out of storage. */
+export async function reloadWorld(page) {
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  return waitForWorld(page)
 }
 
 /*
@@ -170,6 +196,25 @@ export async function resetWorld(page) {
   if (await page.evaluate(() => window.game.inventory.open)) {
     await page.keyboard.press('Escape')
   }
+
+  /*
+   * Privilege, game mode and game rules, back to what a stranger gets.
+   *
+   * All three are page-lifetime state that outlives a test: OP is in
+   * localStorage, the mode is in the authority's closure, and the rules are a
+   * module singleton. A creative flyer leaking into the next spec would break
+   * it in a way that reads as a physics bug.
+   *
+   * Op first, because only an operator can put any of it back -- and /deop
+   * drops you to adventure on its way out, which is why the mode is not set
+   * explicitly here.
+   */
+  await page.evaluate(async ([pass, rules]) => {
+    const a = window.game.authority
+    await a.requestOp(pass)
+    for (const rule of rules) await a.requestGamerule(rule, 'true')
+    await a.requestDeop()
+  }, [OP_PASSPHRASE, GAMERULES])
 
   await page.evaluate((spawn) => {
     const { noa, game } = window
@@ -424,5 +469,82 @@ export async function holdMouse(page, ms, button = 'left') {
   await page.mouse.down({ button })
   await page.waitForTimeout(ms)
   await page.mouse.up({ button })
+  await waitTicks(page, 2)
+}
+
+/* ---------------- chat, commands and privilege ---------------- */
+
+/**
+ * Run a command the way a player does: press `/`, type it, press Enter.
+ *
+ * Deliberately NOT `chat.command(...)` or a direct authority call. The thing
+ * under test is the whole path -- the capture-phase key handler, the parser,
+ * the permission predicate, the authority and the message that comes back --
+ * and every one of those has been broken at some point by a change that left
+ * the underlying function working perfectly.
+ *
+ * @returns the chat lines the command produced: [{ kind, text }]
+ */
+export async function chatCommand(page, text) {
+  const before = await page.evaluate(
+    () => document.querySelectorAll('#chat-lines .chat-line').length)
+
+  await page.keyboard.press('Slash')
+  await page.waitForFunction(() => window.game.chat.isOpen, null, { timeout: 5000 })
+  // The slash is already in the box -- chat.js prefills it -- so type the rest.
+  await page.keyboard.type(text.replace(/^\//, ''))
+  await page.keyboard.press('Enter')
+  await page.waitForFunction(() => !window.game.chat.isOpen, null, { timeout: 5000 })
+
+  // Commands are async all the way down (authority.js returns promises), so a
+  // granted request lands a microtask after Enter, not during it.
+  await waitTicks(page, 2)
+
+  return page.evaluate((n) => [...document.querySelectorAll('#chat-lines .chat-line')]
+    .slice(n)
+    .map(el => ({ kind: el.dataset.kind, text: el.textContent })), before)
+}
+
+/** Every command the caller is allowed to see, which is what /help lists. */
+export const visibleCommands = (page) =>
+  page.evaluate(() => window.game.chat.visibleCommands)
+
+export const isOperator = (page) =>
+  page.evaluate(() => window.game.authority.isOperator())
+
+export const gamemode = (page) =>
+  page.evaluate(() => window.game.authority.gamemode)
+
+export const caps = (page) =>
+  page.evaluate(() => window.game.authority.caps())
+
+export const isFlying = (page) =>
+  page.evaluate(() => window.game.flight.flying)
+
+/** Setup, not assertion: op and switch modes without exercising the UI. */
+export async function useGamemode(page, mode) {
+  await page.evaluate(async ([pass, m]) => {
+    const a = window.game.authority
+    await a.requestOp(pass)
+    await a.requestGamemode(m)
+  }, [OP_PASSPHRASE, mode])
+  await waitTicks(page, 2)
+}
+
+/** Setup: become an operator without going through /op. */
+export const grantOp = (page) =>
+  page.evaluate((pass) => window.game.authority.requestOp(pass), OP_PASSPHRASE)
+
+/**
+ * Minecraft's flight toggle: two jump presses inside 350 ms.
+ *
+ * Both taps have to be long enough for a 30 Hz tick to see them (see TAP_MS)
+ * and the pair has to fit inside the double-tap window, which leaves very
+ * little room -- this is the measurement, not a magic number.
+ */
+export async function doubleTapFly(page) {
+  await tapKey(page, 'Space', 60)
+  await page.waitForTimeout(40)
+  await tapKey(page, 'Space', 60)
   await waitTicks(page, 2)
 }

@@ -40,6 +40,31 @@ export const MC = {
   // Minecraft adds 0.2 blocks/tick forward on a sprint jump; per second that
   // is 0.2 / 0.05 = 4 blocks/s of extra horizontal launch.
   SPRINT_JUMP_BOOST: 4,
+
+  /*
+   * Creative flight, derived the same way the ground speeds were.
+   *
+   * Abilities.flyingSpeed is 0.05 blocks/tick of acceleration, and a flying
+   * player keeps 0.91 of their horizontal velocity each tick, so the terminal
+   * speed is 0.05 / (1 - 0.91) = 0.556 blocks/tick = 11.1 b/s. The number the
+   * game actually settles at is 10.89, because the drag is applied on the
+   * following tick rather than the same one; 10.89 is what players measure and
+   * so 10.89 is what goes here. Sprinting doubles flyingSpeed outright.
+   *
+   * Vertical is a different pair of numbers: flyingSpeed * 3 per tick against
+   * a much heavier 0.6 retention, giving 0.15 / 0.4 = 0.375 blocks/tick =
+   * 7.5 b/s. Rising is deliberately slower than flying forwards -- that
+   * asymmetry is a lot of why creative flight feels like flight and not like
+   * a noclip camera.
+   */
+  FLY_SPEED: 10.89,
+  FLY_SPRINT_SPEED: 21.78,
+  FLY_VERTICAL_SPEED: 7.5,
+
+  // The 0.6 vertical retention above, expressed as the continuous rate that
+  // reaches the same terminal speed in the same time: 0.6 per 1/20 s means
+  // velocity decays as e^(-10.2t).
+  FLY_VERTICAL_RESPONSE: 10.2,
 }
 
 // Calibrated, not derived. See the comment at its use site.
@@ -125,6 +150,126 @@ const BASE_FOV_DEG = 70
 const SPRINT_FOV_MULT = 1.1
 const DOUBLE_TAP_MS = 350
 
+/*
+ * Flight, for creative and spectator.
+ *
+ * Minecraft's flight is not "gravity off". Three things have to change
+ * together or it reads as a bug rather than as flying:
+ *
+ *   1. Gravity stops, but only while airborne under your own power.
+ *   2. Full air control. Walking physics gives you a fifth of your ground
+ *      acceleration in the air (airMoveMult, see installPhysics) because
+ *      steering a jump should be hard; steering a flight should not be.
+ *   3. Vertical velocity is DRIVEN, not impulsed. Space and Shift ease you
+ *      toward a fixed climb/dive rate and releasing both eases you back to a
+ *      hover -- which is why a flying player stops dead in the air instead of
+ *      arcing like a jump.
+ *
+ * The toggle is Minecraft's: double-tap jump within 7 ticks. It hangs off the
+ * keydown EVENT for the same reason the sprint double-tap does -- a tap can
+ * begin and end between two 30 Hz ticks and polled state never sees it.
+ *
+ * NOCLIP is the one thing here that reaches outside the player. noa asks
+ * `noa.physics.testSolid` whether a voxel blocks a body, and there is no
+ * per-body override, so a spectator swaps that function for one that says
+ * "nothing is solid". That is GLOBAL: it would also un-collide any other
+ * physics body in the world. There is exactly one today (the player). If mobs
+ * or thrown items ever exist, this has to become a per-body flag inside
+ * voxel-physics-engine instead.
+ *
+ * Rejected: removing the physics component from the player while spectating,
+ * which is what noclip "should" be. perspective.js, survival.js and this file
+ * all read `getPhysics(player).body` every tick and would throw on the first
+ * one.
+ */
+export function createFlight(noa, move) {
+  const player = noa.playerEntity
+  const body = () => noa.ents.getPhysics(player).body
+
+  // The real solidity test, kept so noclip can be switched back off.
+  const solidTest = noa.physics.testSolid
+  const groundAirMoveMult = move.airMoveMult
+
+  let mayFly = false
+  let alwaysFlying = false   // spectator: flight is the mode, not a toggle
+  let flying = false
+  let lastJumpPress = -Infinity
+  /*
+   * Has this flight ever actually left the ground?
+   *
+   * Landing ends flight, but you almost always START a flight standing still
+   * on the ground -- double-tapping space is how you take off. Without this
+   * flag the take-off tick sees `atRestY() < 0`, calls that a landing, and
+   * cancels the flight you just began, so the double-tap appears to do
+   * nothing at all.
+   */
+  let liftedOff = false
+
+  const setFlying = (on) => {
+    if (flying === on) return
+    flying = on
+    liftedOff = false
+    body().gravityMultiplier = on ? 0 : 1
+    move.airMoveMult = on ? 1 : groundAirMoveMult
+    // Leaving flight with residual lift would launch you; leaving it with
+    // residual fall speed would bill you for fall damage you didn't earn.
+    if (!on) body().velocity[1] = 0
+  }
+
+  const setNoClip = (on) => {
+    noa.physics.testSolid = on ? () => false : solidTest
+  }
+
+  noa.inputs.down.on('jump', () => {
+    if (!mayFly || alwaysFlying) return
+    const now = performance.now()
+    if (now - lastJumpPress < DOUBLE_TAP_MS) {
+      setFlying(!flying)
+      // Consume the pair, or a triple-tap toggles twice.
+      lastJumpPress = -Infinity
+      return
+    }
+    lastJumpPress = now
+  })
+
+  return {
+    get flying() { return flying },
+    get mayFly() { return mayFly },
+
+    /** Called by gamemode.js with the capability row for the new mode. */
+    setAbilities(caps) {
+      mayFly = caps.mayFly
+      alwaysFlying = caps.startsFlying
+      setNoClip(caps.noClip)
+      if (!mayFly) setFlying(false)
+      else if (caps.startsFlying) setFlying(true)
+      // Creative keeps whatever flight state you were already in, which is
+      // vanilla: /gamemode creative twice does not drop you out of the sky.
+    },
+
+    /** Driven from installSpeedModes' tick so there is one tick handler. */
+    tick(dt, S) {
+      if (!flying) return
+      const b = body()
+
+      /*
+       * Landing ends flight in creative -- vanilla clears abilities.flying the
+       * moment you touch ground, which is how you stop flying without ever
+       * finding the double-tap. A spectator never lands, because nothing is
+       * solid to them.
+       */
+      if (!alwaysFlying) {
+        if (b.atRestY() >= 0) liftedOff = true
+        else if (liftedOff) { setFlying(false); return }
+      }
+
+      const target = ((S.jump ? 1 : 0) - (S.sneak ? 1 : 0)) * MC.FLY_VERTICAL_SPEED
+      const k = 1 - Math.exp(-(dt / 1000) * MC.FLY_VERTICAL_RESPONSE)
+      b.velocity[1] += (target - b.velocity[1]) * k
+    },
+  }
+}
+
 export function installSpeedModes(noa, move, survival) {
   noa.inputs.bind('sprint', 'ControlLeft')
   noa.inputs.bind('sneak', 'ShiftLeft')
@@ -132,6 +277,8 @@ export function installSpeedModes(noa, move, survival) {
   const camera = noa.rendering.camera
   const baseFov = (BASE_FOV_DEG * Math.PI) / 180
   camera.fov = baseFov
+
+  const flight = createFlight(noa, move)
 
   let sprinting = false
   let lastForwardPress = -Infinity
@@ -165,21 +312,34 @@ export function installSpeedModes(noa, move, survival) {
     const S = noa.inputs.state
     const forward = S.forward
 
+    /*
+     * While flying, Shift is descend rather than sneak. Every sneak rule below
+     * -- the slow walk, the camera drop, the edge protection -- would fight
+     * that, so sneak is read through this instead of off S directly.
+     */
+    const sneaking = S.sneak && !flight.flying
+
     if (S.sprint && forward) sprinting = true
 
     // Cancels, in Minecraft's order of precedence.
     if (!forward) sprinting = false
-    if (S.sneak) sprinting = false
-    if (survival && survival.food <= 6) sprinting = false
+    if (sneaking) sprinting = false
+    if (survival && survival.food <= 6 && !flight.flying) sprinting = false
 
-    // Sneak beats sprint when both are somehow active.
-    move.maxSpeed = S.sneak ? MC.SNEAK_SPEED
+    flight.tick(dt, S)
+
+    // Sneak beats sprint when both are somehow active. Sprinting doubles
+    // flight speed rather than adding to it, which is Minecraft's rule and is
+    // why creative flight has two very different gears.
+    move.maxSpeed = flight.flying
+      ? (sprinting ? MC.FLY_SPRINT_SPEED : MC.FLY_SPEED)
+      : sneaking ? MC.SNEAK_SPEED
       : sprinting ? MC.SPRINT_SPEED
       : MC.WALK_SPEED
 
     // Minecraft eases this over a few ticks rather than snapping, which is
     // what stops it reading as a glitch.
-    const targetEye = S.sneak ? MC.SNEAK_EYE_HEIGHT : MC.EYE_HEIGHT
+    const targetEye = sneaking ? MC.SNEAK_EYE_HEIGHT : MC.EYE_HEIGHT
     eyeHeight += (targetEye - eyeHeight) * Math.min(1, (dt / 1000) * 14)
     follow.offset[1] = eyeHeight
 
@@ -202,10 +362,10 @@ export function installSpeedModes(noa, move, survival) {
     }
     jumpWasDown = S.jump
 
-    if (S.sneak) preventWalkingOffEdge(noa)
+    if (sneaking) preventWalkingOffEdge(noa)
   })
 
-  return { isSprinting: () => sprinting, ...installMovementFeedback(noa) }
+  return { isSprinting: () => sprinting, flight, ...installMovementFeedback(noa) }
 }
 
 /*

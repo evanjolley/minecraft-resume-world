@@ -18,7 +18,16 @@ export const MAX_FOOD = 20
 // Flip to true for full survival rules.
 export const HUNGER_DRAIN_ENABLED = false
 
-export function createSurvival(noa) {
+/**
+ * @param rules  the gamemode/game-rule gates. Injected rather than imported so
+ *   survival.js keeps knowing nothing about modes or operators: it asks "may
+ *   this happen", and authority.js is what answers. Defaults are full survival
+ *   rules, which is what the module means on its own.
+ */
+export function createSurvival(noa, {
+  allowDamage = () => true,
+  allowRegen = () => true,
+} = {}) {
   const state = {
     health: MAX_HEALTH,
     food: MAX_FOOD,
@@ -50,6 +59,10 @@ export function createSurvival(noa) {
 
   state.damage = (amount, cause = 'generic') => {
     if (state.dead || amount <= 0) return
+    // The one gate. Creative and spectator invulnerability and the fallDamage
+    // game rule are all the same question asked of the same function, so
+    // there is no mode-specific branch anywhere in this file.
+    if (!allowDamage(cause)) return
     state.health = Math.max(0, state.health - amount)
     if (state.health === 0) state.dead = true
     changed()
@@ -97,18 +110,53 @@ export function createSurvival(noa) {
     }
   })
 
-  // Void death. Falling out of the world kills you in Minecraft rather than
-  // teleporting you home, so respawn.js defers to this when survival is on.
+  /*
+   * Void death. Falling out of the world kills you in Minecraft rather than
+   * teleporting you home, so respawn.js defers to this when survival is on.
+   *
+   * It bypasses damage() deliberately -- vanilla's out-of-world damage source
+   * is flagged bypass-invulnerability, which is why a creative player still
+   * dies down there -- but it must NOT bypass the death event. Falling off
+   * this island is by a wide margin the most common death in the world, and a
+   * subscriber that only heard about the rare ones would have to re-derive the
+   * common one by diffing health on every change.
+   *
+   * Ordering matches damage(): state is committed, changed() fires, then the
+   * event. Anything listening to both therefore sees `dead` already true when
+   * the event arrives, in both paths.
+   */
   state.onVoidFall = () => {
+    if (state.dead) return
     state.health = 0
     state.dead = true
     peakY = null
     changed()
+    hurt.emit({ amount: MAX_HEALTH, health: 0, cause: 'void' })
+    died.emit({ cause: 'void' })
   }
 
   // Clearing the peak on respawn matters: without it you take fall damage
   // for the drop you already died from, the instant you land at spawn.
   state.clearFallTracking = () => { peakY = null }
+
+  /*
+   * /kill, and it deliberately does NOT go through damage().
+   *
+   * Vanilla's /kill is Float.MAX_VALUE from a damage source flagged
+   * bypass-invulnerability, so it kills a creative player who is otherwise
+   * immune to everything. Routing it through the gate above would make /kill
+   * silently do nothing in exactly the mode you are most likely to be in when
+   * you type it.
+   */
+  state.kill = () => {
+    if (state.dead) return
+    state.health = 0
+    state.dead = true
+    peakY = null
+    changed()
+    hurt.emit({ amount: MAX_HEALTH, health: 0, cause: 'command' })
+    died.emit({ cause: 'command' })
+  }
 
   /*
    * Hunger and regeneration, both real Minecraft rules:
@@ -137,7 +185,7 @@ export function createSurvival(noa) {
       }
     }
 
-    if (state.food >= 18 && state.health < MAX_HEALTH) {
+    if (state.food >= 18 && state.health < MAX_HEALTH && allowRegen()) {
       regenTimer += secs
       if (regenTimer > 4) { regenTimer = 0; state.heal(1) }
     }

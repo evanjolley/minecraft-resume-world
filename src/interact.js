@@ -18,10 +18,35 @@ import { createEmitter } from './emitter.js'
  * and particles are the first subscribers, but they won't be the last -- once
  * there's a network layer, "a block changed" is exactly what has to go over
  * the wire, and it should not have to be re-derived by diffing the world.
+ *
+ * NOTHING HERE WRITES TO THE WORLD DIRECTLY. Every break and every place is a
+ * request to authority.js, which is the single function a server will one day
+ * validate. That is also why adventure mode's refusal is not spelled out in
+ * this file: it is one branch there rather than three here. The capability
+ * checks that DO appear below are user interface, not enforcement -- they stop
+ * the crack overlay from animating a break that is going to be refused.
  */
-export function installInteraction(noa, inv, fx) {
+
+/*
+ * Creative's break rate. Vanilla breaks instantly but rate-limits a held
+ * button to one block every 5 game ticks, which is 250 ms; without that,
+ * dragging across a wall at 30 fps deletes it faster than you can see.
+ */
+const CREATIVE_BREAK_INTERVAL_MS = 250
+
+export function installInteraction(noa, inv, fx, authority) {
   const swing = fx.swing
   let breaking = null // { x, y, z, id, elapsed, total }
+  let creativeCooldown = 0
+
+  /*
+   * SUBTLE, and the reason a break clears its own state before awaiting: a
+   * granted request still resolves a microtask late, and the tick loop does
+   * not wait. Leaving `breaking` set across the await means the next tick
+   * starts a second break on a block that is already on its way out, and the
+   * player is billed twice for it.
+   */
+  let pending = false
 
   /*
    * Is some UI layer holding the player's input?
@@ -66,8 +91,42 @@ export function installInteraction(noa, inv, fx) {
    */
   noa.inputs.down.on('fire', () => { if (!busy()) swing.trigger() })
 
+  /**
+   * Take a block out of the world. The one exit from this module for a break,
+   * whether it took nine tenths of a second or no time at all.
+   *
+   * Everything that follows the break -- the drop, the event, the sound -- is
+   * inside the `ok` branch on purpose: a refused request must leave no trace,
+   * and the day a server refuses one, that is the branch that already handles
+   * it correctly.
+   */
+  const breakBlock = async (id, position) => {
+    pending = true
+    try {
+      const res = await authority.requestBlockChange({ id: 0, position, cause: 'break' })
+      if (!res.ok) return
+      // Minecraft drops a different block than the one mined for some types:
+      // grass gives dirt, stone gives cobblestone. Creative drops nothing at
+      // all -- you already have every block.
+      if (!authority.caps().infiniteResources) {
+        inv.add(BLOCK_BY_ID.get(id)?.drops ?? id, 1)
+      }
+      // Emitted after the world has actually changed, so a subscriber that
+      // reads the block back sees air rather than the block it's reacting to.
+      // The id it wants is in the payload precisely because it's gone.
+      blockBreak.emit({ id, position })
+    } finally {
+      pending = false
+    }
+  }
+
+  /** Bedrock. Without this the timer runs forever and the crack overlay sits
+   *  frozen on stage 0 while you chew on it. */
+  const breakable = (def) => def && def.hardness !== Infinity
+
   noa.on('tick', (dt) => {
     swing.update(dt / 1000)
+    creativeCooldown = Math.max(0, creativeCooldown - dt)
     if (busy()) { breaking = null; showProgress(0); return }
 
     // Keep swinging for as long as the button is held, target or not.
@@ -75,19 +134,47 @@ export function installInteraction(noa, inv, fx) {
 
     const held = noa.inputs.state.fire
     const target = noa.targetedBlock
+    const caps = authority.caps()
 
-    if (!held || !target) {
+    if (!held || !target || !caps.mayBreak) {
       if (breaking) { breaking = null; showProgress(0) }
       return
     }
 
     const pos = target.position
+
+    /*
+     * Creative skips the timer entirely rather than running it with a
+     * hardness of zero. Zero hardness would divide by zero in the progress
+     * fraction, and more to the point the crack overlay has nothing to draw:
+     * in creative there is no stage 1, the block is simply gone.
+     */
+    if (caps.instantBreak) {
+      if (creativeCooldown > 0 || pending) return
+      const id = noa.getBlock(pos[0], pos[1], pos[2])
+      if (!breakable(BLOCK_BY_ID.get(id))) return
+      creativeCooldown = CREATIVE_BREAK_INTERVAL_MS
+      breakBlock(id, [pos[0], pos[1], pos[2]])
+      return
+    }
+
     if (!sameBlock(breaking, pos)) {
       const id = noa.getBlock(pos[0], pos[1], pos[2])
       const def = BLOCK_BY_ID.get(id)
-      // Infinity marks bedrock. Without this the timer runs forever and the
-      // crack overlay sits frozen on stage 0 while you chew on it.
-      if (!def || def.hardness === Infinity) { breaking = null; showProgress(0); return }
+      if (!breakable(def)) {
+        /*
+         * Bedrock. The timer never starts -- it would run forever -- but the
+         * hit still happened, so progress is published with frac 0 rather
+         * than not published at all. Vanilla keeps ticking the hit sound
+         * while you punch something unbreakable; you simply never break it.
+         *
+         * frac 0 is also what keeps the crack overlay off (crackOverlay.js
+         * hides itself at frac <= 0), so this is a hit without a stage.
+         */
+        breaking = null
+        showProgress(0, pos, id, dt / 1000)
+        return
+      }
       breaking = { x: pos[0], y: pos[1], z: pos[2], id, elapsed: 0, total: def.hardness }
     }
 
@@ -96,24 +183,18 @@ export function installInteraction(noa, inv, fx) {
     showProgress(frac, pos, breaking.id, dt / 1000)
 
     if (frac >= 1) {
-      const def = BLOCK_BY_ID.get(breaking.id)
-      const broke = { id: breaking.id, position: [breaking.x, breaking.y, breaking.z] }
-      noa.setBlock(0, breaking.x, breaking.y, breaking.z)
-      // Minecraft drops a different block than the one mined for some types:
-      // grass gives dirt, stone gives cobblestone.
-      inv.add(def.drops ?? breaking.id, 1)
+      const { id, x, y, z } = breaking
       breaking = null
       showProgress(0)
-      // Emitted after the world has actually changed, so a subscriber that
-      // reads the block back sees air rather than the block it's reacting to.
-      // The id it wants is in the payload precisely because it's gone.
-      blockBreak.emit(broke)
+      breakBlock(id, [x, y, z])
     }
   })
 
   // Placing is instant, and consumes from the selected hotbar slot.
-  noa.inputs.down.on('alt-fire', () => {
+  noa.inputs.down.on('alt-fire', async () => {
     if (busy()) return
+    const caps = authority.caps()
+    if (!caps.mayBuild) return
     const target = noa.targetedBlock
     if (!target) return
     const stack = inv.selectedStack()
@@ -124,6 +205,9 @@ export function installInteraction(noa, inv, fx) {
     // Don't let the player entomb themselves. Minecraft refuses to place a
     // block inside any entity's bounding box, and without this check you can
     // place a block into your own feet and end up stuck inside terrain.
+    //
+    // A spectator has no bounding box worth speaking of, but they cannot
+    // build either, so this stays unconditional.
     const p = noa.ents.getPositionData(noa.playerEntity)
     const [px, py, pz] = p.position
     const w = p.width / 2
@@ -133,10 +217,13 @@ export function installInteraction(noa, inv, fx) {
       y + 1 > py && y < py + p.height
     if (intersects) return
 
-    noa.setBlock(stack.id, x, y, z)
-    inv.consumeSelected()
+    const id = stack.id
+    const res = await authority.requestBlockChange({ id, position: [x, y, z], cause: 'place' })
+    if (!res.ok) return
+    // Creative's Abilities.instabuild: the stack never shrinks.
+    if (!caps.infiniteResources) inv.consumeSelected()
     swing.trigger()
-    blockPlace.emit({ id: stack.id, position: [x, y, z] })
+    blockPlace.emit({ id, position: [x, y, z] })
   })
 
   return {

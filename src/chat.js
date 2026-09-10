@@ -188,14 +188,31 @@ export function installChat(noa, {
   /**
    * Register a command. Deliberately a one-liner:
    *   chat.command('time', 'Sets the time of day', (args) => ...)
-   * @param {(args: string[], chat: object) => void} run
+   *
+   * `permission` is a predicate evaluated at call time, not at registration:
+   * whether you may run /gamemode changes the moment you type /op, and a
+   * boolean captured here would be stale forever. chat.js deliberately does
+   * not know what the predicate tests -- that is authority.js's business, and
+   * keeping chat ignorant of it is what stops the chat overlay from growing an
+   * opinion about who you are.
+   *
+   * @param {(args: string[], chat: object) => void | Promise<void>} run
+   * @param {{ permission?: () => boolean }} [opts]
    */
-  const command = (cmdName, description, run) => {
-    commands.set(cmdName, { name: cmdName, description, run })
+  const command = (cmdName, description, run, { permission = () => true } = {}) => {
+    commands.set(cmdName, { name: cmdName, description, run, permission })
+  }
+
+  /** Vanilla's exact two-line rejection, including the caret line that points
+   *  at where the parser gave up. */
+  const parseError = (raw) => {
+    addMessage({ text: 'Unknown or incomplete command, see below for error', kind: 'error' })
+    addMessage({ text: `${raw}<--[HERE]`, kind: 'error' })
   }
 
   command('help', 'Shows a list of commands', () => {
     for (const cmd of [...commands.values()].sort((a, b) => a.name < b.name ? -1 : 1)) {
+      if (!cmd.permission()) continue
       addMessage({ text: `/${cmd.name} - ${cmd.description}`, kind: 'system' })
     }
   })
@@ -203,14 +220,21 @@ export function installChat(noa, {
   const runCommand = (raw) => {
     const [cmdName, ...args] = raw.slice(1).split(' ').filter(Boolean)
     const cmd = commands.get(cmdName)
-    if (!cmd) {
-      // Vanilla's exact two-line rejection, including the caret line that
-      // points at where the parser gave up.
-      addMessage({ text: 'Unknown or incomplete command, see below for error', kind: 'error' })
-      addMessage({ text: `${raw}<--[HERE]`, kind: 'error' })
-      return
-    }
-    cmd.run(args, api)
+    /*
+     * A command you may not run is reported as a command that does not exist,
+     * which is what vanilla does: the server never registers it into your
+     * dispatcher, so /gamemode from a non-op is an ordinary parse failure. It
+     * is also the better answer here -- "you lack permission" advertises that
+     * a permission system is worth attacking.
+     */
+    if (!cmd || !cmd.permission()) return parseError(raw)
+
+    // Commands are allowed to be async, because authority.js's answers are.
+    // Wrapping rather than awaiting: submit() is called from a keydown, and a
+    // command that throws must not take the chat box down with it.
+    Promise.resolve(cmd.run(args, api)).catch((err) => {
+      addMessage({ text: `Command failed: ${err?.message ?? err}`, kind: 'error' })
+    })
   }
 
   /* ------------------------------------------------------------------ *
@@ -395,10 +419,16 @@ export function installChat(noa, {
     // multiplayer.player.joined / .left, both yellow in vanilla.
     announceJoin: (who) => addMessage({ text: `${who} joined the game`, kind: 'join' }),
     announceLeave: (who) => addMessage({ text: `${who} left the game`, kind: 'join' }),
+    /** Vanilla's parse failure, for a command that wants to reject its args. */
+    parseError,
     // For the transport that does not exist yet: read-only views of state a
     // network layer will want.
     get history() { return history.slice() },
     get commands() { return [...commands.keys()] },
+    /** Only what the caller may actually run -- same filter /help uses. */
+    get visibleCommands() {
+      return [...commands.values()].filter(c => c.permission()).map(c => c.name)
+    },
   }
   return api
 }
