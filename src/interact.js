@@ -1,4 +1,5 @@
 import { BLOCK_BY_ID } from './blocks.js'
+import { createEmitter } from './emitter.js'
 
 /*
  * Breaking and placing blocks.
@@ -12,14 +13,53 @@ import { BLOCK_BY_ID } from './blocks.js'
  * you can "bank" progress by chewing on several blocks in turn and pop them
  * all instantly. Tracking the target's coordinates, not just whether a
  * target exists, is what closes that hole.
+ *
+ * Breaking, placing and mining progress are all published as events. Sounds
+ * and particles are the first subscribers, but they won't be the last -- once
+ * there's a network layer, "a block changed" is exactly what has to go over
+ * the wire, and it should not have to be re-derived by diffing the world.
  */
 export function installInteraction(noa, inv, fx) {
   const swing = fx.swing
   let breaking = null // { x, y, z, id, elapsed, total }
 
+  /*
+   * Is some UI layer holding the player's input?
+   *
+   * This used to test `inv.open`, which was only ever right by accident: the
+   * inventory was the first screen to exist. inputLock is the shared,
+   * reference-counted answer -- the inventory, the pause menu, the death
+   * screen and chat all register with it -- so mining and placing now stop for
+   * all four rather than just the one. Mining while the pause menu was open
+   * and mining while dead were both possible before this.
+   *
+   * SUBTLE: inputLock detaches noa's movement component, which is why WASD
+   * already stopped. It does NOT stop game-inputs from tracking the mouse, so
+   * `inputs.state.fire` stays live under an open chat box and left-clicking
+   * would happily mine through it. The two paths look the same and aren't.
+   */
+  const busy = fx.inputLock
+    ? () => fx.inputLock.locked
+    // Fallback for a call site that hasn't been updated to pass inputLock yet.
+    // It's the old, narrower behaviour, not a second opinion -- delete it once
+    // main.js hands one in.
+    : () => inv.open
+
+  const blockBreak = createEmitter()   // { id, position }
+  const blockPlace = createEmitter()   // { id, position }
+  const breakProgress = createEmitter() // { id, position, frac, dt }
+
   // Minecraft has no progress bar. Feedback is the crack overlay on the
   // block plus the arm swinging, so progress drives those instead.
-  const showProgress = (frac, pos) => fx.crack.update(frac, pos)
+  //
+  // `dt` rides along because every subscriber so far needs to rate-limit
+  // itself (the mining sound to every 4 ticks, crumb particles to their own
+  // cadence) and this fires once per frame. Handing them the frame time is
+  // cheaper and less error-prone than each keeping its own clock.
+  const showProgress = (frac, pos, id = 0, dt = 0) => {
+    fx.crack.update(frac, pos)
+    breakProgress.emit({ id, position: pos ?? null, frac, dt })
+  }
 
   const sameBlock = (a, pos) => a && a.x === pos[0] && a.y === pos[1] && a.z === pos[2]
 
@@ -29,11 +69,11 @@ export function installInteraction(noa, inv, fx) {
    * Previously the swing only fired when a block was targeted, so clicking at
    * the sky did nothing at all.
    */
-  noa.inputs.down.on('fire', () => { if (!inv.open) swing.trigger() })
+  noa.inputs.down.on('fire', () => { if (!busy()) swing.trigger() })
 
   noa.on('tick', (dt) => {
     swing.update(dt / 1000)
-    if (inv.open) { breaking = null; showProgress(0); return }
+    if (busy()) { breaking = null; showProgress(0); return }
 
     // Keep swinging for as long as the button is held, target or not.
     if (noa.inputs.state.fire) swing.triggerIfIdle()
@@ -45,9 +85,6 @@ export function installInteraction(noa, inv, fx) {
       if (breaking) { breaking = null; showProgress(0) }
       return
     }
-
-    // Keep the arm swinging for as long as the button is down.
-    fx.held.swingIfIdle()
 
     const pos = target.position
     if (!sameBlock(breaking, pos)) {
@@ -61,22 +98,27 @@ export function installInteraction(noa, inv, fx) {
 
     breaking.elapsed += dt / 1000
     const frac = Math.min(1, breaking.elapsed / breaking.total)
-    showProgress(frac, pos)
+    showProgress(frac, pos, breaking.id, dt / 1000)
 
     if (frac >= 1) {
       const def = BLOCK_BY_ID.get(breaking.id)
+      const broke = { id: breaking.id, position: [breaking.x, breaking.y, breaking.z] }
       noa.setBlock(0, breaking.x, breaking.y, breaking.z)
       // Minecraft drops a different block than the one mined for some types:
       // grass gives dirt, stone gives cobblestone.
       inv.add(def.drops ?? breaking.id, 1)
       breaking = null
       showProgress(0)
+      // Emitted after the world has actually changed, so a subscriber that
+      // reads the block back sees air rather than the block it's reacting to.
+      // The id it wants is in the payload precisely because it's gone.
+      blockBreak.emit(broke)
     }
   })
 
   // Placing is instant, and consumes from the selected hotbar slot.
   noa.inputs.down.on('alt-fire', () => {
-    if (inv.open) return
+    if (busy()) return
     const target = noa.targetedBlock
     if (!target) return
     const stack = inv.selectedStack()
@@ -99,9 +141,21 @@ export function installInteraction(noa, inv, fx) {
     noa.setBlock(stack.id, x, y, z)
     inv.consumeSelected()
     swing.trigger()
+    blockPlace.emit({ id: stack.id, position: [x, y, z] })
   })
 
-  return {}
+  return {
+    /** @param fn ({ id, position }) => void, called after the block is gone. */
+    onBlockBreak: blockBreak.on,
+    /** @param fn ({ id, position }) => void */
+    onBlockPlace: blockPlace.on,
+    /**
+     * Per-frame mining progress. `position` is null whenever nothing is being
+     * broken, which is the signal to reset any per-target state.
+     * @param fn ({ id, position, frac, dt }) => void
+     */
+    onBreakProgress: breakProgress.on,
+  }
 }
 
 /*
@@ -109,15 +163,19 @@ export function installInteraction(noa, inv, fx) {
  * wheel, and puts camera perspective on F5 instead. We had scroll on zoom
  * before, which is the wrong reflex for anyone who has played the game.
  */
-export function installHotbarControls(noa, inv) {
+export function installHotbarControls(noa, inv, inputLock) {
+  const busy = inputLock ? () => inputLock.locked : () => inv.open
+
   document.addEventListener('keydown', (e) => {
-    if (inv.open) return
+    if (busy()) return
     const n = Number(e.key)
     if (Number.isInteger(n) && n >= 1 && n <= 9) inv.select(n - 1)
   })
 
   noa.on('tick', () => {
-    if (inv.open) return
+    // Scrolling belongs to whatever is on screen. Chat scrolls its backlog,
+    // and without this guard reading history silently swapped your held item.
+    if (busy()) return
     const scroll = noa.inputs.pointerState.scrolly
     if (scroll !== 0) inv.select(inv.selected + (scroll > 0 ? 1 : -1))
   })

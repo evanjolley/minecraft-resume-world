@@ -1,3 +1,5 @@
+import { createEmitter } from './emitter.js'
+
 /*
  * Minecraft Java Edition movement, mapped onto noa's physics.
  *
@@ -203,7 +205,94 @@ export function installSpeedModes(noa, move, survival) {
     if (S.sneak) preventWalkingOffEdge(noa)
   })
 
-  return { isSprinting: () => sprinting }
+  return { isSprinting: () => sprinting, ...installMovementFeedback(noa) }
+}
+
+/*
+ * Footsteps and landings, as events.
+ *
+ * These are movement facts, not sound: "the player's feet hit block X" is
+ * something a footprint decal, a network packet or a screen shake would want
+ * just as much as an audio clip does. Nothing here knows what a sound is.
+ *
+ * FOOTSTEP CADENCE is Minecraft's, and it is distance-based rather than
+ * time-based. Minecraft accumulates `sqrt(dx^2 + dz^2) * 0.6` and fires a step
+ * each time that crosses a whole number, so a step lands every 1/0.6 blocks
+ * travelled. Getting this from a timer instead would be the obvious shortcut
+ * and would sound wrong immediately: sprinting wouldn't quicken the rhythm and
+ * sneaking wouldn't slow it.
+ *
+ * LANDING reports an impact SPEED, not a fall distance. survival.js already
+ * tracks peak height to work out fall damage, and re-deriving that here would
+ * be the same bookkeeping in two places, drifting apart the first time either
+ * is touched. Vertical velocity is right there in the physics body and is what
+ * feedback actually wants to scale against. If survival.js ever publishes its
+ * own landing event with a real fall distance, that's the better source and
+ * this should defer to it.
+ */
+const STEP_DISTANCE = 1 / 0.6
+
+function installMovementFeedback(noa) {
+  const footstep = createEmitter()
+  const land = createEmitter()
+
+  const player = noa.playerEntity
+  let travelled = STEP_DISTANCE // fire on the first step out of spawn, not 1.6 blocks in
+  let lastX = null, lastZ = null
+  let wasOnGround = true
+  let fallSpeed = 0
+
+  /*
+   * The block being STOOD ON, which is one below the feet -- and the bias
+   * matters. A resting player's y sits exactly on the block boundary, so
+   * Math.floor(y) samples the air they're standing in rather than the ground
+   * they're standing on. Same trick preventWalkingOffEdge uses below.
+   */
+  const groundBlock = (pos) =>
+    noa.getBlock(Math.floor(pos[0]), Math.floor(pos[1] - 0.1), Math.floor(pos[2]))
+
+  noa.on('tick', () => {
+    const body = noa.ents.getPhysics(player).body
+    const pos = noa.ents.getPositionData(player).position
+    const onGround = body.atRestY() < 0
+
+    if (!onGround) {
+      // Sampled every airborne tick because the contact itself zeroes the
+      // velocity -- read it after landing and it's always 0.
+      fallSpeed = Math.max(0, -body.velocity[1])
+    }
+
+    if (onGround && !wasOnGround) {
+      land.emit({ position: [pos[0], pos[1], pos[2]], blockId: groundBlock(pos), speed: fallSpeed })
+      // A landing counts as a step's worth of noise, so the next footstep
+      // shouldn't also fire half a block later.
+      travelled = 0
+      fallSpeed = 0
+    }
+    wasOnGround = onGround
+
+    if (lastX !== null && onGround) {
+      const dx = pos[0] - lastX
+      const dz = pos[2] - lastZ
+      travelled += Math.sqrt(dx * dx + dz * dz)
+      if (travelled >= STEP_DISTANCE) {
+        travelled = 0
+        const blockId = groundBlock(pos)
+        // Zero is air: you can be "at rest" against a block edge with nothing
+        // underneath, and a footstep on nothing has no material to sound like.
+        if (blockId) footstep.emit({ position: [pos[0], pos[1], pos[2]], blockId })
+      }
+    }
+    lastX = pos[0]
+    lastZ = pos[2]
+  })
+
+  return {
+    /** @param fn ({ position, blockId }) => void */
+    onFootstep: footstep.on,
+    /** @param fn ({ position, blockId, speed }) => void, speed in blocks/sec downward. */
+    onLand: land.on,
+  }
 }
 
 /*

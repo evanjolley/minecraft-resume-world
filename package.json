@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "textures": "node scripts/build-textures.mjs --source=ce",
     "textures:vanilla": "node scripts/build-textures.mjs --source=vanilla",
+    "sounds": "node scripts/build-sounds.mjs",
     "postinstall": "node scripts/build-textures.mjs --ensure"
   },
   "dependencies": {
@@ -16,6 +17,7 @@
     "noa-engine": "^0.33.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "sharp": "^0.35.4",
     "vite": "^8.2.2"
   }
