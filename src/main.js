@@ -18,6 +18,8 @@ import { createSwing } from './swing.js'
 import { installPerspective } from './perspective.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky } from './sky.js'
+import { createArmorReduction } from './armor.js'
+import { itemName } from './items.js'
 import { installSounds } from './sounds.js'
 import { installParticles } from './particles.js'
 import { installHighlightStyle } from './highlight.js'
@@ -133,6 +135,10 @@ const move = installPhysics(noa)
  * one of the two has to be a closure. Arrow functions read the binding when
  * they run, and neither runs before the first tick.
  */
+// Declared before survival, which now reads armor out of it. Nothing else
+// changed order; this is the only new dependency between the two.
+const inventory = createInventory()
+
 const survival = createSurvival(noa, {
   allowDamage: (cause) => {
     if (!authority.caps().damage) return false
@@ -140,6 +146,7 @@ const survival = createSurvival(noa, {
     return true
   },
   allowRegen: () => authority.gamerule('naturalRegeneration'),
+  damageReduction: createArmorReduction(inventory),
 })
 const movement = installSpeedModes(noa, move, survival)
 
@@ -152,7 +159,6 @@ const inputLock = createInputLock(noa)
 // One swing drives both the first-person arm and the third-person model.
 const swing = createSwing()
 
-const inventory = createInventory()
 
 const sky = installSky(noa)
 installHighlightStyle(noa)
@@ -192,13 +198,16 @@ const authority = createAuthority({
       survival.clearFallTracking()
     },
     give: (id, count) => inventory.add(id, count),
-    blockName: (id) => BLOCK_BY_ID.get(id)?.name ?? String(id),
+    blockName: (id) => itemName(id),
     kill: () => survival.kill(),
   },
 })
 
 const interaction = installInteraction(noa, inventory,
-  { crack, held, swing, inputLock }, authority)
+  // useBlock is a thunk because inventoryScreen is declared further down; it
+  // only ever runs on a right-click, long after everything is constructed.
+  { crack, held, swing, inputLock, useBlock: (id, pos) => inventoryScreen.useBlock(id, pos) },
+  authority)
 
 /*
  * The doDaylightCycle game rule.

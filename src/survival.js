@@ -27,6 +27,10 @@ export const HUNGER_DRAIN_ENABLED = false
 export function createSurvival(noa, {
   allowDamage = () => true,
   allowRegen = () => true,
+  // Armor sits here rather than inside damage() because what reduces incoming
+  // damage is inventory state, and survival has no business reading the
+  // inventory. main.js supplies it.
+  damageReduction = (amount) => amount,
 } = {}) {
   const state = {
     health: MAX_HEALTH,
@@ -63,6 +67,8 @@ export function createSurvival(noa, {
     // game rule are all the same question asked of the same function, so
     // there is no mode-specific branch anywhere in this file.
     if (!allowDamage(cause)) return
+    amount = damageReduction(amount, cause)
+    if (amount <= 0) return
     state.health = Math.max(0, state.health - amount)
     if (state.health === 0) state.dead = true
     changed()

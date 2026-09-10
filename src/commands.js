@@ -1,4 +1,5 @@
 import { BLOCK_TYPES } from './blocks.js'
+import { ITEMS } from './items.js'
 import { GAMEMODE_NAMES } from './gamemode.js'
 import { GAMERULES } from './authority.js'
 
@@ -20,6 +21,13 @@ import { GAMERULES } from './authority.js'
 /* key -> block definition. `key` is this world's block namespace (blocks.js),
  * so /give planks, not /give oak_planks -- the ids are ours, not Mojang's. */
 const BLOCK_BY_KEY = new Map(BLOCK_TYPES.map(b => [b.key, b]))
+
+/*
+ * /give takes ITEMS -- `/give iron_pickaxe` has to work, and a pickaxe is not
+ * a block. /setblock and /fill deliberately keep the block map: naming an item
+ * that places nothing is a mistake worth reporting, not a silent no-op.
+ */
+const ITEM_BY_KEY = new Map(ITEMS.map(i => [i.key, i]))
 
 /* Minecraft's four named times, in ticks. */
 const NAMED_TIMES = { day: 1000, noon: 6000, night: 13000, midnight: 18000 }
@@ -67,11 +75,11 @@ export function installCommands(chat, authority, { noa, playerName }) {
     return out.every(v => v !== null) ? out : null
   }
 
-  const lookupBlock = (name) => {
-    if (!name) return null
-    // Accept the namespace vanilla prints even though nothing here uses it.
-    return BLOCK_BY_KEY.get(name.replace(/^minecraft:/, '')) ?? null
-  }
+  // Accept the namespace vanilla prints even though nothing here uses it.
+  const bare = (name) => name?.replace(/^minecraft:/, '')
+
+  const lookupBlock = (name) => (name ? BLOCK_BY_KEY.get(bare(name)) ?? null : null)
+  const lookupItem = (name) => (name ? ITEM_BY_KEY.get(bare(name)) ?? null : null)
 
   /* ---------------- open to everyone ---------------- */
 
@@ -127,9 +135,11 @@ export function installCommands(chat, authority, { noa, playerName }) {
     report(await authority.requestTeleport(at[0], at[1], at[2]))
   }, opOnly)
 
-  chat.command('give', 'Gives you a block: /give <block> [count]', async ([name, rawCount]) => {
-    const def = lookupBlock(name)
-    if (!def) return fail(`Unknown block type '${name ?? ''}'`)
+  chat.command('give', 'Gives you an item: /give <item> [count]', async ([name, rawCount]) => {
+    // Items, not blocks -- /give iron_pickaxe has to work, and a pickaxe has
+    // no block. /setblock and /fill keep the block map on purpose.
+    const def = lookupItem(name)
+    if (!def) return fail(`Unknown item '${name ?? ''}'`)
     const count = rawCount === undefined ? 1 : Number(rawCount)
     if (!Number.isInteger(count) || count < 1) return fail(`Invalid count: ${rawCount}`)
     report(await authority.requestGive(def.id, count))

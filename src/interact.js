@@ -1,4 +1,5 @@
 import { BLOCK_BY_ID } from './blocks.js'
+import { itemPlaces } from './items.js'
 import { createEmitter } from './emitter.js'
 
 /*
@@ -193,10 +194,22 @@ export function installInteraction(noa, inv, fx, authority) {
   // Placing is instant, and consumes from the selected hotbar slot.
   noa.inputs.down.on('alt-fire', async () => {
     if (busy()) return
-    const caps = authority.caps()
-    if (!caps.mayBuild) return
     const target = noa.targetedBlock
     if (!target) return
+
+    /*
+     * Using a block is checked FIRST, before the build permission and before
+     * needing anything in hand: opening a crafting table is not building, so
+     * it works in adventure mode with an empty hand. Sneaking suppresses it,
+     * which is how Minecraft lets you place a block against a table rather
+     * than opening it.
+     */
+    const [ux, uy, uz] = target.position
+    if (!noa.inputs.state.sneak &&
+        fx.useBlock?.(noa.getBlock(ux, uy, uz), target.position)) return
+
+    const caps = authority.caps()
+    if (!caps.mayBuild) return
     const stack = inv.selectedStack()
     if (!stack) return
 
@@ -217,7 +230,9 @@ export function installInteraction(noa, inv, fx, authority) {
       y + 1 > py && y < py + p.height
     if (intersects) return
 
-    const id = stack.id
+    // A stack holds an ITEM, and most items place nothing at all.
+    const id = itemPlaces(stack.id)
+    if (!id) return
     const res = await authority.requestBlockChange({ id, position: [x, y, z], cause: 'place' })
     if (!res.ok) return
     // Creative's Abilities.instabuild: the stack never shrinks.

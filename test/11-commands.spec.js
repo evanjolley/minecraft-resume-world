@@ -192,15 +192,22 @@ test.describe('operator commands, opped', () => {
     expect(z1 - z0).toBeCloseTo(0, 1)
   })
 
-  test('/give fills a slot, and rejects a block that does not exist',
+  test('/give fills a slot, and rejects an item that does not exist',
     async ({ page }) => {
       const out = await chatCommand(page, '/give diamond_ore 7')
       expect(systemIn(out)).toEqual(['Gave 7 [Diamond Ore] to Evan'])
       expect(await invCount(page, 16)).toBe(7)
 
       const bad = await chatCommand(page, '/give unobtainium 1')
-      expect(errorsIn(bad)).toEqual(["Unknown block type 'unobtainium'"])
+      expect(errorsIn(bad)).toEqual(["Unknown item 'unobtainium'"])
     })
+
+  // /give resolves ITEMS, not blocks: a pickaxe has no block, so a
+  // block-only lookup could never hand one over.
+  test('/give works for an item that is not a block', async ({ page }) => {
+    const out = await chatCommand(page, '/give iron_pickaxe 1')
+    expect(systemIn(out)).toEqual(['Gave 1 [Iron Pickaxe] to Evan'])
+  })
 
   test('/setblock and /fill change the world', async ({ page, terrain }) => {
     await terrain.keep([6, 70, 6], [8, 71, 8])

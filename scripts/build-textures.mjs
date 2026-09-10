@@ -31,6 +31,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir, tmpdir } from 'node:os'
 import sharp from 'sharp'
+import { ITEM_TEXTURES } from '../src/items.js'
 
 import {
   BLOCK_TYPES, MATERIALS, ATLAS_PAGES, MATERIAL_RECIPES, faceMaterials,
@@ -80,10 +81,63 @@ if (!source) {
  * resolved to a 404. The check is now against what blocks.js actually asks
  * for: every atlas page present, and at least as many PNGs as materials.
  */
+/*
+ * Item sprites and the GUI art that only crafting/armor needs.
+ *
+ * `resolve(name, from)` differs per source, so both paths share this and only
+ * supply the lookup. Items are flat 16x16 sprites, unlike blocks -- they are
+ * NOT atlas pages, because they're drawn by the DOM inventory rather than by
+ * the terrain shader.
+ */
+async function emitItems(resolve) {
+  const dir = join(OUT, 'item')
+  mkdirSync(dir, { recursive: true })
+  const missing = []
+  for (const { name, from } of ITEM_TEXTURES) {
+    const src = await resolve(name, from)
+    // A missing sprite is a reportable gap, not a crash. One absent file
+    // used to take the whole build down and leave public/ half-written.
+    if (!src || !existsSync(src)) { missing.push(name); continue }
+    // Same first-square-frame rule as blocks: some item textures are
+    // vertical animation strips.
+    const meta = await sharp(src).metadata()
+    const frame = Math.min(meta.width, meta.height)
+    await sharp(src).extract({ left: 0, top: 0, width: frame, height: frame })
+      .resize(TILE, TILE, { kernel: 'nearest' }).ensureAlpha()
+      .png().toFile(join(dir, `${name}.png`))
+  }
+  return missing
+}
+
+/*
+ * The empty-slot hints Minecraft draws in armor and offhand slots. Those live
+ * at gui/sprites/container/slot/ from 1.20.2, which CE (pack_format 6)
+ * predates entirely -- so for CE they're derived from that pack's own armor
+ * item art: desaturated, darkened and made translucent, which is what the
+ * vanilla hints look like anyway.
+ */
+async function deriveSlotHint(src, out) {
+  const { data, info } = await sharp(src).ensureAlpha().raw()
+    .toBuffer({ resolveWithObject: true })
+  for (let i = 0; i < data.length; i += 4) {
+    const lum = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
+    const grey = Math.round(lum * 0.45)
+    data[i] = data[i + 1] = data[i + 2] = grey
+    data[i + 3] = Math.round(data[i + 3] * 0.55)
+  }
+  await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .png().toFile(out)
+}
+
 function looksComplete() {
   const dir = join(PUBLIC, 'textures')
   if (!existsSync(MARKER)) return false
   if (!ATLAS_PAGES.every(p => existsSync(join(dir, p.file)))) return false
+  // Without this, switching sources after items existed leaves the old
+  // item sprites in place and they silently belong to the wrong pack.
+  const itemDir = join(dir, 'item')
+  if (!existsSync(itemDir)) return false
+  if (readdirSync(itemDir).length < ITEM_TEXTURES.length) return false
   return readdirSync(dir).filter(f => f.endsWith('.png')).length >= MATERIALS.length
 }
 
@@ -122,6 +176,33 @@ const WEATHERED = [150, 200, 165]
 const OXIDIZED = [110, 215, 180]
 
 const sub = (from, mul = [255, 255, 255]) => ({ from, mul })
+
+/*
+ * Items CE has no art for, same reasoning as the block substitutes: dropping
+ * them would make item ids mean different things depending on which texture
+ * source you built with, and ids are save data. Colour-shifted from the
+ * nearest CE item instead -- "right family, wrong pack" rather than blank.
+ */
+/*
+ * Which item's art each empty armor/offhand slot hint is derived from, for
+ * sources that predate gui/sprites/container/slot/ (added in 1.20.2).
+ * Vanilla has the real sprites and uses these names directly.
+ */
+const SLOT_HINT_SOURCE = {
+  helmet: 'iron_helmet',
+  chestplate: 'iron_chestplate',
+  leggings: 'iron_leggings',
+  boots: 'iron_boots',
+  shield: 'iron_ingot',   // no flat shield sprite exists; vanilla renders it 3D
+}
+
+const CE_ITEM_SUBSTITUTES = {
+  copper_ingot: sub('gold_ingot', [200, 115, 75]),
+  raw_copper: sub('gold_ingot', [190, 110, 80]),
+  raw_iron: sub('iron_ingot', [215, 175, 155]),
+  raw_gold: sub('gold_ingot', [235, 195, 90]),
+  amethyst_shard: sub('diamond', [190, 130, 235]),
+}
 
 const CE_SUBSTITUTES = {
   // Caves & Cliffs stone
@@ -455,6 +536,8 @@ const UI_ATLAS_CROPS = {
     heart_empty: [16, 0, 9, 9], heart_full: [52, 0, 9, 9], heart_half: [61, 0, 9, 9],
     food_empty: [16, 27, 9, 9], food_full: [52, 27, 9, 9], food_half: [61, 27, 9, 9],
     xp_bg: [0, 64, 182, 5], xp_fill: [0, 69, 182, 5],
+    // Verified against the vanilla sprites by luminance.
+    armor_empty: [16, 9, 9, 9], armor_half: [25, 9, 9, 9], armor_full: [34, 9, 9, 9],
   },
   inventory: { inventory: [0, 0, 176, 166] },
 }
@@ -508,6 +591,47 @@ async function fromCE() {
     if (f.endsWith('.png')) copyFileSync(join(CE_SRC, f), join(OUT, f))
   }
   await uiFromAtlases(join(CE_SRC, 'gui'))
+
+  /*
+   * Items. CE keeps its own `item/` subset; the five post-1.16 items it
+   * predates are colour-shifted from the nearest one it does have, and block
+   * items resolve from `block/` since vanilla's own item model for torches
+   * and ladders is a flat block texture.
+   */
+  const missingItems = await emitItems(async (name, from) => {
+    if (from === 'block') return join(CE_SRC, 'block', `${name}.png`)
+    const direct = join(CE_SRC, 'item', `${name}.png`)
+    if (existsSync(direct)) return direct
+    const s = CE_ITEM_SUBSTITUTES[name]
+    if (!s) return null
+    const base = join(CE_SRC, 'item', `${s.from}.png`)
+    if (!existsSync(base)) return null
+    // Reuse the block substitutes' own multiply, so a CE item derivative is
+    // produced exactly the way a CE block derivative is.
+    const tinted = join(OUT, 'item', `.tmp-${name}.png`)
+    mkdirSync(join(OUT, 'item'), { recursive: true })
+    const { data, info } = await sharp(base).ensureAlpha().raw()
+      .toBuffer({ resolveWithObject: true })
+    multiply(data, s.mul)
+    await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+      .png().toFile(tinted)
+    return tinted
+  })
+  for (const f of readdirSync(join(OUT, 'item'))) {
+    if (f.startsWith('.tmp-')) rmSync(join(OUT, 'item', f))
+  }
+  if (missingItems.length) console.log(`  no CE art for: ${missingItems.join(' ')}`)
+
+  await sharp(join(CE_SRC, 'gui', 'crafting_table.png'))
+    .extract({ left: 0, top: 0, width: 176, height: 166 })
+    .png().toFile(join(UI, 'crafting_table.png'))
+
+  // Empty-slot hints, derived from CE's own armor art -- see deriveSlotHint.
+  for (const [slot, art] of Object.entries(SLOT_HINT_SOURCE)) {
+    const src = join(OUT, 'item', `${art}.png`)
+    if (existsSync(src)) await deriveSlotHint(src, join(UI, `slot_${slot}.png`))
+  }
+
   mkdirSync(SKINS, { recursive: true })
   // Normalised to RGBA: skins ship as palette PNGs, and the model's material
   // needs a predictable alpha channel for the hat/jacket overlay layers.
@@ -603,6 +727,37 @@ async function fromVanilla() {
   for (const f of ['cloud.png', 'hand.png']) copyFileSync(join(CE_SRC, f), join(OUT, f))
 
   await uiFromVanilla(jar, tmp)
+
+  /* Items, and the GUI art only crafting and armor need. */
+  const itemTmp = join(tmp, 'item')
+  const blockTmp = join(tmp, 'block')
+  mkdirSync(itemTmp, { recursive: true })
+  mkdirSync(blockTmp, { recursive: true })
+  execFileSync('unzip', ['-q', '-o', '-j', jar, 'assets/minecraft/textures/item/*', '-d', itemTmp])
+  execFileSync('unzip', ['-q', '-o', '-j', jar, 'assets/minecraft/textures/block/*', '-d', blockTmp])
+  const missingItems = await emitItems(async (name, from) => {
+    const src = join(from === 'block' ? blockTmp : itemTmp, `${name}.png`)
+    return existsSync(src) ? src : null
+  })
+  if (missingItems.length) console.log(`  missing from jar: ${missingItems.join(' ')}`)
+
+  execFileSync('unzip', ['-q', '-o', '-j', jar,
+    'assets/minecraft/textures/gui/sprites/hud/armor_full.png',
+    'assets/minecraft/textures/gui/sprites/hud/armor_half.png',
+    'assets/minecraft/textures/gui/sprites/hud/armor_empty.png',
+    'assets/minecraft/textures/gui/container/crafting_table.png',
+    ...Object.keys(SLOT_HINT_SOURCE).map(n =>
+      `assets/minecraft/textures/gui/sprites/container/slot/${n}.png`), '-d', tmp])
+  for (const n of ['armor_full', 'armor_half', 'armor_empty']) {
+    copyFileSync(join(tmp, `${n}.png`), join(UI, `${n}.png`))
+  }
+  for (const n of Object.keys(SLOT_HINT_SOURCE)) {
+    const src = join(tmp, `${n}.png`)
+    if (existsSync(src)) copyFileSync(src, join(UI, `slot_${n}.png`))
+  }
+  await sharp(join(tmp, 'crafting_table.png'))
+    .extract({ left: 0, top: 0, width: 176, height: 166 })
+    .png().toFile(join(UI, 'crafting_table.png'))
 
   // The default player skin. 64x64 wide (classic 4px arms) -- the model in
   // playerModel.js is UV-mapped for that layout, not the 3px slim variant.
