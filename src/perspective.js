@@ -2,6 +2,7 @@ import { createPlayerModel, poseModel } from './playerModel.js'
 import { createHeldBlockMesh, blockTextureUrl } from './heldItem.js'
 import { BLOCK_BY_ID } from './blocks.js'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
+import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector'
 
 /*
  * F5 camera perspectives, and the player model that two of them show.
@@ -19,6 +20,9 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture'
  * are flipped in beforeRender and restored in afterRender: the camera rig
  * mirrors for exactly one frame's render, and movement never sees it.
  */
+
+const AXIS_X = new Vector3(1, 0, 0)
+const AXIS_Y = new Vector3(0, 1, 0)
 
 const MODES = ['first', 'third-back', 'third-front']
 const THIRD_PERSON_DISTANCE = 4
@@ -48,15 +52,28 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
    * The block in the model's hand. Parented to the right arm's pivot so it
    * inherits the swing and walk animation for free.
    *
-   * Placement follows Minecraft's "thirdperson_righthand" display transform
-   * from block.json: rotation [75, 45, 0], scale 0.375. In model units that
-   * is a 6-unit cube (0.375 x 16), sat at the far end of the 12-unit arm.
+   * Placement is the whole of Minecraft's chain, not just block.json, which
+   * is why it used to float beside the fist. ItemInHandLayer.renderArmWithItem
+   * starts at the SHOULDER (translateToHand gives the arm's pivot, not its
+   * hand) and works down from there:
+   *
+   *   rotateX(-90)  rotateY(180)  translate(1, 2, -10)   [model units]
+   *   block.json thirdperson_righthand: translate(0, 2.5, 0),
+   *     rotate [75, 45, 0], scale 0.375
+   *
+   * Multiplied out and mirrored into this model's frame (x, y, z all negate,
+   * see playerModel.js) that is a 6-unit cube centred 1 out, 10 down and 4.5
+   * forward of the shoulder -- in the fist, poking out in front of it -- and
+   * the four rotations collapse to X 15 then Y 135.
    */
   const handBlock = createHeldBlockMesh(noa, 'hand-block')
   handBlock.parent = model.parts.armRight.pivot
   handBlock.scaling.setAll(6)
-  handBlock.position.set(0, -11, 1)
-  handBlock.rotation.set((75 * Math.PI) / 180, (45 * Math.PI) / 180, 0)
+  handBlock.position.set(1, -10, 4.5)
+  // Composed as quaternions: X-then-Y is not an order Babylon's Euler
+  // triple can express, since it applies Y first.
+  handBlock.rotationQuaternion = Quaternion.RotationAxis(AXIS_X, (15 * Math.PI) / 180)
+    .multiply(Quaternion.RotationAxis(AXIS_Y, (135 * Math.PI) / 180))
 
   const handTextures = new Map()
   inventory.onChange((inv) => {
@@ -158,8 +175,9 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
       limbSwingAmount,
       crouching: sneaking,
       // The same swing the first-person viewmodel uses, so punching looks
-      // identical from inside and outside.
-      swingArc: swing.arc,
+      // identical from inside and outside. swing.value counts 1 -> 0;
+      // Minecraft's attackTime counts the other way.
+      attack: 1 - swing.value,
       // Camera pitch is positive looking DOWN, and so is the model's head
       // rotation about X, so these share a sign. Negating it, as this did
       // before, made the model look up whenever the player looked down.

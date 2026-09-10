@@ -58,7 +58,6 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
  */
 const REST = { x: 0.56, y: -0.52, z: 0.72 }
 const SCALE = 0.40
-const YAW = Math.PI / 4   // the 45 degrees from block.json
 
 const deg = (d) => (d * Math.PI) / 180
 const AXIS_X = new Vector3(1, 0, 0)
@@ -178,7 +177,29 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
   const arm = createFirstPersonArm(noa, skinMaterial)
   arm.parent = armPose
   arm.renderingGroupId = 1
-  arm.position.set(5.6, 0, 0)
+  /*
+   * The last two steps of the chain, and the pair that was wrong.
+   *
+   * translate(5.6, 0, 0) moves to the arm PART's origin, and the part's own
+   * geometry then hangs off that: Minecraft's right arm sits at model
+   * (-5, 2, 0) with a box spanning (-3..1, -2..10, -2..2), so the box centre
+   * is at (-6, 6, 0) and the whole thing lands at 5.6 - 6 = -0.4. Placing the
+   * mesh at a bare (5.6, 0, 0) -- the previous code -- dropped the part
+   * offset entirely, which is what left only a sliver of shoulder on screen.
+   *
+   * The 6 is Y-DOWN, and stays that way. Minecraft renders this arm through
+   * ModelPart directly, skipping LivingEntityRenderer's scale(-1, -1, 1), so
+   * the raw Y-down model coordinates go into the matrix unflipped and the
+   * rotateX(200) later in the chain is what brings the arm back upright.
+   *
+   * Which leaves the shared arm mesh one rotation away from that frame. The
+   * mesh is built mirrored in X (playerModel.js, for Babylon's handedness)
+   * while this chain is Minecraft's mirrored in Z, and those two differ by
+   * exactly a half turn about Z -- so this is a real rotation, not a
+   * reflection, and the sleeve's UVs stay the right way round.
+   */
+  arm.position.set(-0.4, 6, 0)
+  arm.rotation.z = Math.PI
 
   const setArmPose = (swingProgress) => {
     const g = Math.sqrt(swingProgress)
@@ -264,20 +285,27 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
      *   f = sin(p^2 * PI)          g = sin(sqrt(p) * PI)
      *   rotateY(45 - 20f) -> rotateZ(-20g) -> rotateX(-80g) -> rotateY(-45)
      *
-     * The trailing rotateY(-45) cancels the model's own +45, so at rest the
-     * whole chain is identity and the block just sits there. Composed with
-     * quaternions because these are sequential rotations in a moving frame,
-     * which Euler angles applied in a fixed order do not reproduce.
+     * The trailing rotateY(-45) cancels the block model's own +45, leaving
+     * rotateY(45 - 20f) -> rotateZ(-20g) -> rotateX(-80g), which at rest is
+     * just the 45 from block.json. Composed with quaternions because these
+     * are sequential rotations in a moving frame, which Euler angles applied
+     * in a fixed order do not reproduce.
+     *
+     * Signs are mirrored the same way the arm's are: this whole viewmodel is
+     * Minecraft's reflected in Z, so rotations about X and Y flip and Z does
+     * not. Only the X flip is visible -- a cube is symmetric under a yaw
+     * flip, but the 80-degree pitch was tumbling the block toward the camera
+     * where Minecraft tumbles it away.
      */
     const p = 1 - swing.value            // Minecraft counts a swing up, we count down
     const f = Math.sin(p * p * Math.PI)
     const g = Math.sin(Math.sqrt(p) * Math.PI)
 
     mesh.position.set(REST.x + bx, REST.y + by, REST.z)
-    Quaternion.RotationAxisToRef(AXIS_Y, deg(45 - 20 * f), qA)
+    Quaternion.RotationAxisToRef(AXIS_Y, deg(-(45 - 20 * f)), qA)
     Quaternion.RotationAxisToRef(AXIS_Z, deg(-20 * g), qB)
     qA.multiplyToRef(qB, qC)
-    Quaternion.RotationAxisToRef(AXIS_X, deg(-80 * g), qB)
+    Quaternion.RotationAxisToRef(AXIS_X, deg(80 * g), qB)
     qC.multiplyToRef(qB, mesh.rotationQuaternion)
 
     // Minecraft hides the viewmodel in third person.
