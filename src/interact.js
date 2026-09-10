@@ -38,12 +38,7 @@ export function installInteraction(noa, inv, fx) {
    * `inputs.state.fire` stays live under an open chat box and left-clicking
    * would happily mine through it. The two paths look the same and aren't.
    */
-  const busy = fx.inputLock
-    ? () => fx.inputLock.locked
-    // Fallback for a call site that hasn't been updated to pass inputLock yet.
-    // It's the old, narrower behaviour, not a second opinion -- delete it once
-    // main.js hands one in.
-    : () => inv.open
+  const busy = () => fx.inputLock.locked
 
   const blockBreak = createEmitter()   // { id, position }
   const blockPlace = createEmitter()   // { id, position }
@@ -164,7 +159,7 @@ export function installInteraction(noa, inv, fx) {
  * before, which is the wrong reflex for anyone who has played the game.
  */
 export function installHotbarControls(noa, inv, inputLock) {
-  const busy = inputLock ? () => inputLock.locked : () => inv.open
+  const busy = () => inputLock.locked
 
   document.addEventListener('keydown', (e) => {
     if (busy()) return

@@ -18,6 +18,8 @@ import { createSwing } from './swing.js'
 import { installPerspective } from './perspective.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky } from './sky.js'
+import { installSounds } from './sounds.js'
+import { installParticles } from './particles.js'
 import { installHighlightStyle } from './highlight.js'
 
 const noa = new Engine({
@@ -102,7 +104,7 @@ const move = installPhysics(noa)
 // survival is created before installSpeedModes because sprinting depends on
 // the food level: Minecraft refuses to sprint at 6 food or less.
 const survival = createSurvival(noa)
-installSpeedModes(noa, move, survival)
+const movement = installSpeedModes(noa, move, survival)
 
 // One material shared by the third-person model and the first-person arm, so
 // a custom skin later only has to be swapped in one place. Declared before
@@ -119,14 +121,22 @@ const sky = installSky(noa)
 installHighlightStyle(noa)
 const crack = installCrackOverlay(noa)
 const held = installHeldItem(noa, inventory, skinMaterial, swing)
-installInteraction(noa, inventory, { crack, held, swing })
+const interaction = installInteraction(noa, inventory, { crack, held, swing, inputLock })
 
 const perspective = installPerspective(noa, { skinMaterial, inputLock, inventory, swing })
 
-installHotbarControls(noa, inventory)
+installHotbarControls(noa, inventory, inputLock)
 const inventoryScreen = installInventoryScreen(noa, inventory, inputLock)
 installRespawn(noa, survival, inputLock)
 installHUD(noa, { inventory, survival })
+
+/*
+ * Feedback listens to interact.js and physics.js rather than reaching into the
+ * world itself, so it installs after both. Sounds need `npm run sounds` to
+ * have been run; without a manifest they stay silent rather than throwing.
+ */
+const sounds = installSounds(noa, { interaction, movement })
+const particles = installParticles(noa, { interaction, movement })
 
 const menu = installMenu(noa, { inputLock, inventory, inventoryScreen, survival })
 
@@ -221,4 +231,4 @@ noa.container.on('lostPointerLock', () => {
 })
 
 window.noa = noa
-window.game = { inventory, survival, move, sky, menu, chat, inputLock, perspective, skinMaterial }
+window.game = { inventory, survival, move, sky, menu, chat, inputLock, perspective, skinMaterial, sounds, particles }

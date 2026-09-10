@@ -67,9 +67,12 @@ bedrock at y=0, with 1.16-era strata. Ore rarity is solved against Minecraft's
 real frequencies rather than hand-tuned -- coal 1.0%, iron 0.7%, redstone
 0.15%, gold 0.1%, diamond 0.08%, lapis 0.05% of the stone region.
 
-1.16 rather than 1.18+ because the texture pack (Pixel Perfection Continued
-Edition, an actual Minecraft pack) predates Caves & Cliffs and has no
-deepslate, copper or tuff. The strata match the era the art comes from.
+The strata are 1.16-era because Pixel Perfection CE predates Caves & Cliffs.
+The palette now reaches past that: 95 of 427 materials have no CE original
+(copper, deepslate, tuff, sculk, the newer wood sets), so the build derives
+those by colour-shifting the nearest CE texture rather than dropping the
+blocks. Dropping them would make block ids mean different things depending on
+which texture source you happened to build with, and ids are world data.
 
 Sprint follows Minecraft's real rules: double-tap forward within 7 ticks, or
 hold Ctrl, cancelled by releasing forward / sneaking / dropping to 6 food.
@@ -96,9 +99,10 @@ reading a resume plot shouldn't starve while doing it.
 Not yet done: resume content (the whole point -- the island is still empty),
 multiplayer presence, sounds, and block-breaking particles.
 
-The block palette is 17 full cubes. Importing real Minecraft builds will need
-it widened, and needs a decision on stairs and slabs (non-cube geometry, which
-noa supports via blockMesh but which nothing here uses yet). Fog was
+The block palette is 355 full cubes on a paged texture atlas (128 layers per
+page, 5 pages) -- paged because WebGL2 only guarantees 256 array layers, so a
+single page would cap the palette. Stairs, slabs and other non-cube geometry
+are still missing; noa supports them via blockMesh but nothing here uses it. Fog was
 investigated and rejected: noa's terrain shader has no fog handling at all,
 so Babylon scene fog would tint the sky and leave the world untouched.
 
