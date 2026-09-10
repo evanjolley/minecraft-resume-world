@@ -1,17 +1,29 @@
 Textures in this directory are from Pixel Perfection.
 
   Author:  Hugh "XSSheep" Rutland
-  With:    Toby109tt, tacotexmex, devurandom
+  With:    the Pixel Perfection Continued Edition contributors
   License: Creative Commons Attribution-ShareAlike 4.0 International
            https://creativecommons.org/licenses/by-sa/4.0/
-  Source:  https://github.com/minetest-texture-packs/Pixel-Perfection
+  Source:  https://github.com/Athemis/PixelPerfectionCE
+           (pack_format 6, i.e. Minecraft 1.16)
 
-Modification: grass_side.png is a derivative. Upstream ships it as a partly
-transparent overlay meant to be composited onto dirt at render time. It has
-been flattened onto dirt.png here so it can be used directly as an opaque
-block face. That derivative is likewise CC-BY-SA-4.0.
+`block/` is a subset of that pack's assets/minecraft/textures/block, copied
+unmodified. It holds exactly the textures scripts/build-textures.mjs needs:
+the ones src/blocks.js names, plus the substitute bases the build derives
+1.17+ blocks from. Adding a block that wants a texture which isn't here makes
+the build fail by name rather than render as checkerboard.
 
 Modification: crack.png is a derivative of the pack's crack_anylength.png.
 Its RGB channels have been flattened to black while preserving the original
 alpha, so it can be used as a pure alpha mask for a black crack overlay.
-That derivative is likewise CC-BY-SA-4.0.
+
+Modification: the build derives further textures at runtime, none of which are
+committed. Pixel Perfection CE predates Caves & Cliffs, so it has no copper,
+deepslate, tuff, calcite, sculk, froglights, mangrove/cherry/pale oak/bamboo
+wood or resin. Those blocks are drawn as colour-multiplied derivatives of the
+nearest CE texture -- see CE_SUBSTITUTES in scripts/build-textures.mjs for the
+full list of what is derived from what. Grass and most leaves are likewise
+multiplied by a biome colour, which is what Minecraft itself does at render
+time.
+
+All of those derivatives are likewise CC-BY-SA-4.0.
