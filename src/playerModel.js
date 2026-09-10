@@ -18,6 +18,12 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
  *
  * SKIN LAYOUT: this maps the "wide" (classic, 4px arms) 64x64 layout. The
  * slim variant has 3px arms at different offsets and would need its own map.
+ *
+ * COORDINATE WARNING: Minecraft's model files are Y-DOWN. A part declared as
+ * addBox(-3, -2, -2, 4, 12, 4) spans y = -2..10 downward from its pivot,
+ * which is y = +2..-10 here. Converting those two numbers wrong is what put
+ * the arms two units low and one unit inboard -- they sank into the torso and
+ * left a phantom neck.
  */
 
 export const MODEL_SCALE = 0.9375 / 16
@@ -49,23 +55,27 @@ const PARTS = {
     uv: { top: [20, 16, 8, 4], bottom: [28, 16, 8, 4], right: [16, 20, 4, 12],
           front: [20, 20, 8, 12], left: [28, 20, 4, 12], back: [32, 20, 8, 12] },
   },
+  // MC: setPos(-5, 2, 0), addBox(-3, -2, -2, 4, 12, 4)
+  // -> x spans -8..-4 (flush with the torso edge at -4, not overlapping it)
+  // -> y spans 12..24 (level with the torso, not hanging below it)
   armRight: {
-    size: [4, 12, 4], pivot: [-5, 22, 0], offset: [0, -6, 0],
+    size: [4, 12, 4], pivot: [-5, 22, 0], offset: [-1, -4, 0],
     uv: { top: [44, 16, 4, 4], bottom: [48, 16, 4, 4], right: [40, 20, 4, 12],
           front: [44, 20, 4, 12], left: [48, 20, 4, 12], back: [52, 20, 4, 12] },
   },
+  // MC: setPos(5, 2, 0), addBox(-1, -2, -2, 4, 12, 4) -> x spans 4..8
   armLeft: {
-    size: [4, 12, 4], pivot: [5, 22, 0], offset: [0, -6, 0],
+    size: [4, 12, 4], pivot: [5, 22, 0], offset: [1, -4, 0],
     uv: { top: [36, 48, 4, 4], bottom: [40, 48, 4, 4], right: [32, 52, 4, 12],
           front: [36, 52, 4, 12], left: [40, 52, 4, 12], back: [44, 52, 4, 12] },
   },
   legRight: {
-    size: [4, 12, 4], pivot: [-2, 12, 0], offset: [0, -6, 0],
+    size: [4, 12, 4], pivot: [-1.9, 12, 0], offset: [0, -6, 0],
     uv: { top: [4, 16, 4, 4], bottom: [8, 16, 4, 4], right: [0, 20, 4, 12],
           front: [4, 20, 4, 12], left: [8, 20, 4, 12], back: [12, 20, 4, 12] },
   },
   legLeft: {
-    size: [4, 12, 4], pivot: [2, 12, 0], offset: [0, -6, 0],
+    size: [4, 12, 4], pivot: [1.9, 12, 0], offset: [0, -6, 0],
     uv: { top: [20, 48, 4, 4], bottom: [24, 48, 4, 4], right: [16, 52, 4, 12],
           front: [20, 52, 4, 12], left: [24, 52, 4, 12], back: [28, 52, 4, 12] },
   },
@@ -146,7 +156,7 @@ export function createFirstPersonArm(noa, material) {
  * stride stays in step with actual movement instead of drifting when you
  * sprint or stop.
  */
-export function poseModel(parts, { limbSwing, limbSwingAmount, crouching, headPitch, headYaw }) {
+export function poseModel(parts, { limbSwing, limbSwingAmount, crouching, headPitch, headYaw, swingArc = 0 }) {
   const { head, body, armRight, armLeft, legRight, legLeft } = parts
 
   const swing = Math.cos(limbSwing * 0.6662)
@@ -156,6 +166,17 @@ export function poseModel(parts, { limbSwing, limbSwingAmount, crouching, headPi
   armLeft.pivot.rotation.x = swing * 2.0 * limbSwingAmount * 0.5
   legRight.pivot.rotation.x = swing * 1.4 * limbSwingAmount
   legLeft.pivot.rotation.x = swingOpp * 1.4 * limbSwingAmount
+
+  /*
+   * Punch. Minecraft swings the arm forward and across the body, which is why
+   * the swing needs a Z component and not just a forward pitch.
+   */
+  if (swingArc > 0) {
+    armRight.pivot.rotation.x -= swingArc * 1.8
+    armRight.pivot.rotation.z = swingArc * 0.5
+  } else {
+    armRight.pivot.rotation.z = 0
+  }
 
   head.pivot.rotation.x = headPitch
   head.pivot.rotation.y = headYaw
@@ -176,8 +197,8 @@ export function poseModel(parts, { limbSwing, limbSwingAmount, crouching, headPi
     legLeft.pivot.position.y = 12.2
     head.pivot.position.y = 24 - 4.2
     body.pivot.position.y = 24 - 3.2
-    armRight.pivot.position.y = 22 - 5.2 + 2
-    armLeft.pivot.position.y = 22 - 5.2 + 2
+    armRight.pivot.position.y = 22 - 3.2
+    armLeft.pivot.position.y = 22 - 3.2
   } else {
     body.pivot.rotation.x = 0
     legRight.pivot.position.z = 0

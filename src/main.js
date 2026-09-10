@@ -13,6 +13,7 @@ import { createInputLock } from './inputLock.js'
 import { installMenu, requestLockPersistently } from './menu.js'
 import { installHeldItem } from './heldItem.js'
 import { createSkinMaterial } from './playerModel.js'
+import { createSwing } from './swing.js'
 import { installPerspective } from './perspective.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky } from './sky.js'
@@ -108,15 +109,18 @@ installSpeedModes(noa, move, survival)
 const skinMaterial = createSkinMaterial(noa, '/skins/default.png')
 const inputLock = createInputLock(noa)
 
+// One swing drives both the first-person arm and the third-person model.
+const swing = createSwing()
+
 const inventory = createInventory()
 
 const sky = installSky(noa)
 installHighlightStyle(noa)
 const crack = installCrackOverlay(noa)
-const held = installHeldItem(noa, inventory, skinMaterial)
-installInteraction(noa, inventory, { crack, held })
+const held = installHeldItem(noa, inventory, skinMaterial, swing)
+installInteraction(noa, inventory, { crack, held, swing })
 
-const perspective = installPerspective(noa, { skinMaterial, inputLock })
+const perspective = installPerspective(noa, { skinMaterial, inputLock, inventory, swing })
 
 installHotbarControls(noa, inventory)
 const inventoryScreen = installInventoryScreen(noa, inventory, inputLock)

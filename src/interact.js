@@ -14,6 +14,7 @@ import { BLOCK_BY_ID } from './blocks.js'
  * target exists, is what closes that hole.
  */
 export function installInteraction(noa, inv, fx) {
+  const swing = fx.swing
   let breaking = null // { x, y, z, id, elapsed, total }
 
   // Minecraft has no progress bar. Feedback is the crack overlay on the
@@ -22,8 +23,20 @@ export function installInteraction(noa, inv, fx) {
 
   const sameBlock = (a, pos) => a && a.x === pos[0] && a.y === pos[1] && a.z === pos[2]
 
+  /*
+   * Punching. Minecraft swings your arm on EVERY left click, whether or not
+   * you hit anything -- swinging at thin air is most of what the button does.
+   * Previously the swing only fired when a block was targeted, so clicking at
+   * the sky did nothing at all.
+   */
+  noa.inputs.down.on('fire', () => { if (!inv.open) swing.trigger() })
+
   noa.on('tick', (dt) => {
+    swing.update(dt / 1000)
     if (inv.open) { breaking = null; showProgress(0); return }
+
+    // Keep swinging for as long as the button is held, target or not.
+    if (noa.inputs.state.fire) swing.triggerIfIdle()
 
     const held = noa.inputs.state.fire
     const target = noa.targetedBlock
@@ -85,7 +98,7 @@ export function installInteraction(noa, inv, fx) {
 
     noa.setBlock(stack.id, x, y, z)
     inv.consumeSelected()
-    fx.held.swing()
+    swing.trigger()
   })
 
   return {}

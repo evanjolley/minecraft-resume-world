@@ -1,8 +1,9 @@
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
-import { Vector4 } from '@babylonjs/core/Maths/math.vector'
+import { Vector3, Vector4, Quaternion } from '@babylonjs/core/Maths/math.vector'
 import { BLOCK_BY_ID } from './blocks.js'
-import { createFirstPersonArm, MODEL_SCALE } from './playerModel.js'
+import { createFirstPersonArm } from './playerModel.js'
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 
 /*
  * The first-person hand and held block.
@@ -34,17 +35,70 @@ import { createFirstPersonArm, MODEL_SCALE } from './playerModel.js'
  * block.json, whose "firstperson_righthand" display transform is
  * rotation [0, 45, 0]. Yaw only -- no pitch, no roll. Earlier this had a
  * hand-picked tilt on all three axes, which is what made the angle wrong.
-//
- * Minecraft's raw offsets assume its own hand projection, which is set up
- * separately from the world camera; dropped straight into ours the block
- * sits half off the bottom-right corner. These keep Minecraft's rotation and
- * relative framing but are pulled in to sit correctly in this projection.
+ * Traced through Minecraft's actual render chain rather than eyeballed:
+ *
+ *   ItemInHandRenderer.applyItemArmTransform
+ *     translate(0.56, -0.52, -0.72)
+ *   ItemRenderer, applying block.json "firstperson_righthand"
+ *     scale 0.40, rotate Y 45
+ *   ItemRenderer
+ *     translate(-0.5, -0.5, -0.5)   // centres the unit cube
+ *
+ * That last step cancels: a 0..1 cube shifted by -0.5 is centred on the
+ * origin, so scale and rotation leave it there. The cube's CENTRE therefore
+ * lands exactly on the first translation.
+ *
+ * Which means the centre sits just below the bottom of the screen -- at
+ * z=0.72 with a 70 degree vertical FOV the half-height is 0.504, and y is
+ * -0.52. That is correct: in Minecraft you only ever see the top part of the
+ * held block. An earlier pass "fixed" this by pulling it into frame, which is
+ * what made it look subtly wrong.
+ *
+ * Minecraft's -Z is forward and Babylon's +Z is, hence the flipped z sign.
  */
-const REST = { x: 0.42, y: -0.30, z: 0.72 }
-const SCALE = 0.34
+const REST = { x: 0.56, y: -0.52, z: 0.72 }
+const SCALE = 0.40
 const YAW = Math.PI / 4   // the 45 degrees from block.json
 
-export function installHeldItem(noa, inventory, skinMaterial) {
+const deg = (d) => (d * Math.PI) / 180
+const AXIS_X = new Vector3(1, 0, 0)
+const AXIS_Y = new Vector3(0, 1, 0)
+const AXIS_Z = new Vector3(0, 0, 1)
+const qA = new Quaternion()
+const qB = new Quaternion()
+const qC = new Quaternion()
+
+/*
+ * A cube showing one block type, built from that block's pre-baked 3-tile
+ * atlas [side | top | bottom] via Babylon faceUV. Shared by the first-person
+ * viewmodel and the block held in the third-person model's hand, so both
+ * always show the same thing.
+ *
+ * Babylon's face order is [+Z, -Z, +X, -X, +Y, -Y].
+ */
+export function createHeldBlockMesh(noa, name) {
+  const scene = noa.rendering.getScene()
+  const third = 1 / 3
+  const faceUV = [
+    new Vector4(0, 0, third, 1),
+    new Vector4(0, 0, third, 1),
+    new Vector4(0, 0, third, 1),
+    new Vector4(0, 0, third, 1),
+    new Vector4(third, 0, third * 2, 1),
+    new Vector4(third * 2, 0, 1, 1),
+  ]
+  const mesh = CreateBox(name, { size: 1, faceUV, wrap: true }, scene)
+  mesh.material = noa.rendering.makeStandardMaterial(`${name}-mat`)
+  mesh.isPickable = false
+  noa.rendering.addMeshToScene(mesh)
+  return mesh
+}
+
+export function blockTextureUrl(def) {
+  return `/textures/held/${def.key}.png`
+}
+
+export function installHeldItem(noa, inventory, skinMaterial, swing) {
   const scene = noa.rendering.getScene()
   const camera = noa.rendering.camera
 
@@ -75,6 +129,9 @@ export function installHeldItem(noa, inventory, skinMaterial) {
   mesh.renderingGroupId = 1
   mesh.isPickable = false
   mesh.scaling.setAll(SCALE)
+  // Rotations are composed as quaternions below, so Babylon must be told to
+  // use the quaternion rather than the Euler `rotation` vector.
+  mesh.rotationQuaternion = new Quaternion()
 
   // REQUIRED. noa installs its own selection octree on the scene, so Babylon
   // picks what to render from that octree rather than from scene.meshes. A
@@ -87,12 +144,68 @@ export function installHeldItem(noa, inventory, skinMaterial) {
    * material, so a custom skin shows on the hand as well. It was previously a
    * plain white box, which is why holding nothing looked wrong.
    */
+  /*
+   * Transcribed from ItemInHandRenderer.renderPlayerArm, which is a chain of
+   * transforms rather than a single pose:
+   *
+   *   translate(0.64, -0.6, -0.72)  rotateY(45)
+   *   [scale to model units]
+   *   translate(-1, 3.6, 3.5)  rotateZ(120)  rotateX(200)  rotateY(-135)
+   *   translate(5.6, 0, 0)
+   *
+   * That rotateX(200) is the important one: it turns the arm most of the way
+   * over so the HAND end points back at the camera. Without it you are
+   * looking at the top of the shoulder, which is what this did before.
+   *
+   * Built as nested TransformNodes because each translation happens in the
+   * frame left by the previous rotation -- flattening it into one position
+   * and one Euler triple does not reproduce that.
+   */
+  const armRoot = new TransformNode('fp-arm-root', scene)
+  armRoot.parent = camera
+  armRoot.position.set(0.64, -0.6, 0.72)
+  armRoot.rotation.y = deg(-45)
+
+  const armUnits = new TransformNode('fp-arm-units', scene)
+  armUnits.parent = armRoot
+  armUnits.scaling.setAll(1 / 16)
+
+  const armPose = new TransformNode('fp-arm-pose', scene)
+  armPose.parent = armUnits
+  armPose.position.set(-1, 3.6, -3.5)
+  armPose.rotationQuaternion = Quaternion.RotationYawPitchRoll(0, 0, 0)
+
   const arm = createFirstPersonArm(noa, skinMaterial)
-  arm.parent = camera
+  arm.parent = armPose
   arm.renderingGroupId = 1
-  arm.scaling.setAll(MODEL_SCALE)
-  arm.position.set(0.62, -0.62, 0.68)
-  arm.rotation.set(0.15, 0, -0.22)
+  arm.position.set(5.6, 0, 0)
+
+  const setArmPose = (swingProgress) => {
+    const g = Math.sqrt(swingProgress)
+    const k = Math.sin(swingProgress * swingProgress * Math.PI)
+    const l = Math.sin(g * Math.PI)
+
+    armRoot.position.set(
+      -0.3 * Math.sin(g * Math.PI) + 0.64,
+      0.4 * Math.sin(g * Math.PI * 2) - 0.6,
+      0.72 - -0.4 * Math.sin(swingProgress * Math.PI),
+    )
+    armRoot.rotation.y = deg(-(45 + l * 70))
+    armRoot.rotation.z = deg(k * -20)
+
+    /*
+     * Mirroring the Z axis (Minecraft's -Z forward vs Babylon's +Z) flips the
+     * sense of rotations about X and Y, but not Z. Using Minecraft's signs
+     * verbatim put the arm in end-for-end: shoulder toward the crosshair,
+     * fist off-screen.
+     */
+    Quaternion.RotationAxisToRef(AXIS_Z, deg(120), qA)
+    Quaternion.RotationAxisToRef(AXIS_X, deg(-200), qB)
+    qA.multiplyToRef(qB, qC)
+    Quaternion.RotationAxisToRef(AXIS_Y, deg(135), qB)
+    qC.multiplyToRef(qB, armPose.rotationQuaternion)
+  }
+  setArmPose(0)
 
   const textures = new Map()
   const textureFor = (path) => {
@@ -111,9 +224,9 @@ export function installHeldItem(noa, inventory, skinMaterial) {
     const def = stack ? BLOCK_BY_ID.get(stack.id) : null
     holdingBlock = !!def
     if (def) mesh.material.diffuseTexture = textureFor(`/textures/held/${def.key}.png`)
-    // Show the block or the bare arm, never both.
-    mesh.setEnabled(holdingBlock)
-    arm.setEnabled(!holdingBlock)
+    // Visibility is decided ONLY in the tick below, which also knows whether
+    // we're in first person. Enabling here made the block flash onto the
+    // screen in third person every time the hotbar selection changed.
   }
 
   inventory.onChange((inv) => setHeld(inv.slots[inv.selected]))
@@ -126,7 +239,6 @@ export function installHeldItem(noa, inventory, skinMaterial) {
    * you stand still, and desyncs from your actual stride when you sprint.
    */
   let bobPhase = 0
-  let swing = 0 // 0..1, one full swing arc
 
   const player = noa.playerEntity
   const body = () => noa.ents.getPhysics(player).body
@@ -141,34 +253,40 @@ export function installHeldItem(noa, inventory, skinMaterial) {
     // mid-sway, which looks broken.
     if (speed < 0.1) bobPhase += (0 - (bobPhase % (Math.PI * 2))) * secs * 4
 
-    if (swing > 0) swing = Math.max(0, swing - secs * 3.2)
 
     const bobAmount = Math.min(speed / 4.317, 1.3)
     const bx = Math.cos(bobPhase) * 0.022 * bobAmount
     const by = Math.abs(Math.sin(bobPhase)) * -0.026 * bobAmount
 
-    // Minecraft's swing is an arc: the item dips and rotates, then returns.
-    // These deltas ride on top of the base transform rather than replacing it.
-    const s = Math.sin(swing * Math.PI)
-    mesh.position.set(REST.x + bx - s * 0.12, REST.y + by - s * 0.18, REST.z - s * 0.08)
-    mesh.rotation.set(
-      s * 0.8,
-      YAW - s * 0.3,
-      Math.cos(bobPhase) * 0.02 * bobAmount,
-    )
+    /*
+     * Swing, from ItemInHandRenderer.applyItemArmAttackTransform:
+     *
+     *   f = sin(p^2 * PI)          g = sin(sqrt(p) * PI)
+     *   rotateY(45 - 20f) -> rotateZ(-20g) -> rotateX(-80g) -> rotateY(-45)
+     *
+     * The trailing rotateY(-45) cancels the model's own +45, so at rest the
+     * whole chain is identity and the block just sits there. Composed with
+     * quaternions because these are sequential rotations in a moving frame,
+     * which Euler angles applied in a fixed order do not reproduce.
+     */
+    const p = 1 - swing.value            // Minecraft counts a swing up, we count down
+    const f = Math.sin(p * p * Math.PI)
+    const g = Math.sin(Math.sqrt(p) * Math.PI)
+
+    mesh.position.set(REST.x + bx, REST.y + by, REST.z)
+    Quaternion.RotationAxisToRef(AXIS_Y, deg(45 - 20 * f), qA)
+    Quaternion.RotationAxisToRef(AXIS_Z, deg(-20 * g), qB)
+    qA.multiplyToRef(qB, qC)
+    Quaternion.RotationAxisToRef(AXIS_X, deg(-80 * g), qB)
+    qC.multiplyToRef(qB, mesh.rotationQuaternion)
 
     // Minecraft hides the viewmodel in third person.
     const firstPerson = noa.camera.zoomDistance < 0.5
     mesh.setEnabled(firstPerson && holdingBlock)
-    arm.setEnabled(firstPerson && !holdingBlock)
+    armRoot.setEnabled(firstPerson && !holdingBlock)
     // The arm swings with the same arc as a held block.
-    arm.position.set(0.62 - s * 0.10, -0.62 - s * 0.16, 0.68 - s * 0.06)
-    arm.rotation.set(0.15 + s * 0.9, 0, -0.22)
+    if (!holdingBlock) setArmPose(p)
   })
 
-  return {
-    swing: () => { swing = 1 },
-    /** Keep swinging while the mine button is held, like Minecraft does. */
-    swingIfIdle: () => { if (swing <= 0) swing = 1 },
-  }
+  return { mesh, arm }
 }
