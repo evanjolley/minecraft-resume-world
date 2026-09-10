@@ -1,4 +1,5 @@
 import { MC } from './physics.js'
+import { createEmitter } from './emitter.js'
 
 /*
  * Survival state: health, hunger, XP, fall damage, death.
@@ -34,11 +35,26 @@ export function createSurvival(noa) {
   const player = noa.playerEntity
   const body = () => noa.ents.getPhysics(player).body
 
-  state.damage = (amount) => {
+  /*
+   * Damage and death are published as events, separately from onChange.
+   *
+   * onChange fires for every state edit -- healing, hunger ticking, a reset --
+   * so anything that wants to react specifically to being HURT (a sound, a
+   * red screen flash, a knockback) would have to diff the health value to
+   * find out. These say it directly.
+   */
+  const hurt = createEmitter()   // { amount, health, cause }
+  const died = createEmitter()   // { cause }
+  state.onHurt = hurt.on
+  state.onDeath = died.on
+
+  state.damage = (amount, cause = 'generic') => {
     if (state.dead || amount <= 0) return
     state.health = Math.max(0, state.health - amount)
     if (state.health === 0) state.dead = true
     changed()
+    hurt.emit({ amount, health: state.health, cause })
+    if (state.dead) died.emit({ cause })
   }
 
   state.heal = (amount) => {
@@ -73,7 +89,7 @@ export function createSurvival(noa) {
       if (peakY !== null) {
         const fallen = peakY - y
         const excess = Math.floor(fallen - MC.FALL_SAFE_BLOCKS)
-        if (excess > 0) state.damage(excess)
+        if (excess > 0) state.damage(excess, 'fall')
         peakY = null
       }
     } else {
@@ -116,7 +132,7 @@ export function createSurvival(noa) {
       }
       if (state.food === 0) {
         regenTimer += secs
-        if (regenTimer > 4) { regenTimer = 0; state.damage(1) }
+        if (regenTimer > 4) { regenTimer = 0; state.damage(1, 'starve') }
         return
       }
     }

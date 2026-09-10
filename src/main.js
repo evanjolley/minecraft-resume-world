@@ -135,7 +135,7 @@ installHUD(noa, { inventory, survival })
  * world itself, so it installs after both. Sounds need `npm run sounds` to
  * have been run; without a manifest they stay silent rather than throwing.
  */
-const sounds = installSounds(noa, { interaction, movement })
+const sounds = installSounds(noa, { interaction, movement, survival })
 const particles = installParticles(noa, { interaction, movement })
 
 const menu = installMenu(noa, { inputLock, inventory, inventoryScreen, survival })
