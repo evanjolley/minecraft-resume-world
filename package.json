@@ -10,7 +10,8 @@
     "textures": "node scripts/build-textures.mjs --source=ce",
     "textures:vanilla": "node scripts/build-textures.mjs --source=vanilla",
     "sounds": "node scripts/build-sounds.mjs",
-    "postinstall": "node scripts/build-textures.mjs --ensure"
+    "postinstall": "node scripts/build-textures.mjs --ensure",
+    "test": "playwright test -c test/playwright.config.js"
   },
   "dependencies": {
     "@babylonjs/core": "^6.49.0",
