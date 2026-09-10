@@ -1,22 +1,30 @@
 # Future builds
 
 Everything here is secondary to one fact: **the island is empty.** The engine
-is in good shape — real Minecraft physics, survival HUD, inventory, mining,
-day/night, a skinned player model. None of that is what a visitor came for.
+is in good shape and getting better. None of that is what a visitor came for.
 They came to find out who Evan is, and right now the world cannot tell them.
+
+## Already built
+
+Minecraft-accurate physics, survival HUD and inventory from Minecraft's own
+sprites, mining and placing, day/night on Minecraft's clock, a skinned player
+model with F5 perspectives and crouch, chat, block sounds, particles, a
+355-block palette on a paged texture atlas, and a 62-test browser suite.
 
 ## Sequencing
 
-1. **Content on the island.** Blocked on nothing technical.
-2. **Deployment.** There is still no hosting config. Nothing is live.
+1. **Content on the island.** Blocked on nothing technical. This is the gap.
+2. **Deployment.** There is still no hosting config. Nothing is live, so no
+   visitor has ever seen any of this.
 3. **Video screens.** The richest way to deliver the content, and independent
    of everything else.
-4. **Multiplayer presence.** The single most distinctive feature, but it only
-   pays off once there's something to gather around.
-5. **Skins**, then **commands**.
+4. **Multiplayer presence.** The most distinctive feature, but it only pays
+   off once there's something to gather around.
+5. **Skin customization**, then the long tail.
 
 The ordering rule: anything that makes the world worth visiting beats anything
-that makes it more elaborate.
+that makes it more elaborate. Engine polish has been the easy, fun work; it is
+not the work that makes the site do its job.
 
 ---
 
@@ -141,20 +149,28 @@ maps the wide layout only, and says so.
 
 ## Also worth building
 
-- **Sounds.** Footsteps varying by block, break and place, ambient wind. Now
-  that the visuals are close, this is the largest remaining gap between "looks
-  like Minecraft" and "feels like Minecraft". Needs CC0 audio — the same
-  licensing rule as textures applies. ~1 day.
-- **Block break particles.** Cheap, and their absence is conspicuous.
+- **Non-cube blocks: stairs, slabs, fences, panes.** The palette is 355 full
+  cubes; these need custom block meshes via noa's `blockMesh`. They are also
+  roughly half of what makes a Minecraft build look built rather than blocky,
+  and a hard prerequisite for importing anything made in real Minecraft.
+- **Importing real Minecraft builds.** Build in creative with WorldEdit,
+  export a litematic, map block ids, paint onto the island. The authoring
+  story for all the content above — and blocked on non-cube blocks, since any
+  real build uses stairs.
 - **Spawn signage or a guided path.** A visitor drops into an empty field with
   no idea what to do. Even one sign at spawn changes that.
 - **Mobile.** Explicitly dropped, and that's a real decision — but pointer lock
   does not exist on touch devices, so phone visitors currently get a world they
   cannot move in. A fixed camera flythrough would at least show them something.
+- **Passive ambient animals.** Deliberately NOT hostile mobs (see below), but
+  a couple of wandering chickens would make the island feel alive for a
+  fraction of the cost. The model infrastructure now exists.
 
 ## Not worth building
 
-- **Mobs and combat.** Large effort, no relationship to the purpose.
+- **Hostile mobs and combat.** Large effort, and actively harmful: a zombie
+  attacking someone halfway through reading your work history is worse than no
+  mobs at all. Passive animals are the version worth having.
 - **Crafting.** Same. The inventory exists to hold building blocks.
 - **Redstone.** No.
 - **Voice chat.** WebRTC infrastructure plus the worst moderation surface
