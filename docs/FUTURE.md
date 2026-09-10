@@ -8,34 +8,41 @@ They came to find out who Evan is, and right now the world cannot tell them.
 
 Minecraft-accurate physics, survival HUD and inventory from Minecraft's own
 sprites, mining and placing, day/night on Minecraft's clock, a skinned player
-model with F5 perspectives and crouch, chat, block sounds, break/landing/sprint
-particles, a 355-block palette on a paged texture atlas, oak trees, game modes
-with an OP-gated command system, and a 96-test browser suite.
+model with F5 perspectives and crouch, chat, block and damage sounds,
+break/landing/sprint particles, a 355-block palette on a paged texture atlas,
+oak trees, game modes behind an OP-gated authority, an item model with crafting
+(2x2 and 3x3), armor and an offhand, and a 109-test browser suite.
 
-## In flight
+Nothing is in flight.
 
-- Damage and death sounds.
-- An item model distinct from blocks, crafting (2x2 and 3x3), armor, offhand.
+## Next, in the order I'd take them
 
-## Blocked, and on what
+Roughly ascending in how much they depend on a decision from Evan.
 
-Not forgotten — each is waiting on something specific.
-
-- **Dropped item entities.** Mined blocks currently teleport into the
-  inventory; they should fall on the ground and be picked up, with Q to drop.
-  Waiting on the block-change seam being built with gamemodes, which is
-  exactly what a drop should hang off. Doing both at once means writing it
-  twice.
-- **Tool mining speed.** Tiers and multipliers are being defined with crafting;
-  wiring them into break times is now unblocked.
-- **Right-clicking a crafting table** to open the 3x3 grid — unblocked.
-- **Armor damage reduction.** The formula and HUD bar come with crafting;
-  applying it in `survival.js` is now unblocked.
-- **Weather.** `/weather` parses and reports honestly that it isn't
-  implemented, deliberately: rain done properly is a camera-following particle
-  volume that skips sheltered columns, a sky and light-level change, an ambient
-  loop and a thunder timer. A `/weather` that flipped a boolean nothing
-  rendered would be worse than one that admits the truth.
+1. **Dropped item entities.** Mined blocks teleport into the inventory; they
+   should fall, tumble and be picked up, with Q to drop. Now unblocked — the
+   authority's `requestBlockChange` is the single place a break happens, which
+   is exactly where a drop hangs off. Brings pickup sounds and animations with
+   it, and it is the most conspicuous remaining difference from Minecraft.
+2. **Tool mining speed.** The tiers and multipliers exist in `items.js`,
+   unwired. **There is a blocker:** `blocks.js`'s `T()` bakes the bare-handed
+   penalty into `hardness` and discards whether it applied x5 or x1.5, so the
+   raw hardness that `time = hardness * 1.5 / toolSpeed` needs is gone. `T()`
+   has to keep `{ hardness, requiresTool }` first.
+3. **Non-cube blocks** — stairs, slabs, fences, walls, panes, via noa's
+   `blockMesh`. Roughly half of what makes a build look built, and a hard
+   prerequisite for importing anything made in real Minecraft.
+4. **Shift-click in the inventory**, both senses: move a stack to the other
+   container, and craft as many as fit. Its absence is felt immediately by
+   anyone who has played.
+5. **Weather.** `/weather` currently parses correctly and reports honestly that
+   it is not implemented. Doing it properly is a camera-following particle
+   volume that skips sheltered columns, a sky and light-level change, an
+   ambient loop and a thunder timer. A `/weather` that flipped a boolean
+   nothing rendered would be worse than one that admits the truth.
+6. **Deployment**, then **content**, then **video screens** and
+   **multiplayer** — see Sequencing below. These are the ones that need Evan,
+   not more engine work.
 
 ## Sequencing
 
