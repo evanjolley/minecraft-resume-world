@@ -89,4 +89,102 @@ test.describe('menus', () => {
     await shot(page, 'menu-controls')
     await page.locator('#controls-close').click()
   })
+
+  /*
+   * CREDITS IS A LICENCE, NOT A FEATURE.
+   *
+   * The attribution used to be 9px grey type pinned to the bottom-right of the
+   * HUD. It is gone from there, and these tests exist because it could not
+   * simply be deleted: Pixel Perfection CE is CC BY-SA 4.0 and the sound set is
+   * CC0 / CC BY / CC BY-SA, and credit is a condition of redistributing any of
+   * them. This page IS the redistribution.
+   *
+   * So the pair of assertions below is one claim in two halves -- gone from the
+   * HUD, still reachable -- and failing EITHER half is a bug. A test that only
+   * checked the first would pass on a build that quietly dropped the notice.
+   */
+  test.describe('credits', () => {
+    const openCredits = async (page) => {
+      await page.evaluate(() => window.game.menu.open())
+      await page.getByRole('button', { name: 'Credits' }).click()
+      await expect(page.locator('#credits')).toBeVisible()
+    }
+
+    test('the attribution is gone from the HUD', async ({ page }) => {
+      // By id, and then by the text itself: renaming the element would slip
+      // past the first check on its own.
+      expect(await page.locator('#credit').count()).toBe(0)
+      await expect(page.locator('#hud')).not.toContainText('CC BY-SA')
+      await expect(page.locator('#hud')).not.toContainText('Pixel Perfection')
+    })
+
+    test('every licensed work is named on the credits screen', async ({ page }) => {
+      await openCredits(page)
+      const text = await page.locator('#credits').innerText()
+
+      // Every work that carries an attribution condition, by name and licence.
+      expect(text).toContain('Pixel Perfection CE')
+      expect(text).toContain('CC BY-SA 4.0')
+      expect(text).toContain('Monocraft')
+      expect(text).toContain('SIL OFL 1.1')
+    })
+
+    test('the sounds NOTICE the credits link to exists', async ({ page }) => {
+      /*
+       * The sound set's condition is satisfied by the NOTICE rather than by
+       * the credits screen itself -- 60-odd files across three licences do not
+       * fit on a menu -- so the LINK is what makes the screen compliant, and a
+       * link that 404s is the whole notice missing. Fetched, not just read off
+       * the href, because the build is what emits that file.
+       */
+      await openCredits(page)
+      const href = await page.locator('#credits a[href$="/sounds/NOTICE.txt"]').first()
+        .getAttribute('href')
+      expect(href).toBe('/sounds/NOTICE.txt')
+
+      const res = await page.request.get(href)
+      expect(res.status(), 'the credits link to a NOTICE the build never emitted').toBe(200)
+      expect(await res.text()).toContain('CC BY-SA')
+    })
+
+    test('every credits link resolves', async ({ page }) => {
+      // The off-site ones are not fetched: a licence deed being unreachable is
+      // Creative Commons having an outage, not this repo regressing. What IS
+      // checked is that each anchor carries an absolute or rooted href and
+      // opens away from the game, since a link that navigates the page kills
+      // the world behind it.
+      await openCredits(page)
+      const links = await page.locator('#credits a').evaluateAll(
+        as => as.map(a => ({ href: a.getAttribute('href'), target: a.target, rel: a.rel })))
+
+      expect(links.length).toBeGreaterThanOrEqual(4)
+      for (const l of links) {
+        expect(l.href, 'a credits link with no destination').toMatch(/^(https?:\/\/|\/)/)
+        expect(l.target).toBe('_blank')
+        expect(l.rel).toContain('noopener')
+      }
+    })
+
+    test('Done closes the credits sheet', async ({ page }) => {
+      await openCredits(page)
+      await page.locator('#credits-close').click()
+      await expect(page.locator('#credits')).toBeHidden()
+      await expect(page.locator('#pause')).toBeVisible()
+    })
+
+    test('closing the menu closes the credits sheet', async ({ page }) => {
+      // The sheet is a sibling of #pause, not a child, so hiding the menu does
+      // not hide it -- menu.js has to, and it used to name only #controls.
+      await openCredits(page)
+      await page.evaluate(() => window.game.menu.close())
+      await expect(page.locator('#credits')).toBeHidden()
+    })
+
+    test('the credits screen renders', async ({ page }) => {
+      await openCredits(page)
+      await waitTicks(page, 2)
+      await shot(page, 'menu-credits')
+      await page.locator('#credits-close').click()
+    })
+  })
 })

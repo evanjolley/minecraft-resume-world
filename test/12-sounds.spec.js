@@ -266,6 +266,55 @@ test.describe('sounds', () => {
     expect(click, 'the respawn button was silent').toBeTruthy()
     expect(click.gain).toBeCloseTo(UI_GAIN, 5)
   })
+
+  test('the pause menu buttons give no feedback', async ({ page }) => {
+    /*
+     * The respawn button above is static markup; these rows are built by
+     * menu.js at runtime, which is the half of the delegation that can rot
+     * without anyone noticing -- the listener keys on .mc-button, and nothing
+     * but this test says menu.js still puts that class on what it builds.
+     */
+    await page.evaluate(() => window.game.menu.open())
+    const button = page.getByRole('button', { name: 'Credits' })
+    await expect(button).toBeVisible()
+
+    await audio.clear()
+    await button.click()
+    const click = (await audio.drain()).find(r => r.name === 'random/click_stereo')
+
+    expect(click, 'a pause-menu button was silent').toBeTruthy()
+    expect(click.gain).toBeCloseTo(UI_GAIN, 5)
+
+    await page.locator('#credits-close').click()
+    await page.evaluate(() => window.game.menu.close())
+  })
+
+  test('the click waits for the button to come back up', async ({ page }) => {
+    /*
+     * Vanilla plays it on PRESS. AbstractWidget.mouseClicked calls
+     * playDownSound the moment the button goes down and never waits for the
+     * release, so a `click` listener -- which fires on mouseup -- is late on a
+     * button you hold for a beat and silent altogether if you press one and
+     * drag off it.
+     *
+     * The press and the release are sent by hand because locator.click() sends
+     * both, and could not tell the two wirings apart.
+     */
+    await page.evaluate(() => window.game.menu.open())
+    const box = await page.getByRole('button', { name: 'Controls' }).boundingBox()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+
+    await audio.clear()
+    await page.mouse.down()
+    const onPress = (await audio.drain()).map(r => r.name)
+    await page.mouse.up()
+
+    expect(onPress, 'nothing played until the button came back up')
+      .toContain('random/click_stereo')
+
+    await page.locator('#controls-close').click()
+    await page.evaluate(() => window.game.menu.close())
+  })
 })
 
 /*

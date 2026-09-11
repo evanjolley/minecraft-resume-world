@@ -57,22 +57,32 @@
     #hud { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%);
       display: flex; flex-direction: column; align-items: center;
       pointer-events: none; z-index: 4; }
-    #held-name { font-size: 18px; text-shadow: 2px 2px 0 #000; opacity: 0;
-      transition: opacity 400ms; height: 18px; }
+    /* Out of the flex flow on purpose. Minecraft draws this name at a FIXED
+       height above the bottom of the screen and does not move it when the
+       armor row appears or the hearts go away -- a flow item in this column
+       cannot express that, and as one it sat directly on top of the hearts
+       whenever the row above it collapsed. Nudging a margin would have hidden
+       that rather than fixed it. hud.js sets the offset, the line box and the
+       type size, all in GUI pixels. */
+    #held-name { position: absolute; left: 50%; transform: translateX(-50%);
+      white-space: nowrap; text-shadow: 2px 2px 0 #000; opacity: 0;
+      transition: opacity 400ms; }
     #held-name.visible { opacity: 1; }
     /* Minecraft stacks these bottom-up: hotbar, XP bar, then hearts and food.
-       The gap above the XP row is what leaves room for the level number,
-       which Minecraft draws sitting on top of the bar. */
+       The gaps BETWEEN them are Minecraft's own and are set from hud.js in GUI
+       pixels with the rest of the geometry, not eyeballed in CSS here. The one
+       above the XP row is the wider of them, which is what leaves room for the
+       level number Minecraft draws sitting on top of the bar. */
     #status { display: flex; justify-content: space-between; width: 100%;
-      position: relative; margin-bottom: 5px; }
+      position: relative; }
     #hearts, #hunger, #armor { position: relative; }
     /* Minecraft stacks the armor row directly above the hearts, left-aligned,
        and removes it entirely at zero points -- hud.js does the removing. */
-    #armor-row { display: flex; width: 100%; margin-bottom: 1px; }
+    #armor-row { display: flex; width: 100%; }
     .icon-slot { position: absolute; top: 0; }
     .icon-slot .fill { z-index: 1; }
     #xp-row { position: relative; display: flex; align-items: center;
-      justify-content: center; margin-bottom: 3px; }
+      justify-content: center; }
     #xp-bar { position: relative; background-repeat: no-repeat; background-size: 100% 100%;
       image-rendering: pixelated; }
     #xp-fill { position: absolute; left: 0; top: 0; background-repeat: no-repeat;
@@ -145,17 +155,34 @@
       text-shadow: 2px 2px 0 #3f3f3f; }
     #pause-buttons { display: flex; flex-direction: column; gap: 8px; width: 400px; }
 
-    /* ---------------- controls ---------------- */
-    #controls { position: absolute; inset: 0; z-index: 24;
+    /* ---------------- controls, credits ----------------
+       Two screens off one set of rules, because they are the same object: a
+       title, a term/description list and a Done button. Credits could have had
+       its own block, but then the two would drift and the pause menu would
+       start looking like two people built it. */
+    #controls, #credits { position: absolute; inset: 0; z-index: 24;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       gap: 16px; background: rgba(0,0,0,0.82); }
-    #controls h1 { margin: 0; font-size: 20px; font-weight: 400; color: #fff;
+    #controls h1, #credits h1 { margin: 0; font-size: 20px; font-weight: 400; color: #fff;
       text-shadow: 2px 2px 0 #3f3f3f; }
-    #controls-list { display: grid; grid-template-columns: auto 1fr; gap: 8px 22px;
-      margin: 0; font-size: 13px; max-width: 560px; }
-    #controls-list dt { color: #ffffa0; text-shadow: 2px 2px 0 #3f3f3f; white-space: nowrap; }
-    #controls-list dd { margin: 0; color: #d8d8d8; text-shadow: 2px 2px 0 #3f3f3f; }
-    #controls-close { width: 200px; }
+    #controls-list, #credits-list { display: grid; grid-template-columns: auto 1fr;
+      gap: 8px 22px; margin: 0; font-size: 13px; max-width: 560px; }
+    #controls-list dt, #credits-list dt { color: #ffffa0;
+      text-shadow: 2px 2px 0 #3f3f3f; white-space: nowrap; }
+    #controls-list dd, #credits-list dd { margin: 0; color: #d8d8d8;
+      text-shadow: 2px 2px 0 #3f3f3f; }
+    #controls-close, #credits-close { width: 200px; }
+    /* The licence URLs have to READ as links -- attribution nobody can tell is
+       clickable is attribution nobody follows. Minecraft's chat blue (§9,
+       #5555ff) is the obvious choice and was tried first; against an 82%-black
+       overlay it is barely legible, so this is §b aqua instead, which is the
+       same palette and survives the background. */
+    #credits-list a, #credits-note a { color: #55ffff; text-decoration: underline; }
+    #credits-list a:hover, #credits-note a:hover { color: #ffffa0; }
+    /* Smaller than the list but not grey-on-grey: it is still attribution, and
+       the whole point of moving the notice was that it stayed legible. */
+    #credits-note { margin: 0; max-width: 560px; font-size: 12px; color: #b4b4b4;
+      text-align: center; text-shadow: 2px 2px 0 #3f3f3f; }
 
     /* ---------------- chat ----------------
        Sizes and offsets come from chat.js in Minecraft GUI pixels, like the
@@ -192,13 +219,6 @@
       gap: 14px; background: rgba(120, 0, 0, 0.45); z-index: 25; }
     #death h1 { margin: 0; font-size: 30px; text-shadow: 3px 3px 0 #000; }
     #death .mc-button { width: 260px; }
-
-    /* Attribution: CC-BY-SA requires it wherever the work is distributed, and
-       the page IS the distribution. With the entry screen gone it lives here. */
-    #credit { position: absolute; right: 8px; bottom: 6px; z-index: 4;
-      font-size: 9px; opacity: 0.28; line-height: 1.5; text-align: right;
-      pointer-events: auto; text-shadow: 1px 1px 0 #000; }
-    #credit a { color: inherit; }
   </style>
 </head>
 <body>
@@ -247,15 +267,24 @@
     <button id="controls-close" class="mc-button">Done</button>
   </div>
 
+  <!-- Attribution. It is NOT decoration: the texture pack is CC BY-SA 4.0 and
+       the sound set is CC0 / CC BY / CC BY-SA, and all three require credit
+       wherever the work is distributed -- this page IS the distribution. It
+       used to be 9px grey type in the corner of the HUD; both licences let you
+       satisfy the condition "in any reasonable manner based on the medium",
+       and a Credits entry one click into the pause menu is that, for a game.
+       Filled in by menu.js. -->
+  <div id="credits" class="hidden">
+    <h1>Credits</h1>
+    <dl id="credits-list"></dl>
+    <p id="credits-note"></p>
+    <button id="credits-close" class="mc-button">Done</button>
+  </div>
+
   <div id="death" class="hidden">
     <h1>You Died!</h1>
     <button id="respawn-btn" class="mc-button">Respawn</button>
   </div>
-
-  <p id="credit">
-    textures: Pixel Perfection CE, <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>
-    &middot; type: Monocraft, SIL OFL 1.1
-  </p>
 
   <script type="module" src="/src/main.js"></script>
 </body>

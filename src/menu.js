@@ -9,14 +9,84 @@
  * while your menu is open, which is the behaviour that matters here.
  */
 
-const LINKS = [
-  { label: 'My Resume', href: '/EvanJolley_Resume.pdf' },
-  { label: 'Controls', action: 'controls' },
-  { label: 'Previous Company', href: 'https://nologo.com' },
-  { label: 'Current Company', href: 'https://patronus.ai' },
-  { label: 'Bilibili Channel', href: 'https://space.bilibili.com/3546866255923376' },
-  { label: 'Source Code', href: 'https://github.com/evanjolley/minecraft-resume-world' },
+/*
+ * The button rows, written out rather than derived by pairing a flat list two
+ * at a time. Adding Credits made the count odd, and a pairing loop would have
+ * dropped whichever entry fell last onto a row of its own, full width, looking
+ * like an accident. Spelled out, the row that stands alone is the resume --
+ * which is the point of the whole site, and the one that has earned it.
+ */
+const ROWS = [
+  [{ label: 'My Resume', href: '/EvanJolley_Resume.pdf' }],
+  [{ label: 'Controls', sheet: 'controls' }, { label: 'Credits', sheet: 'credits' }],
+  [{ label: 'Previous Company', href: 'https://nologo.com' },
+   { label: 'Current Company', href: 'https://patronus.ai' }],
+  [{ label: 'Bilibili Channel', href: 'https://space.bilibili.com/3546866255923376' },
+   { label: 'Source Code', href: 'https://github.com/evanjolley/minecraft-resume-world' }],
 ]
+
+const REPO = 'https://github.com/evanjolley/minecraft-resume-world'
+
+/*
+ * Attribution.
+ *
+ * This used to be 9px grey type pinned to the bottom-right of the HUD, and it
+ * is gone from there -- but it could not simply be deleted. Pixel Perfection
+ * CE is CC BY-SA 4.0 and the sound set is a mix of CC0, CC BY and CC BY-SA;
+ * every one of those licences except CC0 requires credit wherever the work is
+ * distributed, and this page IS the distribution. Dropping the line would have
+ * put the project out of compliance, not tidied it.
+ *
+ * The pause menu is where it went, because CC's own terms say the conditions
+ * may be satisfied "in any reasonable manner based on the medium, means, and
+ * context", explicitly including a link to a resource that carries the
+ * details. A Credits entry one click from Escape, naming every author and
+ * linking the full NOTICE, is that for a game. Rejected: a line in the README,
+ * which is not what a visitor is handed -- the page is.
+ *
+ * Each row is [term, ...parts]; a part is a string or a link.
+ */
+const link = (label, href) => ({ label, href })
+
+const CREDITS = [
+  ['Textures',
+   'Pixel Perfection CE by Hugh "XSSheep" Rutland, ',
+   link('CC BY-SA 4.0', 'https://creativecommons.org/licenses/by-sa/4.0/'),
+   '. The grass side texture here is a derivative of it, under the same licence.'],
+  ['Sounds',
+   "VoxeLibre's mcl_sounds plus four sounds from OpenGameArt, CC0, CC BY and CC BY-SA. Every file, author, licence and source URL is listed in ",
+   link('sounds/NOTICE.txt', '/sounds/NOTICE.txt'), '.'],
+  ['Type',
+   'Monocraft by Idrees Hassan, ', link('SIL OFL 1.1', '/fonts/OFL.txt'), '.'],
+  ['Engine',
+   link('noa-engine', 'https://github.com/fenomas/noa'), ' by Andy Hall, MIT, on ',
+   link('Babylon.js', 'https://www.babylonjs.com/'), ', Apache 2.0.'],
+]
+
+/*
+ * The texture notice links into the repository rather than to
+ * /textures/NOTICE.txt, which is the obvious sibling of the sounds link and
+ * does not exist: scripts/build-textures.mjs, unlike build-sounds.mjs, never
+ * copies its NOTICE into public/. A link that 404s is worse than a longer one
+ * that resolves. Fixing the build script would be the better answer and is not
+ * this change's to make.
+ */
+const CREDITS_NOTE = [
+  'The texture pack\u2019s full notice, including every file derived from it, is in the repository at ',
+  link('textures-src/ce/NOTICE.txt', `${REPO}/blob/main/textures-src/ce/NOTICE.txt`),
+  '.',
+]
+
+/** One credits fragment: a plain string, or a link that opens in a new tab. */
+function creditNode(part) {
+  if (typeof part === 'string') return document.createTextNode(part)
+  const a = document.createElement('a')
+  a.textContent = part.label
+  a.href = part.href
+  a.target = '_blank'
+  a.rel = 'noopener noreferrer'
+  return a
+}
 
 const CONTROLS = [
   ['W A S D', 'Move'],
@@ -57,8 +127,26 @@ export function requestLockPersistently(noa) {
 
 export function installMenu(noa, { inputLock, inventory, inventoryScreen, survival }) {
   const screen = document.getElementById('pause')
-  const controls = document.getElementById('controls')
   const buttonRows = document.getElementById('pause-buttons')
+
+  /*
+   * Controls and Credits are the same kind of thing: a full-screen sheet laid
+   * over the pause menu. Neither can be opened from under the other -- each
+   * one covers the buttons -- but routing both through one function is what
+   * lets closing the menu clear whichever happens to be up, without setOpen
+   * having to name them.
+   */
+  const sheets = {
+    controls: document.getElementById('controls'),
+    credits: document.getElementById('credits'),
+  }
+  const openSheet = (which) => {
+    // Re-pressing the button that opened a sheet closes it, which is how the
+    // Controls button behaved before there was a second sheet to coordinate.
+    const already = which && !sheets[which].classList.contains('hidden')
+    for (const el of Object.values(sheets)) el.classList.add('hidden')
+    if (which && !already) sheets[which].classList.remove('hidden')
+  }
 
   const mkButton = (label, onClick, { wide = false, href = null } = {}) => {
     // Anchors for real links so middle-click and copy-link-address behave
@@ -87,7 +175,7 @@ export function installMenu(noa, { inputLock, inventory, inventoryScreen, surviv
       inputLock.lock('menu')
       noa.container.setPointerLock(false)
     } else {
-      controls.classList.add('hidden')
+      openSheet(null)
       inputLock.unlock('menu')
     }
   }
@@ -101,13 +189,13 @@ export function installMenu(noa, { inputLock, inventory, inventoryScreen, surviv
   }, { wide: true }))
   buttonRows.appendChild(backRow)
 
-  for (let i = 0; i < LINKS.length; i += 2) {
+  for (const items of ROWS) {
     const row = document.createElement('div')
     row.className = 'button-row'
-    for (const item of LINKS.slice(i, i + 2)) {
+    for (const item of items) {
       row.appendChild(
-        item.action === 'controls'
-          ? mkButton(item.label, () => controls.classList.toggle('hidden'))
+        item.sheet
+          ? mkButton(item.label, () => openSheet(item.sheet))
           : mkButton(item.label, null, { href: item.href }),
       )
     }
@@ -126,7 +214,7 @@ export function installMenu(noa, { inputLock, inventory, inventoryScreen, surviv
   }, { wide: true }))
   buttonRows.appendChild(quitRow)
 
-  /* ---- controls screen ---- */
+  /* ---- the two sheets ---- */
   const list = document.getElementById('controls-list')
   for (const [key, what] of CONTROLS) {
     const k = document.createElement('dt')
@@ -135,8 +223,20 @@ export function installMenu(noa, { inputLock, inventory, inventoryScreen, surviv
     v.textContent = what
     list.append(k, v)
   }
-  document.getElementById('controls-close')
-    .addEventListener('click', () => controls.classList.add('hidden'))
+
+  const creditsList = document.getElementById('credits-list')
+  for (const [term, ...parts] of CREDITS) {
+    const k = document.createElement('dt')
+    k.textContent = term
+    const v = document.createElement('dd')
+    v.append(...parts.map(creditNode))
+    creditsList.append(k, v)
+  }
+  document.getElementById('credits-note').append(...CREDITS_NOTE.map(creditNode))
+
+  for (const id of ['controls-close', 'credits-close']) {
+    document.getElementById(id).addEventListener('click', () => openSheet(null))
+  }
 
   /*
    * Escape. The browser exits pointer lock on Escape by itself and does not

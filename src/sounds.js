@@ -93,6 +93,17 @@ const MIX = {
    * are two events over one set of samples, and inventing a distinct death
    * sample to make them differ would be less faithful, not more.
    *
+   * So there is NO `death` entry in the manifest and there should not be one.
+   * `lastPlayed` on a killing blow reads { event: 'death', set: 'hurt' }, which
+   * looks like a set that was forgotten and is not -- this is the note that
+   * stops the next reader "fixing" it.
+   *
+   * The real gap is the other way: the free sound set ships ONE hurt sample
+   * where vanilla has three, so the `vary` below is carrying repetition on its
+   * own. Known, and left. The CC0 grunts that would have filled it were
+   * audibly a different person from damage/hit1, and three voices taking turns
+   * is worse than one voice at three pitches.
+   *
    * `vary` is Minecraft's getVoicePitch: (rand - rand) * 0.2 + 1.0. Two rolls
    * subtracted, not one scaled, which gives a triangular spread clustered near
    * 1.0. It matters far more here than on a footstep -- three samples heard
@@ -459,17 +470,35 @@ export function installSounds(noa, deps = {}) {
    * ui.button.click, delegated off the document instead of wired per button.
    * The pause menu builds its rows at runtime and the death screen's button is
    * static markup -- neither file is this module's to edit, and a listener
-   * that goes looking for .mc-button when the click happens needs no
-   * cooperation from either.
+   * that goes looking for .mc-button when the press happens needs no
+   * cooperation from either. Every button in this project carries that class:
+   * the pause rows, both sheet Done buttons and Respawn.
    *
-   * Capture phase for the same reason the gesture gate uses it: screens that
-   * stop propagation would otherwise swallow their own click sound.
+   * MOUSEDOWN, NOT CLICK. Vanilla plays the sound on press --
+   * AbstractWidget.mouseClicked calls playDownSound the moment the button goes
+   * down, and never waits for the release. A `click` listener fires on mouseUP,
+   * which is late enough to feel like lag on a button you hold for a beat, and
+   * silent entirely if you press a button and drag off it.
+   *
+   * Not `pointerdown`, which would also cover touch: pointerdown fires BEFORE
+   * mousedown, and the autoplay gate above is a mousedown listener. The gate
+   * has to go first or the very first button a visitor ever presses has no
+   * context to play through. Both being mousedown is what guarantees it --
+   * capture runs outermost first, so the gate's listener on `window` is always
+   * ahead of this one on `document`.
+   *
+   * Capture phase for the same reason the gate uses it: screens that stop
+   * propagation would otherwise swallow their own click sound.
+   *
+   * NOT wired: the inventory's .gui-slot cells. Vanilla's container slots are
+   * silent -- picking a stack up and putting it down makes no sound at all --
+   * so adding one there would be inventing feedback, not restoring it.
    */
   const onUiClick = (e) => {
     if (e.target instanceof Element && e.target.closest('.mc-button')) play('uiClick')
   }
-  document.addEventListener('click', onUiClick, true)
-  unsubscribe.push(() => document.removeEventListener('click', onUiClick, true))
+  document.addEventListener('mousedown', onUiClick, true)
+  unsubscribe.push(() => document.removeEventListener('mousedown', onUiClick, true))
 
   if (movement) {
     // Non-positional: it's your own feet. A panner would put them a fraction of

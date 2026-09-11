@@ -38,6 +38,38 @@ const HOTBAR_W = 182, HOTBAR_H = 22
 const SLOT_PITCH = 20, SLOT_INSET = 3, SLOT_SIZE = 16
 const SEL_SIZE = 24
 
+/*
+ * The vertical stack, straight out of Gui.java, in GUI pixels measured UP from
+ * the bottom of the screen -- which is the bottom of the hotbar, and therefore
+ * the bottom edge of #hud:
+ *
+ *   hotbar            0..22   renderHotbar blits at y = screenHeight - 22
+ *   xp bar           24..29   renderExperienceBar: screenHeight - 32 + 3
+ *   hearts, hunger   30..39   renderPlayerHealth: screenHeight - 39
+ *   armor            40..49   the same row geometry, one row higher
+ *   held item name   50..59   renderSelectedItemName: screenHeight - 59
+ *
+ * Every gap is 1 GUI px except the one under the xp bar, which is 2. They were
+ * 5px, 3px and 1px of eyeballed CSS margin, which is where the half-pixel rows
+ * came from.
+ *
+ * HELD_NAME_BOTTOM is the number this table exists for. Minecraft anchors the
+ * name to the BOTTOM OF THE SCREEN -- not to whatever happens to be under it
+ * -- so it stays at 50 whether the armor row is drawn or not. Stacking it in
+ * the flex column instead made it move, and with the armor row absent it
+ * landed on the hearts. Rejected: adding a margin until they stopped touching,
+ * which fixes the symptom at whatever SCALE it was eyeballed at.
+ *
+ * NOT reproduced: vanilla adds 14 to that y in creative (`if
+ * (!gameMode.canHurtPlayer())`), where there are no hearts to clear. Which
+ * gamemode is live is gamemode.js's to know and this file has no handle on it.
+ */
+const TEXT_LINE = 9          // Minecraft's font line height, glyph plus descender
+const HELD_NAME_BOTTOM = 50
+const GAP_UNDER_XP = 2       // the wide one: the level number sits in it
+const GAP_UNDER_HEARTS = 1
+const GAP_UNDER_ARMOR = 1
+
 const px = (n) => `${n * SCALE}px`
 
 function spriteEl(src, w, h) {
@@ -99,6 +131,12 @@ export function installHUD(noa, { inventory, survival }) {
   const hud = document.getElementById('hud')
   hud.style.width = px(HOTBAR_W)
 
+  /* The gaps between the rows, from the stack above. In here rather than in
+     the stylesheet so the whole layout answers to one SCALE. */
+  document.getElementById('xp-row').style.marginBottom = px(GAP_UNDER_XP)
+  document.getElementById('status').style.marginBottom = px(GAP_UNDER_HEARTS)
+  document.getElementById('armor-row').style.marginBottom = px(GAP_UNDER_ARMOR)
+
   /* ---- hotbar ---- */
   const bar = document.getElementById('hotbar')
   bar.style.width = px(HOTBAR_W)
@@ -122,6 +160,13 @@ export function installHUD(noa, { inventory, survival }) {
   }
 
   const label = document.getElementById('held-name')
+  // Positioned, not stacked -- see HELD_NAME_BOTTOM. The line box is pinned to
+  // Minecraft's 9px font line as well, because a default line-height lets the
+  // glyphs hang below the element box and reach the hearts on their own.
+  label.style.bottom = px(HELD_NAME_BOTTOM)
+  label.style.height = px(TEXT_LINE)
+  label.style.lineHeight = px(TEXT_LINE)
+  label.style.fontSize = `${FONT_PX}px`
   let labelTimer = null
   let lastNamed = -1
 
