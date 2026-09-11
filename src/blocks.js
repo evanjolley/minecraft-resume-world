@@ -36,7 +36,41 @@
  * `tool` is whether the block requires the correct tool to drop anything,
  * which is also what decides the 5x vs 1.5x multiplier.
  */
-const T = (hardness, tool = true) => +(hardness * (tool ? 5 : 1.5)).toFixed(3)
+/*
+ * Break time, from Minecraft's raw hardness.
+ *
+ * Bare-handed, a block that wants no particular tool takes hardness * 1.5
+ * seconds; one that REQUIRES a tool you don't have takes hardness * 5.
+ *
+ * This used to return only the multiplied seconds, which threw away both the
+ * raw hardness and which multiplier applied -- and those are exactly what the
+ * tool formula needs (time = hardness * 1.5 / toolSpeed). It now returns both
+ * and `normaliseHardness` below splits them out, so every consumer of
+ * `def.hardness` keeps reading plain seconds and nothing had to change.
+ */
+const T = (hardness, tool = true) => ({ __hardness: true, raw: hardness, tool })
+
+const bareHandSeconds = (raw, tool) => +(raw * (tool ? 5 : 1.5)).toFixed(3)
+
+/**
+ * Rewrites each entry's `hardness` to bare-handed seconds and records
+ * `rawHardness` / `requiresTool` alongside it.
+ */
+function normaliseHardness(types) {
+  for (const b of types) {
+    const h = b.hardness
+    if (h && h.__hardness) {
+      b.rawHardness = h.raw
+      b.requiresTool = h.tool
+      b.hardness = bareHandSeconds(h.raw, h.tool)
+    } else {
+      // Bedrock, which is Infinity and requires nothing because nothing works.
+      b.rawHardness = h
+      b.requiresTool = false
+    }
+  }
+  return types
+}
 
 /*
  * Biome tints. Minecraft ships grass and most leaves GREYSCALE and multiplies
@@ -536,11 +570,11 @@ const UTILITY = [
   { id: 355, key: 'mushroom_stem', name: 'Mushroom Stem', all: 'mushroom_stem', hardness: T(0.2, false) },
 ]
 
-export const BLOCK_TYPES = [
+export const BLOCK_TYPES = normaliseHardness([
   ...CORE, ...STONE, ...SANDSTONE, ...GROUND, ...ICE, ...ORES, ...COPPER,
   ...QUARTZ_END, ...PRISMARINE, ...NETHER, ...MODERN, ...WOOD,
   ...WOOL, ...CONCRETE, ...CONCRETE_POWDER, ...TERRACOTTA, ...GLASS, ...UTILITY,
-]
+])
 
 // Ids must be contiguous from 1. noa fills any gap with a silently-registered
 // filler block that has no material, which renders as untextured white and is

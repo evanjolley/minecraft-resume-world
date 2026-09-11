@@ -107,6 +107,38 @@ additional screen. The real cost is recording and editing the clips.
 
 ---
 
+## 1b. Identity: login, guests and nicknames
+
+Evan's sketch, and the shape the rest should assume:
+
+A visitor arrives and either logs in, or continues as a guest with a
+**nickname**, then spawns into the world under that name. Separately there is a
+fast path — click straight through to the resume without entering the world at
+all, for someone who wants the document and not the game.
+
+That fast path matters more than it sounds. It is the honest answer to "this is
+a lovely toy but I just want to know where he worked", and having it means the
+world never has to apologise for being a world.
+
+**This is where `/op` gets fixed.** Today `/op <passphrase>` squats on
+Minecraft's name for a different idea: vanilla's `/op <username>` grants
+operator to someone ELSE and presupposes you already are one. Vanilla's real
+bootstrap is the server console, which a static site does not have — hence the
+passphrase. When identity lands, split them:
+
+- `/login <passphrase>` — the console-equivalent bootstrap, owner only.
+- `/op <username>` and `/deop <username>` — vanilla's meaning, which only
+  becomes meaningful once other players exist.
+
+Deliberately deferred rather than renamed now, because the rename is free once
+usernames exist and premature otherwise.
+
+**Nicknames are a moderation surface**, the same as chat: a free-text name
+displayed to strangers on Evan's domain. Either a generated name, or a filtered
+one, decided before it ships rather than after.
+
+---
+
 ## 2. Multiplayer presence
 
 Concurrent visitors seeing each other walk around.
