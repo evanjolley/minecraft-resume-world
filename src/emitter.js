@@ -18,6 +18,5 @@ export function createEmitter() {
   return {
     on(fn) { listeners.add(fn); return () => listeners.delete(fn) },
     emit(payload) { for (const fn of [...listeners]) fn(payload) },
-    get size() { return listeners.size },
   }
 }

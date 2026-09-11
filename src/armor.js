@@ -28,7 +28,7 @@ const BYPASSES_ARMOR = new Set(['starve', 'void'])
  * Missing or non-armor stacks contribute nothing, so a half-equipped player
  * needs no special case.
  */
-export function armorStats(stacks) {
+function armorStats(stacks) {
   let points = 0, toughness = 0
   for (const stack of stacks) {
     const a = stack && armorOf(stack.id)
@@ -59,7 +59,7 @@ export function armorStats(stacks) {
  * Damage is in half-hearts, the same unit survival.js stores health in, so
  * the numbers here are Minecraft's own with no scaling.
  */
-export function damageAfterArmor(amount, points, toughness = 0) {
+function damageAfterArmor(amount, points, toughness = 0) {
   if (amount <= 0 || points <= 0) return amount
   const f = 2 + toughness / 4
   const g = Math.min(20, Math.max(points * 0.2, points - amount / f))

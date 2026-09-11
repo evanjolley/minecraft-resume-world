@@ -36,7 +36,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
  * from Minecraft unchanged on all three axes.
  */
 
-export const MODEL_SCALE = 0.9375 / 16
+const MODEL_SCALE = 0.9375 / 16
 
 /*
  * Babylon's box faceUV order, confirmed from its normals array, is

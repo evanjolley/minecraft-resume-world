@@ -186,9 +186,6 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
     handItem.setEnabled(handItemReady)
   })
 
-  const local = [0, 0, 0]
-  const global = [0, 0, 0]
-
   const apply = () => {
     const third = mode !== 0
     noa.camera.zoomDistance = third ? THIRD_PERSON_DISTANCE : 0
@@ -231,9 +228,7 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
 
   noa.on('tick', (dt) => {
     const secs = dt / 1000
-    const dat = noa.ents.getPositionData(player)
     const body = noa.ents.getPhysics(player).body
-    const move = noa.ents.getMovement(player)
 
     /*
      * Stride advances with distance travelled, not time. On a timer the legs

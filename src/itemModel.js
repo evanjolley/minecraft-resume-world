@@ -102,7 +102,7 @@ const HALF_DEPTH = 0.5 / 16
  * @param {Uint8ClampedArray|Uint8Array} rgba tightly packed, 4 bytes per pixel
  * @returns {{positions:number[], normals:number[], uvs:number[], indices:number[], quads:number}}
  */
-export function extrudeSprite(rgba, width, height) {
+function extrudeSprite(rgba, width, height) {
   const positions = []
   const normals = []
   const uvs = []
@@ -265,7 +265,7 @@ export function extrudeSprite(rgba, width, height) {
  * near the clamp.
  * ------------------------------------------------------------------ */
 
-export const DISPLAY = {
+const DISPLAY = {
   generated: {
     firstperson_righthand: { rotation: [0, -90, 25], translation: [1.13, 3.2, 1.13], scale: 0.68 },
     thirdperson_righthand: { rotation: [0, 0, 0], translation: [0, 3, 1], scale: 0.55 },

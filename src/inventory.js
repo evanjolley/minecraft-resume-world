@@ -31,12 +31,7 @@ import { findRecipe, consumeGrid } from './crafting.js'
  */
 
 export const HOTBAR_SIZE = 9
-export const TOTAL_SLOTS = 36
-/** Minecraft's default. Per-item limits live in items.js; this is the ceiling. */
-export const STACK_MAX = 64
-
-/** The containers a click can address. `main` is slots 0-35. */
-export const AREAS = ['main', 'armor', 'offhand', 'craft', 'result']
+const TOTAL_SLOTS = 36
 
 export function createInventory() {
   const inv = {

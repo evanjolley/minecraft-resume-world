@@ -1,5 +1,4 @@
 import { Engine } from 'noa-engine'
-import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder'
 
 import { registerBlocks } from './blocks.js'
 import { getVoxelID, SPAWN } from './island.js'
@@ -29,7 +28,6 @@ import { installHighlightStyle } from './highlight.js'
 import { createAuthority } from './authority.js'
 import { installGamemode } from './gamemode.js'
 import { installCommands } from './commands.js'
-import { BLOCK_BY_ID } from './blocks.js'
 
 const noa = new Engine({
   // Without this noa builds its own fixed-position container and appends it

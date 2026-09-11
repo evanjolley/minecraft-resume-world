@@ -71,7 +71,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture.js'
  * ------------------------------------------------------------------ */
 
 /** Unit vectors for the four horizontal facings, in Minecraft's names. */
-export const FACINGS = {
+const FACINGS = {
   north: [0, 0, -1],
   south: [0, 0, 1],
   west: [-1, 0, 0],
@@ -654,7 +654,7 @@ export function installNonCubeCollision(noa, shapeById) {
 const TWO_PI = Math.PI * 2
 
 /** Player heading -> cardinal direction. noa's forward is (sin h, 0, cos h). */
-export function headingToFacing(heading) {
+function headingToFacing(heading) {
   const h = ((heading % TWO_PI) + TWO_PI) % TWO_PI
   const octant = Math.round(h / (Math.PI / 2)) % 4
   return ['south', 'east', 'north', 'west'][octant]
@@ -666,7 +666,7 @@ export function headingToFacing(heading) {
  * slab, the bottom face gives you a top slab, and a side face splits on
  * whether you clicked above or below its midpoint.
  */
-export function halfFromTarget(normal, hitY) {
+function halfFromTarget(normal, hitY) {
   if (normal[1] > 0) return 'bottom'
   if (normal[1] < 0) return 'top'
   return (hitY - Math.floor(hitY)) > 0.5 ? 'top' : 'bottom'

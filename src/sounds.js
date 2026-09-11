@@ -49,7 +49,7 @@ const GROUP_BY_KEY = {
 const DEFAULT_GROUP = 'stone'
 
 /** The SoundType family for a block id, or null for air. */
-export function groupForBlock(id) {
+function groupForBlock(id) {
   if (!id) return null
   const def = BLOCK_BY_ID.get(id)
   if (!def) return null

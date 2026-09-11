@@ -16,7 +16,7 @@
  */
 
 // Half-width. Spans -40..39 on both axes = 80 blocks = 5x5 Minecraft chunks.
-export const HALF = 40
+const HALF = 40
 
 // The y a player stands on. Minecraft's sea level, so the ore depth numbers
 // below are the ones you'd actually read off the wiki.

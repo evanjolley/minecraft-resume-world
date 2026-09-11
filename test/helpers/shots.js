@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
  */
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'screenshots')
 
-export const shotPath = (name) => path.join(DIR, `${name}.png`)
+const shotPath = (name) => path.join(DIR, `${name}.png`)
 
 /** Full viewport. */
 export const shot = (page, name) =>

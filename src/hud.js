@@ -22,7 +22,7 @@ import { MAX_HEALTH, MAX_FOOD } from './survival.js'
 export const SCALE = 2
 
 /** Full diamond is 20 points, the same 10-icon scale as hearts and hunger. */
-export const MAX_ARMOR = 20
+const MAX_ARMOR = 20
 
 /*
  * Minecraft's font advances 6 GUI pixels per character. Monocraft's advance is

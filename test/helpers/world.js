@@ -50,7 +50,7 @@ export const HEADING = {
  * (The double-tap sprint detector is the exception: it hangs off the keydown
  * EVENT rather than the polled state, which is the whole reason it works.)
  */
-export const TAP_MS = 80
+const TAP_MS = 80
 
 /** Every key this suite ever holds down. reset() releases all of them. */
 const ALL_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ControlLeft']

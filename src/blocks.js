@@ -616,7 +616,7 @@ const STAIR_STATES = [
  * Filled in by nonCubeSet below; read by installPlacementOrientation.
  * @type {Map<number, (facing: string, half: string) => number>}
  */
-export const NON_CUBE_VARIANTS = new Map()
+const NON_CUBE_VARIANTS = new Map()
 
 /**
  * Ten blocks derived from one cube. `source` supplies the texture and the
@@ -755,7 +755,7 @@ export function iconFaces(def) {
  * nothing next to the risk.
  * ------------------------------------------------------------------ */
 
-export const ATLAS_PAGE_SIZE = 128
+const ATLAS_PAGE_SIZE = 128
 
 /*
  * Alpha materials are segregated onto their own pages, not interleaved.
@@ -811,9 +811,6 @@ export const MATERIAL_RECIPES = {
 for (const def of BLOCK_TYPES) {
   if (def.tint) MATERIAL_RECIPES[def.all] = { tint: def.tint }
 }
-
-/** Whether a material lives on an alpha-blended atlas page. */
-export const ALPHA_MATERIALS = new Set(alphaNames)
 
 export function registerBlocks(noa) {
   const slot = new Map()

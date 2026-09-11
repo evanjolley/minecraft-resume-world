@@ -99,7 +99,7 @@ function compileRecipe(r) {
 }
 
 /** Every recipe, compiled. Built once -- the table is static. */
-export const RECIPE_BOOK = RECIPES.map(compileRecipe)
+const RECIPE_BOOK = RECIPES.map(compileRecipe)
 
 /* ------------------------------------------------------------------ *
  * Matching

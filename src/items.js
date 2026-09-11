@@ -37,10 +37,10 @@ import { BLOCK_TYPES, BLOCK_BY_ID } from './blocks.js'
  * in one commit) without ever colliding, and so a bare id in a debugger says
  * which registry it came from at a glance.
  */
-export const ITEM_BASE = 1000
+const ITEM_BASE = 1000
 
 /** Minecraft's default stack size. Tools and armor override it to 1. */
-export const DEFAULT_STACK = 64
+const DEFAULT_STACK = 64
 
 /* ------------------------------------------------------------------ *
  * Tool materials.
@@ -57,7 +57,7 @@ export const DEFAULT_STACK = 64
  * They were defined and deliberately unwired for one commit, because the raw
  * hardness the formula needs did not exist yet.
  */
-export const TIERS = {
+const TIERS = {
   wood: { level: 0, speed: 2, attack: 3, uses: 59 },
   stone: { level: 1, speed: 4, attack: 4, uses: 131 },
   iron: { level: 2, speed: 6, attack: 5, uses: 250 },
@@ -227,7 +227,7 @@ const NON_BLOCK = [...MATERIALS, ...UNPLACEABLE, ...TOOLS, ...ARMOR, ...GEAR]
 
 export const ITEMS = [...BLOCK_ITEMS, ...NON_BLOCK]
 
-export const ITEM_BY_ID = new Map(ITEMS.map(i => [i.id, i]))
+const ITEM_BY_ID = new Map(ITEMS.map(i => [i.id, i]))
 export const ITEM_BY_KEY = new Map(ITEMS.map(i => [i.key, i]))
 
 // Same guard blocks.js applies to block ids, for the same reason: a duplicate
@@ -261,7 +261,7 @@ export const itemName = (id) => ITEM_BY_ID.get(id)?.name ?? String(id)
 export const stackMax = (id) => ITEM_BY_ID.get(id)?.stack ?? DEFAULT_STACK
 
 /** Tool data, or null. `tool` is the shape, `tier` the material. */
-export function toolOf(id) {
+function toolOf(id) {
   const def = ITEM_BY_ID.get(id)
   if (!def?.tool) return null
   return { tool: def.tool, tier: def.tier, ...TIERS[def.tier] }
@@ -369,7 +369,7 @@ const PICKAXE_KEYS = new Set(['ice', 'packed_ice', 'blue_ice'])
 const endsWithAny = (key, parts) => parts.some(p => key.endsWith(p))
 
 /** The tool class a block is mined with, or null if no tool helps. */
-export function toolForBlock(id) {
+function toolForBlock(id) {
   const def = BLOCK_BY_ID.get(id)
   if (!def) return null
   const key = def.key
@@ -405,7 +405,7 @@ const NEEDS_DIAMOND = new Set([
 ])
 
 /** The tier level needed to get a drop out of this block. */
-export function harvestLevel(id) {
+function harvestLevel(id) {
   const key = BLOCK_BY_ID.get(id)?.key
   if (!key) return 0
   if (NEEDS_DIAMOND.has(key)) return 3
@@ -429,7 +429,7 @@ function destroySpeed(blockId, heldItemId) {
  * Will this block give up its drop to this item? False is a real answer, not
  * an error: it is stone punched by hand, or diamond ore hit with stone.
  */
-export function canHarvest(blockId, heldItemId = 0) {
+function canHarvest(blockId, heldItemId = 0) {
   const def = BLOCK_BY_ID.get(blockId)
   if (!def) return false
   if (!def.requiresTool) return true

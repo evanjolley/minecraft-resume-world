@@ -16,7 +16,7 @@ export const MAX_FOOD = 20
 // Hunger drain is real Minecraft, but this world's job is to be read. A
 // visitor who idles for ten minutes reading a resume plot should not starve.
 // Flip to true for full survival rules.
-export const HUNGER_DRAIN_ENABLED = false
+const HUNGER_DRAIN_ENABLED = false
 
 /**
  * @param rules  the gamemode/game-rule gates. Injected rather than imported so

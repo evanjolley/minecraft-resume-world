@@ -182,7 +182,7 @@ const DOUBLE_TAP_MS = 350
  * all read `getPhysics(player).body` every tick and would throw on the first
  * one.
  */
-export function createFlight(noa, move) {
+function createFlight(noa, move) {
   const player = noa.playerEntity
   const body = () => noa.ents.getPhysics(player).body
 

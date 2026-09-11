@@ -102,7 +102,7 @@ const PICKUP_DELAY = 10 / TPS
 const THROW_DELAY = 40 / TPS
 
 /** 6000 ticks. The five minutes every Minecraft player has raced. */
-export const DESPAWN_SECONDS = 6000 / TPS
+const DESPAWN_SECONDS = 6000 / TPS
 
 /** ItemEntity's spawn kick: +-0.1 horizontally, 0.2 up, per tick. */
 const SPAWN_SPREAD = 0.1 * TPS
