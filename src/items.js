@@ -149,10 +149,22 @@ const UNPLACEABLE = [
  * are absent for the same reason -- see recipes.js.
  */
 
+/*
+ * `model` is the vanilla item model PARENT, and it is here rather than in the
+ * renderer because it is a fact about the item, not about the view. It decides
+ * the display transform an extruded sprite is held with -- see DISPLAY in
+ * itemModel.js. Absent means `item/generated`, which is vanilla's default and
+ * covers every ingot, gem and lump below.
+ *
+ * The distinction is only visible in THIRD person. `item/handheld` rotates the
+ * sprite -90 about Y and 55 about Z and scales it to 0.85, which is what lays
+ * a blade along the fist; `item/generated` leaves it unrotated at 0.55, which
+ * is what makes an ingot sit flat. Both share firstperson_righthand verbatim.
+ */
 const TOOLS = []
 for (const [tier, prefix] of Object.entries(TOOL_PREFIX)) {
   for (const tool of ['pickaxe', 'axe', 'shovel', 'hoe', 'sword']) {
-    TOOLS.push({ key: `${prefix}_${tool}`, name: `${titleCase(prefix)} ${titleCase(tool)}`, tier, tool, stack: 1 })
+    TOOLS.push({ key: `${prefix}_${tool}`, name: `${titleCase(prefix)} ${titleCase(tool)}`, tier, tool, stack: 1, model: 'handheld' })
   }
 }
 
@@ -169,13 +181,24 @@ for (const [material, points] of Object.entries(ARMOR_MATERIALS)) {
 }
 
 const GEAR = [
-  { key: 'shears', name: 'Shears', stack: 1 },
-  { key: 'flint_and_steel', name: 'Flint and Steel', stack: 1 },
+  // Model parents copied from the vanilla files one at a time rather than
+  // inferred from "is it a tool", because the answer is not derivable: shears
+  // and flint and steel are handheld, a bucket and a bow are not.
+  { key: 'shears', name: 'Shears', stack: 1, model: 'handheld' },
+  { key: 'flint_and_steel', name: 'Flint and Steel', stack: 1, model: 'handheld' },
   { key: 'bucket', name: 'Bucket', stack: 16 },
   { key: 'bowl', name: 'Bowl' },
+  /*
+   * Vanilla's bow.json is item/generated with its OWN thirdperson override
+   * (rotation [-80, 260, -40]) so it points away from you as if nocked. Left
+   * as plain generated here: reproducing it means a fourth entry in DISPLAY
+   * for one item that cannot be drawn, and generated is the honest parent.
+   */
   { key: 'bow', name: 'Bow', stack: 1 },
   { key: 'arrow', name: 'Arrow' },
-  { key: 'fishing_rod', name: 'Fishing Rod', stack: 1 },
+  // handheld_rod is handheld mirrored in Y and pushed 2 units further out --
+  // the rod sticks forward past the fist instead of lying across it.
+  { key: 'fishing_rod', name: 'Fishing Rod', stack: 1, model: 'handheld_rod' },
 ]
 
 function titleCase(key) {

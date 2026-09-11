@@ -65,12 +65,11 @@ jobs:
       # other two are a two-minute download for nothing.
       - run: npx playwright install --with-deps chromium
 
-      # 97 of the 109 tests. The twelve left out are test/12-sounds.spec.js,
-      # and leaving them out is not a convenience -- the suite CANNOT pass on a
-      # clean checkout. Those tests arm an audio harness against
-      # public/sounds/manifest.json, which `npm run sounds` extracts from a
-      # local Minecraft install, which a runner does not have. Verified: the
-      # full suite on a fresh clone is 98 passed, 1 failed, 10 did not run.
+      # The WHOLE suite, including test/12-sounds.spec.js. That spec used to be
+      # excluded because it arms an audio harness against a manifest only a
+      # local Minecraft install could produce. `npm run sounds` now defaults to
+      # the committed CC0/CC-BY set, so a runner builds real audio and the
+      # exclusion is gone along with its reason.
       #
       # This exclusion and the silent deployed site are the same root cause,
       # and both disappear the day a redistributable sound set is committed.
@@ -84,13 +83,13 @@ jobs:
       # CI is what tells playwright.config.js not to reuse an existing dev
       # server. The runner has none, but a config that behaves differently in
       # CI should be given the flag it is looking for.
-      - run: npm run test -- --grep-invert 12-sounds
+      - run: npm run test
         env:
           CI: 'true'
 
-      # NOT `npm run build`. build:deploy additionally strips dist/sounds and
-      # copies deploy/_headers and deploy/.assetsignore in. See deploy/ for why
-      # the sounds part matters.
+      # NOT `npm run build`. build:deploy also builds textures and the free
+      # sound set into public/ (both are gitignored, so a clean checkout has
+      # neither) and copies deploy/_headers and deploy/.assetsignore in.
       - run: npm run build:deploy
 
       # The real check that dist/ is whole, running on the machine that would
@@ -110,7 +109,10 @@ jobs:
           # Mojang audio must never reach a public host. It cannot be here --
           # a CI checkout has no Minecraft install to extract from -- so if it
           # ever is, something has gone wrong enough to stop for.
-          test ! -d dist/sounds || { echo "dist/sounds present; refusing"; exit 1; }
+          # Assert WHICH sounds, not whether any. Mojang's audio must never
+          # be published from this domain; silence is now also a failure.
+          test "$(cat dist/sounds/.source)" = "free" || {
+            echo "dist/sounds/.source is not 'free'; refusing"; exit 1; }
           echo "dist: $(find dist -type f | wc -l) files, $(du -sh dist | cut -f1)"
 
       # Runs on every push, including today's, so the config is proven to parse

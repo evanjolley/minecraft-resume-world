@@ -75,7 +75,7 @@ test.describe('sounds', () => {
         .toBe(names.length)
       // The non-block half. Missing here means `npm run sounds` was run against
       // a build of this script that predates the player sounds.
-      expect(state.sets).toEqual(['fallBig', 'fallSmall', 'hurt', 'uiClick'])
+      expect(state.sets).toEqual(['fallBig', 'fallSmall', 'hurt', 'pickup', 'uiClick'])
     })
 
   test('two samples sharing a fingerprint would make every name below a guess',

@@ -1,3 +1,8 @@
+import {
+  SHAPE_BOXES, buildShapeMesh, createMaterialCache,
+  installNonCubeCollision, installPlacementOrientation,
+} from './blockMeshes.js'
+
 /*
  * Block definitions.
  *
@@ -570,11 +575,136 @@ const UTILITY = [
   { id: 355, key: 'mushroom_stem', name: 'Mushroom Stem', all: 'mushroom_stem', hardness: T(0.2, false) },
 ]
 
-export const BLOCK_TYPES = normaliseHardness([
+/* ------------------------------------------------------------------ *
+ * Non-cube blocks: slabs and stairs.
+ *
+ * Everything above this line is a full cube drawn by noa's terrain mesher.
+ * Everything below is a custom `blockMesh` -- see blockMeshes.js, which owns
+ * the geometry and the sub-voxel collision noa does not provide.
+ *
+ * A family is TEN ids: two slabs (bottom, top) and eight stairs (four facings
+ * times upright/upside-down). The variants exist as ids because a block id is
+ * the only per-voxel state noa has -- there is no metadata or blockstate --
+ * so orientation has to BE the id.
+ *
+ * They are ids, but they are not ten items. Every variant drops the family's
+ * canonical id, so breaking any of the eight oak stairs gives you one "Oak
+ * Stairs", and placing it picks the variant back out from where you're looking
+ * (blockMeshes.js's installPlacementOrientation). The inventory never sees the
+ * other nine.
+ *
+ * Families are restricted to source blocks with a SINGLE texture on all six
+ * faces. A cuboid mesh can only carry one Babylon material without splitting
+ * into submeshes, and Minecraft's three-texture families are mostly ones whose
+ * stair/slab form uses one texture anyway -- Smooth Sandstone is sandstone_top
+ * on every face, Smooth Quartz is quartz_block_bottom. So this costs the
+ * plain-sandstone and plain-quartz stairs and nothing else.
+ * ------------------------------------------------------------------ */
+
+/**
+ * The eight stair states, in id order. INDEX 0 IS CANONICAL: it is the one
+ * with the plain `<family>_stairs` key, the one the item places, and the one
+ * every other variant drops. Never reorder -- these are ids.
+ */
+const STAIR_STATES = [
+  ['north', 'bottom'], ['south', 'bottom'], ['east', 'bottom'], ['west', 'bottom'],
+  ['north', 'top'], ['south', 'top'], ['east', 'top'], ['west', 'top'],
+]
+
+/**
+ * Canonical block id -> (facing, half) -> the id to actually place.
+ * Filled in by nonCubeSet below; read by installPlacementOrientation.
+ * @type {Map<number, (facing: string, half: string) => number>}
+ */
+export const NON_CUBE_VARIANTS = new Map()
+
+/**
+ * Ten blocks derived from one cube. `source` supplies the texture and the
+ * hardness, so a stone brick stair takes exactly as long to break as a stone
+ * brick -- which is Minecraft's rule and also means there is only one place to
+ * change it.
+ */
+function nonCubeSet(from, prefix, source, label) {
+  if (!source) throw new Error(`non-cube family "${prefix}" has no source block`)
+  if (!source.all) {
+    throw new Error(`non-cube family "${prefix}" needs a single-texture source, got "${source.key}"`)
+  }
+  const stairFrom = from + 2
+
+  NON_CUBE_VARIANTS.set(from, (_facing, half) => (half === 'top' ? from + 1 : from))
+  NON_CUBE_VARIANTS.set(stairFrom, (facing, half) =>
+    stairFrom + STAIR_STATES.findIndex(([f, h]) => f === facing && h === half))
+
+  const rows = [
+    { id: from, key: `${prefix}_slab`, name: `${label} Slab`, shape: 'slab_bottom' },
+    { id: from + 1, key: `${prefix}_slab_top`, name: `${label} Slab`, shape: 'slab_top', drops: from },
+    ...STAIR_STATES.map(([facing, half], i) => ({
+      id: stairFrom + i,
+      key: i === 0 ? `${prefix}_stairs` : `${prefix}_stairs_${facing}_${half}`,
+      name: `${label} Stairs`,
+      shape: `stairs_${facing}_${half}`,
+      ...(i === 0 ? {} : { drops: stairFrom }),
+    })),
+  ]
+  return rows.map(r => ({ all: source.all, hardness: source.hardness, ...r }))
+}
+
+/* Every cube, so a family can look its source up by key. */
+const CUBES = [
   ...CORE, ...STONE, ...SANDSTONE, ...GROUND, ...ICE, ...ORES, ...COPPER,
   ...QUARTZ_END, ...PRISMARINE, ...NETHER, ...MODERN, ...WOOD,
   ...WOOL, ...CONCRETE, ...CONCRETE_POWDER, ...TERRACOTTA, ...GLASS, ...UTILITY,
-])
+]
+const CUBE_BY_KEY = new Map(CUBES.map(b => [b.key, b]))
+
+/*
+ * `[firstId, keyPrefix, sourceBlockKey, label]`. The stride is ten and the
+ * ids are written out rather than accumulated, same reasoning as woodSet
+ * above: a running counter silently renumbers everything downstream the first
+ * time a family is inserted, and these are save data.
+ */
+const NON_CUBE_FAMILIES = [
+  // Wood
+  [356, 'oak', 'planks', 'Oak'],
+  [366, 'spruce', 'spruce_planks', 'Spruce'],
+  [376, 'birch', 'birch_planks', 'Birch'],
+  [386, 'jungle', 'jungle_planks', 'Jungle'],
+  [396, 'acacia', 'acacia_planks', 'Acacia'],
+  [406, 'dark_oak', 'dark_oak_planks', 'Dark Oak'],
+  [416, 'mangrove', 'mangrove_planks', 'Mangrove'],
+  [426, 'cherry', 'cherry_planks', 'Cherry'],
+
+  // Stone
+  [436, 'stone', 'stone', 'Stone'],
+  [446, 'smooth_stone', 'smooth_stone', 'Smooth Stone'],
+  [456, 'cobblestone', 'cobblestone', 'Cobblestone'],
+  [466, 'mossy_cobblestone', 'mossy_cobblestone', 'Mossy Cobblestone'],
+  [476, 'stone_brick', 'stone_bricks', 'Stone Brick'],
+  [486, 'mossy_stone_brick', 'mossy_stone_bricks', 'Mossy Stone Brick'],
+  [496, 'brick', 'bricks', 'Brick'],
+  [506, 'polished_andesite', 'polished_andesite', 'Polished Andesite'],
+  [516, 'polished_diorite', 'polished_diorite', 'Polished Diorite'],
+  [526, 'polished_granite', 'polished_granite', 'Polished Granite'],
+
+  // Deep and dark
+  [536, 'cobbled_deepslate', 'cobbled_deepslate', 'Cobbled Deepslate'],
+  [546, 'deepslate_brick', 'deepslate_bricks', 'Deepslate Brick'],
+  [556, 'polished_blackstone_brick', 'polished_blackstone_bricks', 'Polished Blackstone Brick'],
+  [566, 'nether_brick', 'nether_bricks', 'Nether Brick'],
+  [576, 'end_stone_brick', 'end_stone_bricks', 'End Stone Brick'],
+
+  // Decorative
+  [586, 'purpur', 'purpur_block', 'Purpur'],
+  [596, 'prismarine_brick', 'prismarine_bricks', 'Prismarine Brick'],
+  [606, 'dark_prismarine', 'dark_prismarine', 'Dark Prismarine'],
+  [616, 'smooth_quartz', 'smooth_quartz', 'Smooth Quartz'],
+  [626, 'smooth_sandstone', 'smooth_sandstone', 'Smooth Sandstone'],
+]
+
+const NON_CUBE = NON_CUBE_FAMILIES.flatMap(
+  ([from, prefix, sourceKey, label]) => nonCubeSet(from, prefix, CUBE_BY_KEY.get(sourceKey), label))
+
+export const BLOCK_TYPES = normaliseHardness([...CUBES, ...NON_CUBE])
 
 // Ids must be contiguous from 1. noa fills any gap with a silently-registered
 // filler block that has no material, which renders as untextured white and is
@@ -699,8 +829,47 @@ export function registerBlocks(noa) {
     })
   }
 
+  /*
+   * Non-cube blocks need a Babylon mesh per id, so the scene and a material
+   * cache are built once here rather than per block.
+   *
+   * `shapeById` is a sparse id -> boxes array. It is the ONE piece of state
+   * both the renderer and the collision resolver read, which is what stops a
+   * stair from being drawn one shape and collided as another.
+   */
+  const scene = noa.rendering.getScene()
+  const materialFor = createMaterialCache(noa)
+  const shapeById = []
+
   const ids = {}
   for (const def of BLOCK_TYPES) {
+    if (def.shape) {
+      const boxes = SHAPE_BOXES[def.shape]
+      if (!boxes) throw new Error(`block "${def.key}" wants unknown shape "${def.shape}"`)
+      shapeById[def.id] = boxes
+      ids[def.key] = noa.registry.registerBlock(def.id, {
+        /*
+         * NO `material`, and this is not an oversight. noa's greedy mesher
+         * never consults the object-block lookup: it draws a terrain face for
+         * any block that HAS a face material, `blockMesh` or not. Passing one
+         * here gets you a full cube drawn over the top of the custom mesh, and
+         * the symptom is a slab that looks exactly like a normal block while
+         * colliding correctly as half a one -- which took a close-up
+         * side-by-side against a real cube to notice at all.
+         *
+         * The texture still reaches the mesh, via `materialFor(def.all)`; it
+         * just doesn't go through noa's terrain path.
+         */
+        // solid:false hands collision entirely to blockMeshes.js -- noa's
+        // sweep only understands whole cubes, and a half-height cube is worse
+        // than no cube. opaque:false so the terrain next door still draws the
+        // faces a slab doesn't actually cover.
+        solid: false,
+        opaque: false,
+        blockMesh: buildShapeMesh(scene, def.key, boxes, materialFor(def.all)),
+      })
+      continue
+    }
     ids[def.key] = noa.registry.registerBlock(def.id, {
       material: faceMaterials(def),
       // A non-opaque block must not have its neighbours' faces culled, or you
@@ -708,5 +877,19 @@ export function registerBlocks(noa) {
       opaque: !def.alpha,
     })
   }
+
+  /*
+   * noa's crosshair raycast picks "any solid voxel" by default, and non-cube
+   * blocks are deliberately not solid -- without this you would look straight
+   * through a staircase and be unable to mine one. The pick stays voxel-
+   * granular either way: aiming at the empty half of a slab's cell still
+   * targets the slab, because fast-voxel-raycast has no notion of a shape.
+   */
+  const solidity = noa.registry.getBlockSolidity
+  noa.blockTargetIdCheck = (id) => solidity(id) || shapeById[id] !== undefined
+
+  installNonCubeCollision(noa, shapeById)
+  installPlacementOrientation(noa, NON_CUBE_VARIANTS)
+
   return ids
 }

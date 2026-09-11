@@ -1,0 +1,669 @@
+/*
+ * Non-cube blocks: geometry, and the collision noa doesn't give us.
+ *
+ * blocks.js owns WHICH non-cube blocks exist. This file owns what they look
+ * like and what it's like to walk on them.
+ *
+ *
+ * WHAT NOA ACTUALLY SUPPORTS
+ *
+ * Rendering: `registerBlock(id, { blockMesh })` hands noa a Babylon mesh. Every
+ * voxel of that id becomes a THIN INSTANCE of that one mesh, managed per chunk
+ * by lib/objectMesher.js, drawn in one call per block id. It never touches the
+ * terrain mesher, so a non-cube block gets no greedy merging and no ambient
+ * occlusion -- AO is baked into terrain vertex colours during greedy meshing
+ * and there is no hook to ask for it here. Lighting still matches, because
+ * terrain and these meshes are both lit by the same Babylon DirectionalLight
+ * off the same normals; only the corner darkening is missing.
+ *
+ * Collision: NOTHING. noa's physics is
+ * voxel-physics-engine -> voxel-aabb-sweep, and the sweep's only question about
+ * the world is `testSolid(x, y, z) -> boolean` over INTEGER voxel coords. A
+ * voxel is a full unit cube or it is nothing. There is no per-block AABB
+ * anywhere in noa, voxel-physics-engine or voxel-aabb-sweep, and
+ * `registerBlock`'s `solid` flag is a boolean, not a shape.
+ *
+ * So the three options were:
+ *   1. `solid: true`  -- a slab you stand half a block above. Visibly wrong.
+ *   2. `solid: false` -- a slab you fall through. Visibly wrong.
+ *   3. Resolve sub-voxel collision ourselves. Done here.
+ *
+ * Non-cube blocks are registered `solid: false`, so noa's sweep ignores them
+ * completely, and this module owns 100% of their collision. Full cubes are
+ * untouched -- they stay on noa's swept path, which is the one that decides
+ * whether parkour feels right, and which nothing here should be trusted with.
+ *
+ * The hook is `noa.physics.tick`, wrapped rather than replaced. Engine.tick
+ * runs physics BEFORE the entity systems that read `body.resting` (movement's
+ * jump check, survival's fall damage, physics.js's footsteps), so correcting
+ * inside that wrapper is indistinguishable from noa having done it. A
+ * `noa.on('tick')` listener would have been the polite hook and is too late:
+ * it fires last, after everything has already read a stale resting flag.
+ *
+ * Rejected: noa's own `body.autoStep`, which steps up to the next whole voxel
+ * boundary. That is a 1-block step, which would let you walk up the parkour
+ * course. Minecraft's step height is 0.6 and it is per-obstacle, which is
+ * exactly what STEP_HEIGHT below is.
+ */
+
+import { Mesh } from '@babylonjs/core/Meshes/mesh.js'
+import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData.js'
+import { Texture } from '@babylonjs/core/Materials/Textures/texture.js'
+
+/* ------------------------------------------------------------------ *
+ * Shapes.
+ *
+ * A shape is a list of boxes in block-local coordinates, [x0,y0,z0,x1,y1,z1]
+ * with every component in 0..1. One list drives BOTH the mesh and the
+ * collision, which is the only reason the two can't drift apart -- and
+ * "the stairs render one way and collide another" is precisely the bug this
+ * whole file exists to avoid.
+ *
+ * These are Minecraft's own boxes. A stair is a bottom slab plus a half-depth
+ * step on the side it FACES: vanilla's stairs.json is
+ * `from [0,0,0] to [16,8,16]` plus `from [8,8,0] to [16,16,16]` at facing=east,
+ * so the tall half is on the facing side and you climb toward it.
+ *
+ * NOT modelled: stair corner shapes (inner/outer). Vanilla picks those from
+ * the two neighbouring stairs, which is neighbour-dependent GEOMETRY -- see
+ * the note about fences at the bottom of this file for why that is a
+ * different and much larger problem than these two.
+ * ------------------------------------------------------------------ */
+
+/** Unit vectors for the four horizontal facings, in Minecraft's names. */
+export const FACINGS = {
+  north: [0, 0, -1],
+  south: [0, 0, 1],
+  west: [-1, 0, 0],
+  east: [1, 0, 0],
+}
+
+const slabBoxes = (half) =>
+  half === 'top' ? [[0, 0.5, 0, 1, 1, 1]] : [[0, 0, 0, 1, 0.5, 1]]
+
+function stairBoxes(facing, half) {
+  // The step sits in the half of the footprint the stair faces...
+  const [fx, , fz] = FACINGS[facing]
+  const x0 = fx > 0 ? 0.5 : 0, x1 = fx < 0 ? 0.5 : 1
+  const z0 = fz > 0 ? 0.5 : 0, z1 = fz < 0 ? 0.5 : 1
+  // ...and "upside down" is the whole model mirrored through y = 0.5.
+  return half === 'top'
+    ? [[0, 0.5, 0, 1, 1, 1], [x0, 0, z0, x1, 0.5, z1]]
+    : [[0, 0, 0, 1, 0.5, 1], [x0, 0.5, z0, x1, 1, z1]]
+}
+
+/** shape key -> boxes. Keys are `slab_<half>` and `stairs_<facing>_<half>`. */
+export const SHAPE_BOXES = {
+  slab_bottom: slabBoxes('bottom'),
+  slab_top: slabBoxes('top'),
+}
+for (const facing of Object.keys(FACINGS)) {
+  for (const half of ['bottom', 'top']) {
+    SHAPE_BOXES[`stairs_${facing}_${half}`] = stairBoxes(facing, half)
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Meshing.
+ *
+ * Hand-built VertexData rather than CreateBox, for two reasons that are both
+ * about UVs. Minecraft cuts a cuboid's texture from the SLICE of the parent
+ * block's texture that the cuboid occupies -- a bottom slab's side shows the
+ * bottom half of the texture, not the whole texture squashed to half height --
+ * and Babylon's box builder can only put an axis-aligned rectangle on a whole
+ * face. Second, CreateBox's per-face UV orientation is inconsistent between
+ * its `wrap` and non-`wrap` layouts, so "which way up is this texture" would
+ * have been a per-face lookup table anyway.
+ * ------------------------------------------------------------------ */
+
+/*
+ * Per face: outward normal, and the block-local axes that texture u and v
+ * increase along. u runs right and v runs up as seen from OUTSIDE the block,
+ * with the top face's v pointing north -- Minecraft's convention. Babylon
+ * uploads textures with UNPACK_FLIP_Y, so v = 1 is the top row of the image.
+ */
+const FACES = [
+  { n: [1, 0, 0], u: [0, 0, -1], v: [0, 1, 0] },   // +x  east
+  { n: [-1, 0, 0], u: [0, 0, 1], v: [0, 1, 0] },   // -x  west
+  { n: [0, 1, 0], u: [1, 0, 0], v: [0, 0, -1] },   // +y  top
+  { n: [0, -1, 0], u: [1, 0, 0], v: [0, 0, 1] },   // -y  bottom
+  { n: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] },    // +z  south
+  { n: [0, 0, -1], u: [-1, 0, 0], v: [0, 1, 0] },  // -z  north
+]
+
+const axisOf = (vec) => (vec[0] ? 0 : vec[1] ? 1 : 2)
+
+/** Where a point lands on a face's u or v axis, as a 0..1 texture coord. */
+const coordAlong = (p, dir) => {
+  const c = p[axisOf(dir)]
+  return (dir[0] + dir[1] + dir[2]) > 0 ? c : 1 - c
+}
+
+/**
+ * Is this face buried inside another box of the same shape?
+ *
+ * Only matters for stairs, whose two boxes meet at y = 0.5. Backface culling
+ * would hide the pair anyway, so this is about not paying for geometry nobody
+ * can ever see rather than about correctness.
+ */
+function faceIsInterior(box, face, others) {
+  const a = axisOf(face.n)
+  const plane = face.n[a] > 0 ? box[a + 3] : box[a]
+  for (const o of others) {
+    if (o === box) continue
+    // The neighbour must start exactly where this face ends...
+    const meets = face.n[a] > 0 ? o[a] === plane : o[a + 3] === plane
+    if (!meets) continue
+    // ...and cover it completely on the other two axes.
+    let covered = true
+    for (let i = 0; i < 3; i++) {
+      if (i === a) continue
+      if (o[i] > box[i] || o[i + 3] < box[i + 3]) { covered = false; break }
+    }
+    if (covered) return true
+  }
+  return false
+}
+
+/**
+ * Build one Babylon mesh for a shape.
+ *
+ * The mesh's local frame is noa's: objectMesher puts the instance origin at
+ * (voxel x + 0.5, voxel y, voxel z + 0.5), so x and z run -0.5..0.5 and y runs
+ * 0..1.
+ *
+ * EVERY CALL MUST PRODUCE A FRESH GEOMETRY. objectMesher dedupes its instance
+ * managers by `mesh.geometry` identity, so two block ids sharing one geometry
+ * would silently collapse into one manager and one of them would render as the
+ * other. That rules out `mesh.clone()` for, say, the four facings of a stair.
+ */
+export function buildShapeMesh(scene, name, boxes, material) {
+  const positions = [], normals = [], uvs = [], indices = []
+
+  for (const box of boxes) {
+    for (const face of FACES) {
+      if (faceIsInterior(box, face, boxes)) continue
+
+      const a = axisOf(face.n)
+      const plane = face.n[a] > 0 ? box[a + 3] : box[a]
+      const ua = axisOf(face.u), va = axisOf(face.v)
+
+      // Corner order is [right-bottom, left-bottom, left-top, right-top] and
+      // the triangles are 0-1-2 / 0-2-3, which is clockwise seen from outside
+      // -- Babylon's front-face winding in its default left-handed scene.
+      const uPos = face.u[ua] > 0 ? [box[ua + 3], box[ua]] : [box[ua], box[ua + 3]]
+      const vPos = face.v[va] > 0 ? [box[va], box[va + 3]] : [box[va + 3], box[va]]
+      const corners = [
+        [uPos[0], vPos[0]], [uPos[1], vPos[0]], [uPos[1], vPos[1]], [uPos[0], vPos[1]],
+      ]
+
+      const first = positions.length / 3
+      for (const [uc, vc] of corners) {
+        const p = []
+        p[a] = plane
+        p[ua] = uc
+        p[va] = vc
+        positions.push(p[0] - 0.5, p[1], p[2] - 0.5)
+        normals.push(face.n[0], face.n[1], face.n[2])
+        uvs.push(coordAlong(p, face.u), coordAlong(p, face.v))
+      }
+      indices.push(first, first + 1, first + 2, first, first + 2, first + 3)
+    }
+  }
+
+  const mesh = new Mesh(name, scene)
+  const data = new VertexData()
+  data.positions = positions
+  data.normals = normals
+  data.uvs = uvs
+  data.indices = indices
+  data.applyToMesh(mesh)
+  mesh.material = material
+  return mesh
+}
+
+/**
+ * One Babylon material per texture NAME, shared across every shape that uses
+ * it -- 10 oak stair/slab variants are 10 meshes but one material.
+ *
+ * Road not taken: noa's own paged atlas material, which would have made these
+ * pixel-identical to terrain and cost zero extra texture fetches. It is not
+ * reachable: `TerrainMatManager` and the Babylon material plugin that samples
+ * the atlas are both closure-private inside noa's terrainMesher, and its
+ * materials are created lazily while terrain meshes, so there is nothing to
+ * ask for at registration time. The per-name 16x16 PNGs used here are already
+ * emitted by the build for blockIcon.js's CSS cubes.
+ *
+ * Note this means non-cube blocks add ZERO layers to the paged atlas. The
+ * 128-layers-per-page budget is untouched by anything in this file.
+ */
+export function createMaterialCache(noa) {
+  const scene = noa.rendering.getScene()
+  // noa prefixes this onto every material's textureURL; reuse it so both
+  // paths agree about where textures live.
+  const path = noa.registry._texturePath ?? '/textures/'
+  const cache = new Map()
+  return (textureName) => {
+    let mat = cache.get(textureName)
+    if (mat) return mat
+    mat = noa.rendering.makeStandardMaterial(`noncube-${textureName}`)
+    // NEAREST, or 16x16 pixel art turns to soup the moment it is minified.
+    mat.diffuseTexture = new Texture(
+      `${path}${textureName}.png`, scene, false, false, Texture.NEAREST_SAMPLINGMODE)
+    mat.freeze()
+    cache.set(textureName, mat)
+    return mat
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Collision.
+ * ------------------------------------------------------------------ */
+
+/** Minecraft's player step height: onto a slab, never onto a full block. */
+const STEP_HEIGHT = 0.6
+
+/*
+ * Slop, in blocks. Big enough to swallow the float error in a player who has
+ * been resting on y = 64.5 for a thousand ticks, small enough to be invisible.
+ */
+const EPS = 1e-4
+
+/*
+ * Cap on how far a single tick's sweep is allowed to scan. A player falling
+ * the full height of the island tops out near two blocks per tick, so this is
+ * pure insurance against a teleport turning one tick into a million voxel
+ * reads.
+ */
+const MAX_SCAN = 32
+
+const overlaps = (aMin, aMax, bMin, bMax) => aMin < bMax - EPS && aMax > bMin + EPS
+
+/**
+ * Every sub-box of every non-cube block intersecting a region, in noa's LOCAL
+ * (origin-rebased) coordinates -- the same frame the physics bodies live in.
+ */
+function collectBoxes(noa, shapeById, lo, hi, out) {
+  out.length = 0
+  const off = noa.worldOriginOffset
+  const world = noa.world
+  for (let i = 0; i < 3; i++) {
+    if (hi[i] - lo[i] > MAX_SCAN) return out
+  }
+  for (let x = lo[0]; x <= hi[0]; x++) {
+    for (let y = lo[1]; y <= hi[1]; y++) {
+      for (let z = lo[2]; z <= hi[2]; z++) {
+        const id = world.getBlockID(x + off[0], y + off[1], z + off[2])
+        const boxes = shapeById[id]
+        if (!boxes) continue
+        for (const b of boxes) {
+          out.push([x + b[0], y + b[1], z + b[2], x + b[3], y + b[4], z + b[5]])
+        }
+      }
+    }
+  }
+  return out
+}
+
+const boxIntersectsBody = (b, base, max) =>
+  overlaps(base[0], max[0], b[0], b[3]) &&
+  overlaps(base[1], max[1], b[1], b[4]) &&
+  overlaps(base[2], max[2], b[2], b[5])
+
+/** Would the body, moved to this Y, be clear of every sub-box and of terrain? */
+function fitsAt(noa, boxes, base, max, y) {
+  const lo = [base[0], y, base[2]]
+  const hi = [max[0], y + (max[1] - base[1]), max[2]]
+  for (const b of boxes) {
+    if (boxIntersectsBody(b, lo, hi)) return false
+  }
+  // Full cubes are still noa's, so ask noa -- and ask through the live
+  // `testSolid`, so a spectator's noclip override is honoured here too.
+  const solid = noa.physics.testSolid
+  for (let x = Math.floor(lo[0]); x <= Math.floor(hi[0] - EPS); x++) {
+    for (let y2 = Math.floor(lo[1]); y2 <= Math.floor(hi[1] - EPS); y2++) {
+      for (let z = Math.floor(lo[2]); z <= Math.floor(hi[2] - EPS); z++) {
+        if (solid(x, y2, z)) return false
+      }
+    }
+  }
+  return true
+}
+
+/**
+ * The top of the sub-box the body is standing on, or null.
+ *
+ * "Standing on" is a box whose top is exactly underfoot, which is the one
+ * shape all three ways of getting there share: landing on it, being stepped
+ * up onto it, and having simply not moved since last tick.
+ */
+function findSupport(boxes, base, max) {
+  for (const b of boxes) {
+    if (Math.abs(b[4] - base[1]) > EPS) continue
+    if (!overlaps(base[0], max[0], b[0], b[3])) continue
+    if (!overlaps(base[2], max[2], b[2], b[5])) continue
+    return b[4]
+  }
+  return null
+}
+
+/**
+ * Resolve one body against the sub-boxes, given where it was before noa moved
+ * it. Mutates the body's AABB, velocity and resting flags exactly as
+ * voxel-physics-engine's own collision pass would, and returns the height of
+ * the sub-box it ends up standing on (or null).
+ */
+function resolveBody(noa, shapeById, body, prevBase, scratch) {
+  const box = body.aabb
+  const base = box.base, max = box.max
+
+  /*
+   * The -EPS on `lo` is load-bearing, not defensive rounding. A body standing
+   * on a stair's upper step rests at a whole number, and the box holding it up
+   * lives in the voxel BELOW that number -- so flooring the feet exactly would
+   * scan from the voxel above its own support and conclude it was in mid-air.
+   * The symptom was a player who climbed two steps and then refused the third.
+   */
+  const lo = [
+    Math.floor(Math.min(base[0], prevBase[0]) - EPS),
+    Math.floor(Math.min(base[1], prevBase[1]) - EPS),
+    Math.floor(Math.min(base[2], prevBase[2]) - EPS),
+  ]
+  const hi = [
+    Math.floor(Math.max(max[0], prevBase[0] + box.vec[0]) - EPS),
+    Math.floor(Math.max(max[1], prevBase[1] + box.vec[1]) - EPS),
+    Math.floor(Math.max(max[2], prevBase[2] + box.vec[2]) - EPS),
+  ]
+  const boxes = collectBoxes(noa, shapeById, lo, hi, scratch)
+  if (boxes.length === 0) return null
+
+  const shift = (axis, d) => { base[axis] += d; max[axis] += d }
+
+  /*
+   * 1. Vertical, SWEPT rather than by penetration depth.
+   *
+   * Penetration alone would let a fast fall tunnel straight through a slab:
+   * at 50 blocks/sec a tick moves nearly two blocks and the half-block target
+   * is simply never overlapped on any frame we look at. Comparing where the
+   * feet WERE against where they are now catches the crossing regardless of
+   * speed, which is the same thing voxel-aabb-sweep does for whole cubes.
+   */
+  const dy = base[1] - prevBase[1]
+  if (dy < 0) {
+    let landing = -Infinity
+    for (const b of boxes) {
+      if (!overlaps(base[0], max[0], b[0], b[3])) continue
+      if (!overlaps(base[2], max[2], b[2], b[5])) continue
+      if (b[4] <= prevBase[1] + EPS && b[4] > base[1] - EPS) landing = Math.max(landing, b[4])
+    }
+    if (landing > -Infinity) {
+      shift(1, landing - base[1])
+      body.velocity[1] = 0
+      body.resting[1] = -1
+    }
+  } else if (dy > 0) {
+    let ceiling = Infinity
+    const prevTop = prevBase[1] + box.vec[1]
+    for (const b of boxes) {
+      if (!overlaps(base[0], max[0], b[0], b[3])) continue
+      if (!overlaps(base[2], max[2], b[2], b[5])) continue
+      if (b[1] >= prevTop - EPS && b[1] < max[1] + EPS) ceiling = Math.min(ceiling, b[1])
+    }
+    if (ceiling < Infinity) {
+      shift(1, ceiling - max[1])
+      body.velocity[1] = 0
+      body.resting[1] = 1
+    }
+  }
+
+  /*
+   * Grounded state has to be settled BEFORE the horizontal pass, because
+   * that is what decides whether a step is climbed or walked into. It cannot
+   * wait until the end: a body held up by the normal force below never moves
+   * vertically at all, so neither branch above fires and `resting[1]` would
+   * still read as airborne -- which is exactly the bug that made a player on
+   * a slab refuse to step onto the stair in front of them.
+   */
+  if (findSupport(boxes, base, max) !== null) body.resting[1] = -1
+
+  /*
+   * 2. Horizontal, by penetration -- and this is where stairs are climbed.
+   *
+   * Horizontal speed is bounded by sprinting (5.6 blocks/sec, under a fifth of
+   * a block per tick), so there is nothing to tunnel through and penetration
+   * depth is both simpler and stabler than a second sweep.
+   *
+   * The loop runs a few times because resolving against one box can push the
+   * body into another -- an inside corner of two stairs is the ordinary case.
+   */
+  for (let pass = 0; pass < 4; pass++) {
+    let hit = null
+    let worst = 0
+    for (const b of boxes) {
+      if (!boxIntersectsBody(b, base, max)) continue
+      // Pick the deepest intrusion, so a graze never wins over a real wall.
+      const depth = Math.min(max[0] - b[0], b[3] - base[0], max[2] - b[2], b[5] - base[2])
+      if (depth > worst) { worst = depth; hit = b }
+    }
+    if (!hit) break
+
+    // Step up, if this is a step and not a wall. Minecraft allows it whenever
+    // the rise is within the step height; requiring `resting[1] < 0` as well
+    // keeps a jump from being converted into a free climb mid-air.
+    const rise = hit[4] - base[1]
+    if (body.resting[1] < 0 && rise > EPS && rise <= STEP_HEIGHT &&
+        fitsAt(noa, boxes, base, max, hit[4])) {
+      shift(1, rise)
+      continue
+    }
+
+    // Otherwise push out along whichever horizontal axis is least buried.
+    // Four candidate escapes, signed: negative moves the body toward -axis.
+    const outs = [
+      { axis: 0, d: hit[0] - max[0] }, { axis: 0, d: hit[3] - base[0] },
+      { axis: 2, d: hit[2] - max[2] }, { axis: 2, d: hit[5] - base[2] },
+    ]
+    let best = outs[0]
+    for (const o of outs) if (Math.abs(o.d) < Math.abs(best.d)) best = o
+    shift(best.axis, best.d)
+    body.velocity[best.axis] = 0
+    body.resting[best.axis] = best.d > 0 ? -1 : 1
+  }
+
+  // 3. Asked again, because a step-up moved the body onto a different box.
+  const support = findSupport(boxes, base, max)
+  if (support !== null) body.resting[1] = -1
+  return support
+}
+
+/**
+ * The lateral friction noa would have derived from a tick of gravity.
+ *
+ * Copied from voxel-physics-engine's applyFrictionByAxis, because supplying
+ * the normal force (see below) removes the very velocity change noa computes
+ * standing friction from -- without this you would coast across a slab floor
+ * like ice the moment you let go of the key.
+ */
+function applyStandingFriction(body, dvFromGravity) {
+  if (!body.friction) return
+  const dvMax = Math.abs(body.friction * dvFromGravity)
+  const vCurr = Math.hypot(body.velocity[0], body.velocity[2])
+  if (vCurr < 1e-5) return
+  const scaler = vCurr > dvMax ? (vCurr - dvMax) / vCurr : 0
+  body.velocity[0] *= scaler
+  body.velocity[2] *= scaler
+}
+
+/**
+ * Wrap noa's physics step so non-cube blocks collide.
+ *
+ * @param {*} noa
+ * @param {any[]} shapeById sparse array: block id -> boxes, or undefined
+ */
+export function installNonCubeCollision(noa, shapeById) {
+  const physics = noa.physics
+  const originalTick = physics.tick.bind(physics)
+
+  /*
+   * physics.js's spectator noclip works by swapping `noa.physics.testSolid`
+   * for one that says nothing is solid. That is the whole of noclip, and it
+   * would leave a spectator stopped dead by a slab unless we notice. Comparing
+   * against the function we captured is the cheapest honest test for "someone
+   * else is driving solidity now".
+   */
+  const realSolidTest = physics.testSolid
+
+  const prev = new WeakMap()
+  /** body -> the sub-box top it was resting on at the end of the last tick. */
+  const support = new WeakMap()
+  const propped = new Set()
+  const scratch = []
+
+  physics.tick = (dt) => {
+    propped.clear()
+    for (const body of physics.bodies) {
+      let p = prev.get(body)
+      if (!p) prev.set(body, p = [0, 0, 0])
+      p[0] = body.aabb.base[0]
+      p[1] = body.aabb.base[1]
+      p[2] = body.aabb.base[2]
+
+      /*
+       * THE NORMAL FORCE, and the subtlest thing in this file.
+       *
+       * Correcting after the fact is not enough on its own. noa still runs a
+       * full tick of gravity first, so a body standing on a slab dips ~0.035
+       * blocks into the voxel below before we put it back -- and during that
+       * dip noa's OWN cube sweep is running. Any solid block flush under the
+       * surface you are standing on (the wall under a staircase, the stone
+       * beside a top slab) is then a wall at ankle height, and you stop dead
+       * against thin air. Measured: a player climbing a supported staircase
+       * froze at exactly the voxel boundary, every time.
+       *
+       * So instead of letting the dip happen and fixing it, don't let it
+       * happen: a body resting on a sub-box gets the upward force its support
+       * is exerting on it, which is what a floor physically does and what noa
+       * does implicitly for solid voxels. Net vertical acceleration is zero
+       * and the body holds its exact height through the sweep.
+       *
+       * NOT applied when an upward impulse is pending, which is the tick a
+       * jump launches. The jump impulse in physics.js is CALIBRATED against
+       * one tick of gravity being applied at launch (see its comment);
+       * cancelling gravity on that tick would quietly raise every jump apex
+       * and break the parkour the whole world is designed around.
+       */
+      const h = support.get(body)
+      if (h === undefined || body.mass <= 0) continue
+      if (Math.abs(body.aabb.base[1] - h) > EPS) continue
+      if (body.velocity[1] > 0 || body._impulses[1] > 0) continue
+      body.velocity[1] = 0
+      body.applyForce([0, -physics.gravity[1] * body.gravityMultiplier * body.mass, 0])
+      propped.add(body)
+    }
+
+    originalTick(dt)
+
+    if (physics.testSolid !== realSolidTest) return
+    const dvFromGravity = physics.gravity[1] * (dt / 1000)
+    for (const body of physics.bodies) {
+      if (body.mass <= 0) continue
+      const h = resolveBody(noa, shapeById, body, prev.get(body), scratch)
+      if (h === null) support.delete(body)
+      else support.set(body, h)
+      if (propped.has(body)) applyStandingFriction(body, dvFromGravity * body.gravityMultiplier)
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Placement orientation.
+ *
+ * Stairs and slabs are only worth having if placing one puts it the way you
+ * meant. That decision belongs to the code that handles a right-click, which
+ * is interact.js -- and interact.js has no concept of a block with variants
+ * and isn't this change's to edit. So the rewrite happens at the other end,
+ * in `noa.setBlock`, which is the single funnel every placement passes
+ * through (interact.js -> authority.js -> main.js's world adapter -> here).
+ *
+ * The cost of doing it here rather than at the click: `/setblock` and `/fill`
+ * go through the same funnel, so filling a region with stairs orients them all
+ * to wherever you happen to be looking. That is odd but harmless, and only the
+ * FAMILY'S CANONICAL ID is rewritten -- a specific variant passes through
+ * untouched, so importing a real Minecraft build (which is the point of all
+ * this) can address every state directly.
+ * ------------------------------------------------------------------ */
+
+const TWO_PI = Math.PI * 2
+
+/** Player heading -> cardinal direction. noa's forward is (sin h, 0, cos h). */
+export function headingToFacing(heading) {
+  const h = ((heading % TWO_PI) + TWO_PI) % TWO_PI
+  const octant = Math.round(h / (Math.PI / 2)) % 4
+  return ['south', 'east', 'north', 'west'][octant]
+}
+
+/**
+ * Which half a slab or stair lands in, from the face that was clicked and
+ * where on it. Minecraft's rule exactly: the top face gives you a bottom
+ * slab, the bottom face gives you a top slab, and a side face splits on
+ * whether you clicked above or below its midpoint.
+ */
+export function halfFromTarget(normal, hitY) {
+  if (normal[1] > 0) return 'bottom'
+  if (normal[1] < 0) return 'top'
+  return (hitY - Math.floor(hitY)) > 0.5 ? 'top' : 'bottom'
+}
+
+/**
+ * @param {*} noa
+ * @param {Map<number, (facing: string, half: string) => number>} variantOf
+ *        canonical block id -> resolver for the id to place instead
+ */
+export function installPlacementOrientation(noa, variantOf) {
+  const originalSetBlock = noa.setBlock.bind(noa)
+
+  noa.setBlock = (id, x, y, z) => {
+    const resolve = variantOf.get(id)
+    if (!resolve) return originalSetBlock(id, x, y, z)
+
+    const target = noa.targetedBlock
+    // No target means this came from a command, not a click. Face the way the
+    // player is looking and put it in the bottom half, which is what vanilla's
+    // /setblock defaults to.
+    const normal = target ? target.normal : [0, 1, 0]
+    // `_pickResult.position` is the precise hit point from the pick that
+    // produced `targetedBlock` this tick -- the sub-voxel detail that
+    // `targetedBlock` itself rounds away.
+    const hitY = target ? noa._pickResult.position[1] : 0
+
+    const facing = headingToFacing(noa.camera.heading)
+    return originalSetBlock(resolve(facing, halfFromTarget(normal, hitY)), x, y, z)
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Why there are no fences, walls, panes or bars here.
+ *
+ * Those four connect to their neighbours, and a connection is different
+ * GEOMETRY, not a different transform. noa draws every voxel of a block id as
+ * a thin instance of one shared mesh: objectMesher's `onCustomMeshCreate` hook
+ * hands you a TransformNode, so position, rotation and scale can vary per
+ * voxel and vertices cannot. A fence post with two arms and a fence post with
+ * three are not related by any transform.
+ *
+ * That leaves three ways out, and all three are a bigger project than this one:
+ *
+ *   - 16 block ids per fence material, one per connection bitmask, rebuilt on
+ *     every neighbour change. The ids are affordable; the rewriting is not,
+ *     because block ids are save data and a fence would change id whenever
+ *     something was built next to it.
+ *   - A parallel instanced-mesh system outside noa, driven by the registry's
+ *     onSet/onUnset/onLoad/onUnload handlers. Workable, and it has to
+ *     reimplement objectMesher's origin rebasing -- noa shifts every instance
+ *     matrix when the player wanders 25 blocks from the origin and offers no
+ *     hook to shift ours with them.
+ *   - Ship them unconnected. A lone post looks like a stick and a lone pane
+ *     looks like a pane; a run of either looks broken.
+ *
+ * Stairs and slabs need none of that, which is why they are what shipped.
+ * ------------------------------------------------------------------ */

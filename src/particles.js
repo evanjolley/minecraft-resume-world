@@ -1,6 +1,7 @@
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
+import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { BLOCK_BY_ID } from './blocks.js'
 
@@ -416,5 +417,444 @@ export function installParticles(noa, deps = {}) {
     get meshes() { return systems.size },
     get capacity() { return systems.size * POOL },
     dispose() { unsubscribe.forEach(fn => fn()) },
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Rain
+ * ------------------------------------------------------------------ *
+ *
+ * Rain lives in this file because the expensive half of it is already solved
+ * here: ONE mesh holding a fixed pool of quads, rewritten each frame, so a
+ * downpour costs buffer writes and a single draw call instead of two thousand
+ * meshes. Nothing below allocates after install.
+ *
+ * WHAT MINECRAFT ACTUALLY DRAWS, and where this departs from it. Vanilla's
+ * renderSnowAndRain walks the columns within 10 blocks of the camera (5 on
+ * Fast) and draws ONE tall quad per column with the rain texture scrolling
+ * down it. That is cheaper still, and it is not what this does, because a
+ * scrolling texture cannot be interrupted: a drop has to stop where it lands,
+ * and the splash when it lands is half of what makes rain read as weather
+ * rather than as a filter over the lens. So: discrete drops, on vanilla's
+ * radius and vanilla's shelter rule.
+ *
+ * THE SHELTER RULE is the detail that separates rain from a screen effect.
+ * Vanilla clamps each column's rain to start ABOVE that column's heightmap --
+ * max(camY - 10, topBlock) up to max(camY + 10, topBlock) -- and skips the
+ * column entirely when those two are equal. Two behaviours fall out of that
+ * one line: rain lands ON a roof instead of through it, and standing under
+ * the roof leaves you dry while you still watch it fall outside. Both are
+ * reproduced here by scanning each column for its highest solid block.
+ *
+ * Billboarding is around Y ONLY. A drop that faced the camera fully would
+ * lean over as you looked up, and rain does not lean.
+ */
+
+// Vanilla's Fancy radius. Fast is 5, and there is no graphics setting here.
+const RAIN_RADIUS = 10
+
+/*
+ * Drops in flight at full intensity. 2000 across a 21x21 column footprint is
+ * about four per column, which is how dense vanilla reads at rainLevel 1. The
+ * pool is fixed and a slot is RECYCLED to the top of a fresh column when its
+ * drop lands -- growing on demand would put an allocation in the frame that is
+ * already doing the most work.
+ */
+const RAIN_POOL = 2000
+
+/*
+ * Blocks per second. Derived, not guessed: vanilla scrolls the rain texture by
+ * speed/32 v-units per tick where one v-unit is 4 blocks and speed is
+ * 3 + random() per column, so 0.375-0.5 blocks per tick -- 7.5 to 10 blocks a
+ * second. Splitting the difference rather than rolling it per drop, because
+ * vanilla's variation is per COLUMN and ours would be per drop, which reads as
+ * drizzle mixed into rain instead of as rain.
+ */
+const RAIN_SPEED = 9
+/*
+ * A drop is a long thin STREAK. The first pass had it 0.9 long and 0.09 wide
+ * and it read as a falling white bar, which is the same mistake as drawing
+ * rain with round droplets: at these speeds the eye sees a line, and the line
+ * has to be much longer than it is wide before it stops looking like an
+ * object. Vanilla gets this for free -- its quad is a full block wide and its
+ * texture is mostly transparent, with the streaks painted a pixel or two
+ * across.
+ */
+const RAIN_LENGTH = 1.6
+const RAIN_WIDTH = 0.05
+const SPLASH_LIFE = 0.18
+const SPLASH_SIZE = 0.09
+// A splash is the drop breaking up, not another drop: dimmer, and it fades.
+const SPLASH_ALPHA = 0.55
+
+/*
+ * The rain texture, drawn in code rather than shipped.
+ *
+ * Rejected: adding environment/rain.png to the texture build, which is the
+ * right home for it and is another agent's file this pass. A streak with soft
+ * ends is eight lines of arithmetic, and this is one of the few textures where
+ * the procedural version is genuinely as good as the drawn one.
+ */
+function rainTexture(scene) {
+  const W = 8, H = 32
+  const data = new Uint8Array(W * H * 4)
+  for (let y = 0; y < H; y++) {
+    // Soft at both ends, so a drop has no hard top or bottom edge.
+    const along = Math.sin((y / (H - 1)) * Math.PI)
+    for (let x = 0; x < W; x++) {
+      /*
+       * A narrow bright core with a fast falloff -- the fourth power, not the
+       * square. Squared left the quad reading as a solid bar with blurred
+       * sides; rain wants most of its own width to be empty.
+       */
+      const across = 1 - Math.abs((x + 0.5) / W - 0.5) * 2
+      const core = across * across * across * across
+      const i = (y * W + x) * 4
+      // Minecraft's rain is pale blue-grey, not white.
+      data[i] = 200; data[i + 1] = 215; data[i + 2] = 255
+      data[i + 3] = Math.round(210 * along * core)
+    }
+  }
+  return RawTexture.CreateRGBATexture(data, W, H, scene, false, false,
+    Texture.NEAREST_SAMPLINGMODE)
+}
+
+/**
+ * A camera-following volume of falling rain.
+ *
+ * Drives itself off `beforeRender`, and draws nothing at all until setLevel is
+ * given something above zero -- so the cost of not raining is one comparison
+ * per frame.
+ */
+export function createRainVolume(noa, { radius = RAIN_RADIUS, capacity = RAIN_POOL } = {}) {
+  const scene = noa.rendering.getScene()
+
+  const mat = noa.rendering.makeStandardMaterial('rain-mat')
+  mat.diffuseTexture = rainTexture(scene)
+  mat.diffuseTexture.hasAlpha = true
+  // Same unlit recipe as the block particles above: brightness rides on
+  // emissiveColor, which MULTIPLIES the texture when lighting is off.
+  mat.emissiveColor = new Color3(1, 1, 1)
+  mat.specularColor = new Color3(0, 0, 0)
+  mat.ambientColor = new Color3(0, 0, 0)
+  mat.disableLighting = true
+  mat.backFaceCulling = false
+  /*
+   * Blended, and deliberately NOT depth-writing. Rain is thousands of
+   * overlapping translucent quads in no particular order; if they write depth,
+   * whichever drop happened to draw first punches a hole in every drop behind
+   * it and the whole volume flickers as they fall. Depth write buys nothing
+   * here -- a drop is never something you need to see the far side of.
+   */
+  mat.disableDepthWrite = true
+
+  const positions = new Float32Array(capacity * 4 * 3)
+  const uvs = new Float32Array(capacity * 4 * 2)
+  const colors = new Float32Array(capacity * 4 * 4)
+  const indices = new Uint32Array(capacity * 6)
+  for (let i = 0; i < capacity; i++) {
+    const v = i * 4, o = i * 6
+    indices[o] = v; indices[o + 1] = v + 1; indices[o + 2] = v + 2
+    indices[o + 3] = v; indices[o + 4] = v + 2; indices[o + 5] = v + 3
+    // UVs are written once and never touched again -- every drop shows the
+    // whole texture -- so per-frame traffic is positions and alpha only.
+    const t = i * 8
+    uvs[t] = 0; uvs[t + 1] = 0
+    uvs[t + 2] = 1; uvs[t + 3] = 0
+    uvs[t + 4] = 1; uvs[t + 5] = 1
+    uvs[t + 6] = 0; uvs[t + 7] = 1
+    // Vertex colour carries per-drop alpha; rgb never changes.
+    const c = i * 16
+    for (let k = 0; k < 4; k++) {
+      colors[c + k * 4] = 1; colors[c + k * 4 + 1] = 1; colors[c + k * 4 + 2] = 1
+      colors[c + k * 4 + 3] = 0
+    }
+  }
+
+  const mesh = new Mesh('rain', scene)
+  const vd = new VertexData()
+  vd.positions = positions
+  vd.uvs = uvs
+  vd.colors = colors
+  vd.indices = indices
+  vd.applyToMesh(mesh, true) // updatable, or updateVerticesData is a silent no-op
+  mesh.material = mat
+  mesh.isPickable = false
+  // Without this the alpha channel of the colour buffer is ignored and every
+  // drop draws at full strength, fade and all.
+  mesh.hasVertexAlpha = true
+  // REQUIRED, same as every other mesh in this repo: a mesh noa's selection
+  // octree has never heard of is silently never drawn.
+  noa.rendering.addMeshToScene(mesh)
+  mesh.alwaysSelectAsActiveMesh = true
+  mesh.setEnabled(false)
+
+  /* ---- which columns rain falls in ---- */
+
+  const span = radius * 2 + 1
+  const CELLS = span * span
+  /*
+   * Per column of the footprint: the y of its highest solid block within reach
+   * (-Infinity for open sky), and whether the column is CLOSED -- solid right
+   * at the top of the volume, meaning a roof or a cave ceiling with no open
+   * air between it and the camera. Vanilla draws nothing in a closed column.
+   */
+  const tops = new Float64Array(CELLS)
+  const closed = new Uint8Array(CELLS)
+  const open = new Int32Array(CELLS)
+  let openCount = 0
+  let originX = NaN, originZ = NaN
+  let sweep = 0
+
+  /*
+   * Scanned downward from the top of the volume rather than from the sky.
+   * Anything above camY + radius is out of reach of a drop that only exists
+   * inside the volume, so it cannot change the answer -- and scanning from
+   * build height would be 200 getBlock calls per column instead of 21.
+   */
+  function scanColumn(k, camY) {
+    const x = originX + ((k / span) | 0)
+    const z = originZ + (k % span)
+    const hi = Math.floor(camY + radius)
+    const lo = Math.floor(camY - radius)
+    for (let y = hi; y >= lo; y--) {
+      if (noa.getBlock(x, y, z)) {
+        tops[k] = y
+        closed[k] = y >= hi ? 1 : 0
+        return
+      }
+    }
+    tops[k] = -Infinity
+    closed[k] = 0
+  }
+
+  function rebuildOpenList() {
+    openCount = 0
+    for (let k = 0; k < CELLS; k++) if (!closed[k]) open[openCount++] = k
+  }
+
+  /* ---- the pool ---- */
+
+  const drops = []
+  for (let i = 0; i < capacity; i++) drops.push({ x: 0, y: 0, z: 0, splash: 0 })
+  let live = 0
+  let drawn = 0
+  let recycled = 0   // proof, for the verification script, that slots are reused
+  let level = 0
+  let lastCamY = 0
+
+  const floorOf = (k, camY) => (tops[k] === -Infinity ? camY - radius : tops[k] + 1)
+
+  /*
+   * Put a drop at the top of a randomly chosen unsheltered column. `fill`
+   * scatters it down the column instead of starting the whole volume at the
+   * ceiling, which is what makes rain look like it was already falling the
+   * moment it starts rather than arriving as a curtain.
+   */
+  function place(d, camY, fill) {
+    if (!openCount) return false
+    const k = open[(Math.random() * openCount) | 0]
+    d.x = originX + ((k / span) | 0) + Math.random()
+    d.z = originZ + (k % span) + Math.random()
+    const ceiling = camY + radius
+    const floor = floorOf(k, camY)
+    d.y = fill ? floor + Math.random() * Math.max(0.1, ceiling - floor) : ceiling
+    d.splash = 0
+    return true
+  }
+
+  const originGlobal = [0, 0, 0]
+  const originLocal = [0, 0, 0]
+
+  const onFrame = (dtMs) => {
+    if (level <= 0 && live === 0) return
+    const dt = Math.min(0.05, dtMs / 1000)
+
+    const p = noa.ents.getPositionData(noa.playerEntity).position
+    const camY = p[1]
+    lastCamY = camY
+
+    /*
+     * The footprint is rebuilt wholesale when the player crosses a block
+     * boundary horizontally -- every entry in the grid means a different column
+     * at that point -- and otherwise swept an eighth at a time. The sweep is
+     * what notices a roof being built over your head, or mined off it, without
+     * every frame paying for 441 column scans. Vertical movement needs no
+     * rebuild: the grid still describes the same columns, only the scan window
+     * moved, and the sweep catches up within a few frames.
+     */
+    const ox = Math.floor(p[0]) - radius, oz = Math.floor(p[2]) - radius
+    if (ox !== originX || oz !== originZ) {
+      originX = ox; originZ = oz
+      for (let k = 0; k < CELLS; k++) scanColumn(k, camY)
+    } else {
+      const slice = Math.ceil(CELLS / 8)
+      for (let n = 0; n < slice; n++) scanColumn((sweep + n) % CELLS, camY)
+      sweep = (sweep + slice) % CELLS
+    }
+    rebuildOpenList()
+
+    /*
+     * Intensity is the drop COUNT, not the alpha. Fading 2000 drops to a tenth
+     * of their opacity looks like fog; 200 drops looks like it is starting to
+     * rain. Vanilla agrees -- its per-column count goes with rainLevel SQUARED,
+     * which is why the first minute of a storm builds so noticeably.
+     */
+    const want = Math.round(capacity * level * level)
+    while (live < want) {
+      if (!place(drops[live], camY, true)) break
+      live++
+    }
+
+    const m = noa.rendering.camera.getWorldMatrix().m
+    // The camera's right vector, flattened into the horizontal plane, shared by
+    // every drop this frame: rain stays vertical however far up you look.
+    let rx = m[0], rz = m[2]
+    const rl = Math.hypot(rx, rz) || 1
+    rx /= rl; rz /= rl
+
+    // Where world (0,0,0) sits in Babylon's frame right now. Doing it once and
+    // offsetting the mesh beats converting every drop -- noa rebases the origin
+    // as you travel, and world coordinates written straight into the buffer
+    // look perfect near spawn and drift the further you walk.
+    noa.globalToLocal(originGlobal, null, originLocal)
+
+    // sky.js drives the directional light off the sun AND the storm, so rain
+    // dims inside its own weather without being told about it.
+    const lit = noa.rendering.light ? noa.rendering.light.intensity : 1
+    const bright = Math.min(1, 0.3 + lit * 0.7)
+    mat.emissiveColor.set(bright, bright, bright)
+
+    const fall = RAIN_SPEED * dt
+    const invR = 1 / radius
+
+    for (let i = 0; i < live; i++) {
+      const d = drops[i]
+
+      // Which column the drop is over NOW. Recomputed rather than remembered,
+      // because the grid slides under the drops as the player walks.
+      const kx = Math.floor(d.x) - originX
+      const kz = Math.floor(d.z) - originZ
+      const inside = kx >= 0 && kz >= 0 && kx < span && kz < span
+      const k = inside ? kx * span + kz : -1
+
+      /*
+       * Retired: too many drops for the current intensity, walked out of the
+       * footprint, or now UNDER cover. That last test is `below its column's
+       * floor`, which catches the case a roof cannot otherwise fix -- a drop
+       * already falling, or already splashing on the ground, at the instant
+       * something is built over it. Without it those drops finish their fall
+       * indoors, which is exactly the thing this is supposed to never do.
+       *
+       * The slot is swapped to the end of the live range and reused -- never
+       * freed, never reallocated.
+       */
+      if (!inside || closed[k] || i >= want || d.y < floorOf(k, camY)) {
+        live--
+        const last = drops[live]
+        drops[live] = d
+        drops[i] = last
+        recycled++
+        i--
+        continue
+      }
+
+      if (d.splash > 0) {
+        d.splash -= dt
+        if (d.splash <= 0) { place(d, camY, false); recycled++ }
+      } else {
+        d.y -= fall
+        const floor = floorOf(k, camY)
+        if (d.y <= floor) {
+          d.y = floor
+          /*
+           * Splash only where there is something to splash on. A drop that
+           * reached the bottom of the volume without hitting a block is over a
+           * hole or out in the air, and a splash hanging in mid-air is worse
+           * than no splash.
+           */
+          if (tops[k] === -Infinity) { place(d, camY, false); recycled++ }
+          else d.splash = SPLASH_LIFE
+        }
+      }
+
+      // Vanilla's distance fade, ((1 - r^2) * 0.5 + 0.5) * level. Without it
+      // the edge of the volume is a visible cylinder of drops popping in.
+      const dx = d.x - p[0], dz = d.z - p[2]
+      // sqrt of the sum, not Math.hypot: hypot guards against overflow that
+      // cannot happen inside a 10-block radius, and it is several times slower
+      // when it is called two thousand times a frame.
+      const r = Math.min(1, Math.sqrt(dx * dx + dz * dz) * invR)
+      const a = ((1 - r * r) * 0.5 + 0.5) * level
+
+      const splashing = d.splash > 0
+      const half = (splashing ? SPLASH_SIZE : RAIN_WIDTH) * 0.5
+      const len = splashing ? SPLASH_SIZE : RAIN_LENGTH
+      // Splashes fade over their life rather than blinking out, which at 0.18
+      // seconds is the difference between wet ground and flickering confetti.
+      const alpha = splashing ? a * SPLASH_ALPHA * (d.splash / SPLASH_LIFE) : a
+      const ax = rx * half, az = rz * half
+
+      const o = i * 12
+      positions[o] = d.x - ax; positions[o + 1] = d.y; positions[o + 2] = d.z - az
+      positions[o + 3] = d.x + ax; positions[o + 4] = d.y; positions[o + 5] = d.z + az
+      positions[o + 6] = d.x + ax; positions[o + 7] = d.y + len; positions[o + 8] = d.z + az
+      positions[o + 9] = d.x - ax; positions[o + 10] = d.y + len; positions[o + 11] = d.z - az
+
+      const c = i * 16
+      colors[c + 3] = alpha; colors[c + 7] = alpha
+      colors[c + 11] = alpha; colors[c + 15] = alpha
+    }
+
+    /*
+     * Clear the tail. The index buffer covers the whole pool -- it is static --
+     * so a slot the live count has shrunk past still draws whatever it held
+     * last frame. Missing this is how a stopping storm leaves drops hanging in
+     * the air; the block particles above hit the same trap.
+     */
+    for (let i = live; i < drawn; i++) {
+      const c = i * 16
+      colors[c + 3] = 0; colors[c + 7] = 0; colors[c + 11] = 0; colors[c + 15] = 0
+    }
+    const wasDrawn = drawn
+    drawn = live
+
+    if (!live) {
+      if (wasDrawn) mesh.updateVerticesData('color', colors, false, false)
+      mesh.setEnabled(false)
+      return
+    }
+
+    mesh.position.set(originLocal[0], originLocal[1], originLocal[2])
+    mesh.updateVerticesData('position', positions, false, false)
+    mesh.updateVerticesData('color', colors, false, false)
+    mesh.setEnabled(true)
+  }
+
+  noa.on('beforeRender', onFrame)
+
+  return {
+    /** 0 = dry, 1 = downpour. Anything between scales the drop COUNT. */
+    setLevel(v) { level = v < 0 ? 0 : v > 1 ? 1 : v },
+    get level() { return level },
+    get live() { return live },
+    get capacity() { return capacity },
+    /** Slots reused since install. Proof the pool recycles rather than leaks. */
+    get recycled() { return recycled },
+    /** Columns of the footprint that rain actually falls in. */
+    get openColumns() { return openCount },
+    get columns() { return CELLS },
+    /*
+     * Is the player under cover? Vanilla's test for swapping the rain audio to
+     * its muffled variant is "the heightmap above me is higher than I am",
+     * which is NOT the same as the column being closed -- a roof four blocks
+     * up still has rain falling on top of it, and you still hear it, quieter.
+     */
+    get sheltered() {
+      const t = tops[radius * span + radius]
+      return t !== -Infinity && t > lastCamY
+    },
+    mesh,
+    dispose() { noa.off('beforeRender', onFrame); mesh.dispose() },
   }
 }

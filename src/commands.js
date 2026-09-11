@@ -2,6 +2,7 @@ import { BLOCK_TYPES } from './blocks.js'
 import { ITEMS } from './items.js'
 import { GAMEMODE_NAMES } from './gamemode.js'
 import { GAMERULES } from './authority.js'
+import { WEATHER_KINDS } from './weather.js'
 
 /*
  * The command set. Vanilla syntax, vanilla wording, vanilla failure modes.
@@ -32,7 +33,20 @@ const ITEM_BY_KEY = new Map(ITEMS.map(i => [i.key, i]))
 /* Minecraft's four named times, in ticks. */
 const NAMED_TIMES = { day: 1000, noon: 6000, night: 13000, midnight: 18000 }
 
-const WEATHER_KINDS = ['clear', 'rain', 'thunder']
+/*
+ * Minecraft's time argument: a bare number is ticks, and d/s/t are days,
+ * seconds and ticks. /weather rain 1d is the form anyone who has played will
+ * try first, and rejecting it as "invalid time" for want of three lines would
+ * be the sort of near-miss that reads as a knockoff.
+ */
+function ticksFrom(token) {
+  const m = /^(\d+(?:\.\d+)?)([dst]?)$/.exec(token)
+  if (!m) return null
+  const n = Number(m[1])
+  const scale = m[2] === 'd' ? 24000 : m[2] === 's' ? 20 : 1
+  const ticks = Math.floor(n * scale)
+  return ticks >= 1 ? ticks : null
+}
 
 /**
  * Minecraft's tilde notation: `~` is here, `~5` is five along from here.
@@ -176,27 +190,36 @@ export function installCommands(chat, authority, { noa, playerName }) {
     }, opOnly)
 
   /*
-   * /weather, and it does NOT lie.
+   * /weather, which used to report honestly that there was no weather to set.
+   * There is now: weather.js owns the state, the authority owns the decision,
+   * and this stays what every other command here is -- parse, ask, print.
    *
-   * There is no weather in this world -- no precipitation, no thunder, no
-   * wet-block state -- and the honest options were to build one or to say so.
-   * Building one is not a small job done properly: rain in Minecraft is a
-   * camera-following particle volume that skips sheltered columns, a sky and
-   * light-level change, an ambient loop, and a thunder timer, and it would
-   * have eaten the time that gamemodes and the authority boundary actually
-   * needed. A /weather that flipped a boolean nothing rendered would be worse
-   * than this: it would report success and change nothing.
+   * The duration argument is vanilla's, including the unit suffixes, and
+   * leaving it off does what vanilla does: samples the same random duration
+   * the natural cycle uses (10-20 minutes of rain, 3-13 of thunder), rather
+   * than the fixed 6000 ticks everyone assumes.
    *
-   * So the argument is still parsed exactly as vanilla parses it -- a typo
-   * gets the real error -- and a valid one gets told the truth.
+   * If nothing wired weather.js in, requestWeather does not exist and this
+   * falls back to the old refusal. A command that claims to have changed
+   * something nothing rendered would be worse than one that admits the truth,
+   * and that was true before this shipped and is still true if it is unwired.
    */
-  chat.command('weather', 'Reports on weather (not implemented in this world)',
-    ([kind]) => {
-      if (!WEATHER_KINDS.includes(kind)) {
-        return chat.parseError(`/weather ${kind ?? ''}`.trimEnd())
+  chat.command('weather', `Sets the weather: ${WEATHER_KINDS.join(', ')} [duration]`,
+    async ([wkind, rawDuration]) => {
+      if (!WEATHER_KINDS.includes(wkind)) {
+        return chat.parseError(`/weather ${wkind ?? ''}`.trimEnd())
       }
-      fail('Weather is not implemented in this world: the sky has a day/night')
-      fail('cycle and no precipitation. Nothing was changed.')
+      if (!authority.requestWeather) {
+        fail('Weather is not implemented in this world: the sky has a day/night')
+        fail('cycle and no precipitation. Nothing was changed.')
+        return
+      }
+      let duration = null
+      if (rawDuration !== undefined) {
+        duration = ticksFrom(rawDuration)
+        if (duration === null) return fail(`Invalid time: ${rawDuration}`)
+      }
+      report(await authority.requestWeather(wkind, duration))
     }, opOnly)
 
   return {

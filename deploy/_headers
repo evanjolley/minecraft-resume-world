@@ -45,3 +45,8 @@
 # Left on the must-revalidate default on purpose: index.html is what points at
 # every hashed bundle, so caching it is caching the whole deploy. The resume is
 # a document Evan will replace without renaming.
+
+# Same reasoning as /textures/*: these filenames come out of public/ verbatim,
+# so they are permanent URLs whose bytes change when the sound source changes.
+/sounds/*
+  Cache-Control: public, max-age=86400

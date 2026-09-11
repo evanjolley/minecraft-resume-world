@@ -1,10 +1,11 @@
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder'
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
+import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 
 /*
- * Clouds and sun.
+ * Clouds, sun and moon, and the way the sky answers the weather.
  *
  * The clouds are GEOMETRY, not a texture. A first attempt tiled the pack's
  * cloud image across one big plane and produced a flat white ceiling over the
@@ -12,9 +13,19 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
  * Minecraft both build clouds out of blocks, and the cloud shapes come from
  * which cells exist, not from anything painted into the image.
  *
- * So: a grid of cells, each either present or absent according to a
- * deterministic hash, merged into ONE mesh. Merging matters -- a few hundred
- * separate meshes would cost a draw call each and wreck the frame rate.
+ * MINECRAFT HAS TWO CLOUD MODES, and this file used to build the wrong one.
+ * "Fast" is one flat quad per cell: a paper ceiling from below, and edge-on
+ * invisible from the side. "Fancy" is a BOX per cell -- 12x12 blocks across,
+ * 4 blocks deep, its sides and its underside shaded darker than its top. That
+ * box is the entire difference between clouds you fly through and a decal
+ * stuck on the sky, so this builds Fancy.
+ *
+ * A grid of cells, each present or absent, with every EXPOSED face of every
+ * present cell written into ONE mesh. One mesh matters: a few thousand boxes
+ * would cost a draw call each and wreck the frame rate. Skipping the faces
+ * between two neighbouring cells matters for a second reason beyond the vertex
+ * count -- the clouds are translucent, so an interior face left in would be
+ * visible THROUGH the cloud as a darker seam.
  *
  * The layer sits at a fixed world altitude and recenters horizontally on the
  * player, so it never rises and falls as you jump. The sun and moon are
@@ -25,6 +36,13 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
  * 18000 midnight. Everything else -- sun and moon elevation, sky colour,
  * directional light, cloud brightness -- is derived from the sun's elevation,
  * which keeps them impossible to desync from each other.
+ *
+ * WEATHER arrives as three numbers pushed in by weather.js -- rain, thunder
+ * and the lightning flash, each 0..1 -- and what they DO is owned here. Sky
+ * colour, light level and cloud colour are already derived in one place from
+ * one source; a second module writing them every frame would spend its life
+ * fighting this one. weather.js owns when they change, sky.js owns what they
+ * look like.
  */
 
 const TICKS_PER_DAY = 24000
@@ -44,6 +62,31 @@ const mix = (a, b, t) => [
   a[2] + (b[2] - a[2]) * t,
 ]
 
+/* Rec. 601 luminance -- 0.3/0.59/0.11 is the weighting Minecraft's own weather
+ * tinting uses, not a modern Rec. 709 grey. */
+const luma = (c) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11
+
+/*
+ * Minecraft's weather tinting, rain then thunder: the colour is dragged toward
+ * a grey of its OWN luminance -- 60% as bright under rain, 20% under thunder.
+ *
+ * Worth copying rather than fading to a fixed storm grey, which was the
+ * obvious version: deriving the grey from the colour it replaces means an
+ * overcast sunset stays orange while it goes flat, where a fixed grey would
+ * flatten sunset and noon into the same frame.
+ *
+ * `weight` is not a knob. getSkyColor blends by level * 0.75 and
+ * getCloudColor by level * 0.95, which is why a storm turns the clouds grey
+ * harder than it turns the sky grey, and the gap between the two is most of
+ * what makes an overcast sky read as overcast.
+ */
+function weatherTint(c, rain, thunder, weight) {
+  let out = c
+  if (rain > 0) { const g = luma(out) * 0.6; out = mix(out, [g, g, g], rain * weight) }
+  if (thunder > 0) { const g = luma(out) * 0.2; out = mix(out, [g, g, g], thunder * weight) }
+  return out
+}
+
 /*
  * Sky colour from the sun's elevation rather than from the clock directly.
  * Driving it off elevation means sunrise and sunset get the same treatment
@@ -56,64 +99,204 @@ function skyColorFor(elevation) {
   return mix(SKY_NIGHT, SKY_SUNSET, clamp01((elevation + 0.25) / 0.20))
 }
 
-// Cloud layer geometry. GRID x GRID cells of CELL blocks each, so the layer
-// spans GRID*CELL blocks -- comfortably past the 48-block island in any
-// direction the player can get to.
-const CLOUD_HEIGHT = 192
+/* ------------------------------------------------------------------ *
+ * Clouds
+ * ------------------------------------------------------------------ *
+ *
+ * Every number here is Minecraft's, read off the renderer rather than tuned
+ * by eye:
+ *
+ *   192    the Overworld's cloud level. It was 128 until 1.18 -- 1.17 shipped
+ *          with 128 despite a snapshot that said otherwise.
+ *   0.33   and the slab is actually drawn at cloudHeight + 0.33, so it spans
+ *          192.33 to 196.33. Copied because it is free, and because sitting
+ *          off the block grid is what stops a cloud z-fighting anything built
+ *          at that altitude.
+ *   12     blocks per cell -- CELL_SIZE_IN_BLOCKS in 1.21's CloudRenderer.
+ *          One pixel of clouds.png IS a 12x12 block cell. (The wiki says
+ *          16x16 for Fancy. The wiki is wrong.)
+ *   4      blocks thick, the height of a Fancy cloud box.
+ *   0.8    alpha, on every cloud vertex in every version since 1.11.
+ *   0.6    blocks per second of drift -- 0.03 per tick -- and it travels WEST.
+ *          The offset is added to the X texture COORDINATE, so the pattern
+ *          moves the opposite way to the number going up.
+ *
+ * Face shading is Minecraft's too, and it is the tell that a cloud is solid:
+ * top 1.0, underside 0.7, north and south 0.8, east and west 0.9. Those last
+ * two are the way round that reads wrong -- the shader's faceColors array in
+ * 1.21.6 says north/south 0.8, west/east 0.9 -- and flat-shading them all
+ * alike turns the box straight back into a silhouette.
+ */
+const CLOUD_HEIGHT = 192.33
 const CLOUD_CELL = 12
-const CLOUD_GRID = 28
-const CLOUD_FILL = 0.42   // fraction of cells that are cloud
-const CLOUD_DRIFT = 0.6   // blocks per second
+const CLOUD_DEPTH = 4
+const CLOUD_ALPHA = 0.8
+const CLOUD_DRIFT = -0.6   // negative X: clouds always float west
+
+const SHADE_TOP = 1.0
+const SHADE_BOTTOM = 0.7
+const SHADE_NS = 0.8
+const SHADE_EW = 0.9
 
 /*
- * Deterministic value hash. Math.random would reshuffle the sky on every
- * page load and, worse, on every rebuild of the layer.
+ * How far the layer reaches, in cells. 96 cells of 12 blocks is 1152 blocks
+ * across, and the field is clipped to a CIRCLE inside that -- which is what
+ * 1.21.6 does (`x*x + z*z <= r*r` over a radius of cloudRange chunks, 128 by
+ * default, so 2048 blocks). Ours is half vanilla's radius and a fifth of its
+ * cell count, because 2048 blocks of cloud is 30k quads to cover sky this
+ * world's 80x80 island cannot see past anyway.
+ *
+ * The radius is the number that decides whether the altitude reads right.
+ * At 576 blocks the furthest cloud sits about 12 degrees above the horizon,
+ * so the layer recedes to a vanishing point like a real ceiling. The previous
+ * 168-block layer stopped 37 degrees up, which reads as a small disc hanging
+ * directly overhead -- and THAT, not the altitude, is what made 192 look too
+ * high.
  */
-function cellFilled(i, j) {
+const CLOUD_GRID = 96
+
+/*
+ * Deterministic value hash. Math.random would reshuffle the sky on every page
+ * load and, worse, on every rebuild of the layer.
+ */
+function hash01(i, j) {
   let h = Math.imul(i * 374761393 + j * 668265263, 1274126177)
   h = (h ^ (h >>> 13)) >>> 0
-  return (h % 1000) / 1000 < CLOUD_FILL
+  return (h % 1000) / 1000
+}
+
+const smoothstep = t => t * t * (3 - 2 * t)
+const lerp = (a, b, t) => a + (b - a) * t
+
+/* Value noise: the hash sampled on a coarse lattice and smoothly interpolated
+ * between lattice points, which is what turns isolated random cells into
+ * connected shapes. */
+function valueNoise(i, j, period) {
+  const x = i / period, z = j / period
+  const x0 = Math.floor(x), z0 = Math.floor(z)
+  const fx = smoothstep(x - x0), fz = smoothstep(z - z0)
+  return lerp(
+    lerp(hash01(x0, z0), hash01(x0 + 1, z0), fx),
+    lerp(hash01(x0, z0 + 1), hash01(x0 + 1, z0 + 1), fx),
+    fz)
+}
+
+/*
+ * Which cells are cloud.
+ *
+ * Rejected: a flat 42% random fill, which is what this was. It is invisible in
+ * Fast mode -- a flat quad either side of a gap reads as one ragged sheet --
+ * and it falls apart the moment the cells have sides, because scattered
+ * single cells become a field of floating dice. Minecraft's clouds.png is
+ * hand-drawn BLOBS, dozens of cells across with holes punched in them, so the
+ * field has to be spatially correlated. Two octaves of value noise at periods
+ * 8 and 3, thresholded, covers 40.6% of the sky in blobs of roughly the right
+ * size -- measured over a 200x200 sample, not guessed.
+ */
+function cellFilled(i, j) {
+  return valueNoise(i, j, 8) * 0.7 + valueNoise(i, j, 3) * 0.3 > 0.55
 }
 
 function buildCloudLayer(noa, scene) {
-  const tex = new Texture('/textures/cloud.png', scene, true, false, Texture.NEAREST_SAMPLINGMODE)
-
   const mat = noa.rendering.makeStandardMaterial('cloud-mat')
-  mat.diffuseTexture = tex
   mat.disableLighting = true
+  /*
+   * White here; the tick loop rewrites it with the time-of-day and weather
+   * colour. With lighting off, StandardMaterial multiplies emissiveColor into
+   * the vertex colour below rather than adding to it (see the long note in
+   * particles.js), so this one uniform dims every face and the per-face shades
+   * keep their ratios.
+   */
   mat.emissiveColor = new Color3(1, 1, 1)
+  mat.specularColor = new Color3(0, 0, 0)
   // noa leaves ambientColor white and Babylon adds that term even with
   // lighting disabled, which blows flat white out to a glaring sheet.
   mat.ambientColor = new Color3(0, 0, 0)
-  // Seen from underneath essentially always, so both faces must draw.
-  mat.backFaceCulling = false
-  mat.alpha = 0.8
+  mat.alpha = CLOUD_ALPHA
+  // Real boxes now, so the back faces are the insides and culling them is
+  // both correct and half the fill. Fast mode needed them; Fancy does not.
+  mat.backFaceCulling = true
+  /*
+   * DO NOT set needDepthPrePass here, however tempting it looks. Vanilla does
+   * render clouds twice -- colour mask off to lay down depth, then again to
+   * draw -- and that flag is Babylon's name for the same trick, but under
+   * swiftshader it renders the layer SOLID BLACK: the prepass draw ignores the
+   * colour mask, and the real draw is then rejected by its own depth. Babylon
+   * writes depth for alpha-blended meshes anyway, which gets the part that
+   * mattered (the nearest cloud face wins; no double-blended dark seams).
+   */
+
+  const positions = []
+  const colors = []
+  const indices = []
+
+  /*
+   * Corners counter-clockwise as seen from OUTSIDE the box -- and then the
+   * indices are emitted backwards, because Babylon's front face is the
+   * CLOCKWISE one. That is not a guess: a known-good box (blockMeshes' slab)
+   * has every face's right-hand cross product pointing INTO the solid. Get it
+   * backwards and the layer still draws, wrong side out: from below you see
+   * the top face's shading on the underside, which is a very quiet bug.
+   */
+  const quad = (shade, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz) => {
+    const v = positions.length / 3
+    positions.push(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz)
+    for (let k = 0; k < 4; k++) colors.push(shade, shade, shade, 1)
+    indices.push(v, v + 2, v + 1, v, v + 3, v + 2)
+  }
 
   const half = (CLOUD_GRID * CLOUD_CELL) / 2
-  const tiles = []
+  // Cells outside the grid count as empty, so the rim of the layer keeps its
+  // side faces. Testing the hash instead would cull faces against neighbours
+  // that are never drawn and leave the edge cells open.
+  const filled = (i, j) =>
+    i >= 0 && j >= 0 && i < CLOUD_GRID && j < CLOUD_GRID && cellFilled(i, j)
+
+  let cells = 0
   for (let i = 0; i < CLOUD_GRID; i++) {
     for (let j = 0; j < CLOUD_GRID; j++) {
-      if (!cellFilled(i, j)) continue
-      const tile = CreatePlane(`cloud_${i}_${j}`, { size: CLOUD_CELL }, scene)
-      tile.rotation.x = Math.PI / 2
-      tile.position.set(i * CLOUD_CELL - half, 0, j * CLOUD_CELL - half)
-      tiles.push(tile)
+      if (!filled(i, j)) continue
+      // Circular, as 1.21.6+ is: the corners of a square layer are 40% further
+      // away than its edges, and all a player can tell is that the sky ends
+      // in a straight line over there.
+      const ci = i - CLOUD_GRID / 2 + 0.5, cj = j - CLOUD_GRID / 2 + 0.5
+      if (ci * ci + cj * cj > (CLOUD_GRID / 2) * (CLOUD_GRID / 2)) continue
+      cells++
+      const x0 = i * CLOUD_CELL - half, x1 = x0 + CLOUD_CELL
+      const z0 = j * CLOUD_CELL - half, z1 = z0 + CLOUD_CELL
+      const y0 = 0, y1 = CLOUD_DEPTH
+
+      quad(SHADE_TOP, x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0)
+      quad(SHADE_BOTTOM, x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1)
+      if (!filled(i - 1, j)) quad(SHADE_EW, x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0)
+      if (!filled(i + 1, j)) quad(SHADE_EW, x1, y0, z0, x1, y1, z0, x1, y1, z1, x1, y0, z1)
+      if (!filled(i, j - 1)) quad(SHADE_NS, x0, y0, z0, x0, y1, z0, x1, y1, z0, x1, y0, z0)
+      if (!filled(i, j + 1)) quad(SHADE_NS, x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1)
     }
   }
 
-  // One mesh, one draw call. Args are (meshes, disposeSource,
-  // allow32BitsIndices); 32-bit indices matter because a few hundred quads
-  // exceeds the 65k vertex ceiling of 16-bit ones.
-  const layer = Mesh.MergeMeshes(tiles, true, true)
+  const layer = new Mesh('clouds', scene)
+  const vd = new VertexData()
+  vd.positions = new Float32Array(positions)
+  vd.colors = new Float32Array(colors)
+  /*
+   * 32-bit indices, because ~10k quads is 40k vertices and a 16-bit index
+   * buffer tops out at 65k -- one Uint16Array away from a layer that silently
+   * folds in on itself. Babylon picks the width from the array type.
+   */
+  vd.indices = new Uint32Array(indices)
+  vd.applyToMesh(layer, false)
   layer.material = mat
   layer.isPickable = false
+  // The layer is always overhead and always larger than the view; the octree's
+  // culling test can only ever answer "yes".
   layer.alwaysSelectAsActiveMesh = true
 
   // REQUIRED. noa installs its own selection octree, so Babylon picks what to
   // render from that rather than from scene.meshes. A mesh built directly in
   // the scene and never registered here is silently never drawn.
   noa.rendering.addMeshToScene(layer)
-  return layer
+  return { mesh: layer, mat, cells, quads: indices.length / 6 }
 }
 
 export function installSky(noa) {
@@ -166,6 +349,11 @@ export function installSky(noa) {
   let drift = 0
   let time = START_TIME
 
+  /* Weather, as pushed in by weather.js. Owned there, applied here. */
+  let rainLevel = 0
+  let thunderLevel = 0
+  let flash = 0
+
   const scene_ = scene
   const light = noa.rendering.light
 
@@ -194,26 +382,62 @@ export function installSky(noa) {
     // island from underneath.
     sun.mesh.setEnabled(elevation > -0.15)
     moon.mesh.setEnabled(elevation < 0.15)
+    /*
+     * Vanilla multiplies the sun and moon's alpha by (1 - rainLevel), so a
+     * storm swallows them rather than leaving a disc hanging in an overcast
+     * sky. Nothing simulates cloud COVER -- this is the whole of it.
+     */
+    const celestialAlpha = 1 - rainLevel
+    sun.mat.alpha = celestialAlpha
+    moon.mat.alpha = celestialAlpha
 
-    const sky = skyColorFor(elevation)
+    let sky = weatherTint(skyColorFor(elevation), rainLevel, thunderLevel, 0.75)
+    /*
+     * The lightning flash. Vanilla lerps the sky toward (0.8, 0.8, 1.0) by at
+     * most 0.45 for the two ticks skyFlashTime lasts, and that is all it does
+     * to the SKY -- the rest of what you see is the bolt entity itself lighting
+     * the world. There is no bolt here, so the flash also drives the light
+     * level below; a 0.45 tint on its own is nearly invisible.
+     */
+    if (flash > 0) sky = mix(sky, [0.8, 0.8, 1.0], flash * 0.45)
     scene_.clearColor.set(sky[0], sky[1], sky[2], 1)
 
     // Daylight drives the directional light and the ambient term together.
     // Night bottoms out at 0.18 rather than 0 because pitch black is
     // unreadable, and Minecraft's night isn't fully dark either.
     const daylight = clamp01(elevation * 2 + 0.35)
-    const level = 0.18 + daylight * 0.82
+    /*
+     * Minecraft's Level.updateSkyBrightness: rain costs five sixteenths of the
+     * sky light and thunder five sixteenths again, multiplied, so a full
+     * thunderstorm at noon is 0.69 * 0.69 = under half the daylight. That is
+     * why a storm reads as dusk without the clock having moved.
+     */
+    const storm = (1 - rainLevel * 5 / 16) * (1 - thunderLevel * 5 / 16)
+    const level = Math.max((0.18 + daylight * 0.82) * storm, flash)
     if (light) {
       light.intensity = level
       light.direction.set(-eastWest, -Math.max(elevation, 0.15), -0.3)
     }
     scene_.ambientColor.set(level * 0.5, level * 0.5, level * 0.5)
 
-    // Clouds are emissive, so they need dimming explicitly or they glow at
-    // midnight like strip lights. The night floor is deliberately low --
-    // at 0.25 they still read as bright grey against a near-black sky.
-    const cloudLevel = 0.09 + daylight * 0.91
-    clouds.material.emissiveColor.set(cloudLevel, cloudLevel, cloudLevel)
+    /*
+     * Cloud colour, Minecraft's Level.getCloudColor: white, tinted by the
+     * weather, then scaled by the time of day -- red and green to 0.9x + 0.1,
+     * blue to 0.85x + 0.15. The floors are why midnight clouds are dim blue
+     * rather than black, and the blue floor being HIGHER is why they read as
+     * cold at night instead of just dark.
+     *
+     * They are emissive, so without this they would glow at midnight like
+     * strip lights.
+     */
+    const c = weatherTint([1, 1, 1], rainLevel, thunderLevel, 0.95)
+    const cr = c[0] * (daylight * 0.9 + 0.1)
+    const cg = c[1] * (daylight * 0.9 + 0.1)
+    const cb = c[2] * (daylight * 0.85 + 0.15)
+    clouds.mat.emissiveColor.set(
+      Math.min(1, cr + flash * 0.6),
+      Math.min(1, cg + flash * 0.6),
+      Math.min(1, cb + flash * 0.6))
 
     // Snap the layer to whole cells so recentering on the player is
     // invisible; drift is applied on top as a continuous offset. Without the
@@ -223,12 +447,35 @@ export function installSky(noa) {
     global[1] = CLOUD_HEIGHT
     global[2] = Math.round(p[2] / CLOUD_CELL) * CLOUD_CELL
     noa.globalToLocal(global, null, local)
-    clouds.position.set(local[0], local[1], local[2])
+    clouds.mesh.position.set(local[0], local[1], local[2])
   })
 
   return {
     getTime: () => time,
     setTime: (t) => { time = ((t % TICKS_PER_DAY) + TICKS_PER_DAY) % TICKS_PER_DAY },
     TICKS_PER_DAY,
+
+    /**
+     * Weather, pushed in by weather.js. Levels are 0..1 and already ramped --
+     * this module does no smoothing of its own, so that "how fast does a storm
+     * roll in" lives in exactly one place.
+     */
+    setWeatherLevels({ rain = 0, thunder = 0, flash: f = 0 } = {}) {
+      rainLevel = clamp01(rain)
+      thunderLevel = clamp01(thunder)
+      flash = clamp01(f)
+    },
+    get rainLevel() { return rainLevel },
+    get thunderLevel() { return thunderLevel },
+
+    /** Cloud altitude and geometry, for the verification script. */
+    clouds: {
+      get mesh() { return clouds.mesh },
+      get cells() { return clouds.cells },
+      get quads() { return clouds.quads },
+      height: CLOUD_HEIGHT,
+      cell: CLOUD_CELL,
+      depth: CLOUD_DEPTH,
+    },
   }
 }

@@ -6,9 +6,11 @@
 # That is redistribution, and public/sounds/ is gitignored precisely to stop
 # it -- but gitignore only guards the repo, not the deploy.
 #
-# `npm run build:deploy` already deletes dist/sounds. This is the second lock,
-# for the day someone deploys a dist/ that a plain `npm run build` left behind.
-# Until there is a legally redistributable sound set (docs/DEPLOYMENT.md), the
-# deployed site is silent, and that is the intended behaviour rather than a bug
-# -- src/sounds.js treats a missing manifest as "stay quiet".
-sounds/
+# There IS a redistributable set now (sounds-src/free, CC0/CC-BY/CC-BY-SA), so
+# audio is no longer blanket-refused -- `build:deploy` runs `npm run sounds`,
+# which writes the free source and stamps dist/sounds/.source with its name.
+#
+# The lock moved rather than disappearing: the deploy workflow asserts that
+# marker reads "free". That is strictly stronger than refusing a directory,
+# because it fails on a Mojang-sourced build AND on a silent one, where the
+# old rule quietly passed for both.

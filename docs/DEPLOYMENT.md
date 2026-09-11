@@ -401,6 +401,20 @@ From a clean `git clone` of `main` into an empty directory, on Node 24:
 Still true: nothing is live, and going live is Evan's call.
 
 
+## Sound: resolved
+
+The deployed site is no longer silent. `npm run sounds` defaults to a committed
+CC0 / CC BY / CC BY-SA set (`sounds-src/free`, 402KB), with the Minecraft
+extraction still available locally as `npm run sounds:vanilla`.
+
+The lock against publishing Mojang's audio **moved rather than disappeared**,
+and is now stronger. It used to be "refuse to upload a sounds directory", which
+quietly passed both for a Mojang build and for a silent one. The deploy
+workflow now asserts `dist/sounds/.source` reads `free` — which fails on either.
+
+Verified: `npm run build:deploy` produces `dist/` at 6.8MB with 42 samples, the
+attribution NOTICE, and the marker reading `free`.
+
 ## Open: which domain (undecided, deliberately)
 
 Not deployed yet, and the domain is unchosen. The thing that makes this less
