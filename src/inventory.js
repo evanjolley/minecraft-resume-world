@@ -117,6 +117,43 @@ export function createInventory() {
     return id
   }
 
+  /**
+   * Take items out of the selected slot to be thrown on the floor.
+   *
+   * Separate from consumeSelected because the two answer different questions:
+   * placing wants "one item is gone, here is what it was", while Q wants the
+   * STACK it just removed, since something has to go on the floor with a count
+   * on it. Minecraft's Q takes one and Ctrl+Q takes the lot.
+   *
+   * @returns {{id: number, count: number}|null}
+   */
+  inv.takeSelected = (all = false) => {
+    const s = inv.slots[inv.selected]
+    if (!s) return null
+    const count = all ? s.count : 1
+    s.count -= count
+    if (s.count <= 0) inv.slots[inv.selected] = null
+    changed()
+    return { id: s.id, count }
+  }
+
+  /**
+   * Where items with nowhere to go end up: `(id, count) => void`, set by
+   * itemEntity.js to throw them on the floor the way Minecraft does.
+   *
+   * A hook rather than an import because the inventory MODEL must keep working
+   * with no renderer attached -- the test suite drives it directly, and half
+   * this file is UI that a headless model has no business needing. Unset, the
+   * items go back into the inventory, which is where they used to go.
+   */
+  inv.dropper = null
+
+  /** Give up a stack: onto the floor if anything is listening, else back in. */
+  const discard = (id, count) => {
+    if (inv.dropper) inv.dropper(id, count)
+    else inv.add(id, count)
+  }
+
   inv.select = (i) => {
     inv.selected = ((i % HOTBAR_SIZE) + HOTBAR_SIZE) % HOTBAR_SIZE
     changed()
@@ -139,29 +176,29 @@ export function createInventory() {
   /**
    * Swap the grid between 2x2 and 3x3, returning whatever was in the old one.
    *
-   * Minecraft drops the grid's contents on the floor when you close the
-   * screen. There are no dropped-item entities here yet (deliberately out of
-   * scope), so they go back into the inventory instead -- which is the same
-   * outcome minus the walk, and strictly better than deleting them.
+   * Minecraft throws the grid's contents on the floor when you close the
+   * screen, and now so does this -- `discard` routes them to the dropped-item
+   * entities if any are installed. It used to hand them back to the inventory,
+   * which was the stand-in for exactly this.
    */
   inv.setCraftSize = (size) => {
-    for (const s of inv.craft.cells) if (s) inv.add(s.id, s.count)
+    for (const s of inv.craft.cells) if (s) discard(s.id, s.count)
     inv.craft = { size, cells: new Array(size * size).fill(null), result: null }
     changed()
   }
 
-  /** Empty the grid back into the inventory. Called when a screen closes. */
+  /** Empty the grid out. Called when a screen closes. */
   inv.clearCraft = () => {
     let moved = false
     for (let i = 0; i < inv.craft.cells.length; i++) {
       const s = inv.craft.cells[i]
       if (!s) continue
       inv.craft.cells[i] = null
-      inv.add(s.id, s.count)
+      discard(s.id, s.count)
       moved = true
     }
     // A carried stack has nowhere to go either, and Minecraft drops that too.
-    if (inv.carried) { inv.add(inv.carried.id, inv.carried.count); inv.carried = null; moved = true }
+    if (inv.carried) { discard(inv.carried.id, inv.carried.count); inv.carried = null; moved = true }
     if (moved) { refreshResult(); changed() }
   }
 

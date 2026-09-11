@@ -19,9 +19,10 @@ import { installPerspective } from './perspective.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky } from './sky.js'
 import { createArmorReduction } from './armor.js'
-import { itemName } from './items.js'
+import { itemName, itemId } from './items.js'
 import { installSounds } from './sounds.js'
 import { installParticles } from './particles.js'
+import { installItemEntities } from './itemEntity.js'
 import { installHighlightStyle } from './highlight.js'
 import { createAuthority } from './authority.js'
 import { installGamemode } from './gamemode.js'
@@ -242,6 +243,15 @@ installHUD(noa, { inventory, survival })
 const sounds = installSounds(noa, { interaction, movement, survival })
 const particles = installParticles(noa, { interaction, movement })
 
+/*
+ * Dropped items. Installed after `sounds` because it plays the pickup, and
+ * after `interaction` for no reason at all -- it does not listen to breaks, it
+ * decorates `authority.requestBlockChange`, which is the only place a break
+ * can happen. That decoration is why nothing above had to change: interact.js
+ * stopped adding to the inventory, and the drop appeared in the world instead.
+ */
+const drops = installItemEntities(noa, { inventory, authority, sounds, inputLock })
+
 const menu = installMenu(noa, { inputLock, inventory, inventoryScreen, survival })
 
 /*
@@ -317,6 +327,10 @@ noa.container.on('lostPointerLock', () => {
 window.noa = noa
 window.game = {
   inventory, survival, move, sky, menu, chat, inputLock, perspective,
-  skinMaterial, sounds, particles,
+  skinMaterial, sounds, particles, drops,
   authority, gamemode, commands, interaction, flight: movement.flight,
+  // Key -> item id, for the console and for the test suite. Item ids above
+  // ITEM_BASE are positional, so anything outside this module that wants an
+  // iron pickaxe has to ask rather than hardcode 1040-something.
+  itemId,
 }

@@ -230,6 +230,15 @@ export async function resetWorld(page) {
     inv.selected = 0
     inv.emitChange()
 
+    /*
+     * Dropped items are page-lifetime world state, same as the game mode: one
+     * left lying on the floor gets picked up by the NEXT spec's player the
+     * moment they walk, and reads there as an inventory that filled itself.
+     * Emptying the live array is the whole reset -- the meshes are pooled per
+     * item type and are meant to outlive it.
+     */
+    game.drops.list.length = 0
+
     noa.ents.setPosition(noa.playerEntity, spawn)
     const body = noa.ents.getPhysics(noa.playerEntity).body
     body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
@@ -417,6 +426,29 @@ export async function measureSpeed(page, keys, { warmupMs = 900, sampleMs = 700 
   } finally {
     for (const k of keys) await page.keyboard.up(k)
   }
+}
+
+/**
+ * Rendered frames per second, counted in the page over a real window.
+ *
+ * requestAnimationFrame rather than noa's tick: the tick loop is fixed at
+ * 30 Hz and will happily keep that rate while rendering dies, which is exactly
+ * the failure this measures. Under swiftshader the absolute number is low and
+ * machine-dependent, so callers should compare two measurements rather than
+ * assert an absolute floor.
+ */
+export function measureFps(page, ms = 1500) {
+  return page.evaluate((window_ms) => new Promise((resolve) => {
+    let frames = 0
+    const t0 = performance.now()
+    const step = () => {
+      const dt = performance.now() - t0
+      if (dt >= window_ms) return resolve((frames * 1000) / dt)
+      frames++
+      requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  }), ms)
 }
 
 /** Sky clock rate in Minecraft ticks per real second. */

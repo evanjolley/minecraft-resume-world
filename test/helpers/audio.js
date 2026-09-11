@@ -24,11 +24,13 @@
  */
 
 /*
- * KeyQ is bound to nothing in this world, which is the whole reason it is the
+ * KeyZ is bound to nothing in this world, which is the whole reason it is the
  * key used here: the autoplay gate wants a TRUSTED gesture, and every other
- * key opens a screen, swaps a hotbar slot or moves the player.
+ * key opens a screen, swaps a hotbar slot or moves the player. This used to be
+ * KeyQ, until Q became "throw the held item on the floor" -- a gesture key has
+ * to stay a key that does nothing.
  */
-const GESTURE_KEY = 'KeyQ'
+const GESTURE_KEY = 'KeyZ'
 
 /**
  * Patch the page's audio graph and build the fingerprint table.

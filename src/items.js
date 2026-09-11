@@ -52,9 +52,10 @@ export const DEFAULT_STACK = 64
  * the player's own base 1 is added on top, which is why a wooden sword reads
  * as 4 in the tooltip and 3 here.
  *
- * NOTHING READS `speed` YET. Mining lives in interact.js, which this change
- * does not own, so the numbers are defined and left unwired on purpose --
- * see the report for the one-line integration point.
+ * `speed` and `level` are read by `miningSeconds` and `canHarvest` at the
+ * bottom of this file, which is where Minecraft's break-time formula lives.
+ * They were defined and deliberately unwired for one commit, because the raw
+ * hardness the formula needs did not exist yet.
  */
 export const TIERS = {
   wood: { level: 0, speed: 2, attack: 3, uses: 59 },
@@ -265,4 +266,183 @@ export const ITEM_TEXTURES = NON_BLOCK.map(({ texture, from }) => ({ name: textu
  */
 for (const i of BLOCK_ITEMS) {
   if (!BLOCK_BY_ID.has(i.places)) throw new Error(`item "${i.key}" places unknown block ${i.places}`)
+}
+
+/* ------------------------------------------------------------------ *
+ * Mining: which tool, how fast, and whether anything drops.
+ *
+ * This is the other half of the TIERS table above, which sat defined and
+ * unread until blocks.js started keeping `rawHardness` and `requiresTool`
+ * alongside the bare-handed seconds. With those two, Minecraft's real formula
+ * drops straight in -- no approximation, no second table of hand-tuned times.
+ *
+ * THE FORMULA, from Player.getDestroySpeed and BlockState.getDestroyProgress:
+ *
+ *   speed      = the tool's tier speed if the tool suits the BLOCK, else 1
+ *   canHarvest = the block needs no tool, OR the tool suits it AND the tier
+ *                level is high enough
+ *   ticks      = ceil(rawHardness * (canHarvest ? 30 : 100) / speed)
+ *
+ * Three things in there are easy to get wrong and all three are deliberate:
+ *
+ * 1. SPEED DOES NOT CHECK THE TIER. DiggerItem.getDestroySpeed returns the
+ *    tier's speed whenever the block is in the tool's mineable tag, whatever
+ *    the harvest level. So a wooden pickaxe on diamond ore really is faster
+ *    than a bare hand -- it is simply faster at producing nothing.
+ * 2. THE 30 vs 100 IS THE WHOLE PENALTY. Mining something you cannot harvest
+ *    takes 3.33x as long as mining it with the right tier, and that single
+ *    branch is where blocks.js's `hardness * 5` bare-handed numbers came from
+ *    (100/20 = 5 seconds per point of hardness at speed 1).
+ * 3. TIMES ARE QUANTISED TO WHOLE TICKS. Progress accumulates once a tick and
+ *    the block pops when it crosses 1, so stone with an iron pickaxe is 8
+ *    ticks (0.4s), not 7.5 -- which is exactly the number the wiki prints.
+ *
+ * Verified against the wiki's stone row: hand 7.5, wooden 1.15, stone 0.6,
+ * iron 0.4, diamond 0.3, netherite 0.25, gold 0.2. All seven come out exact.
+ *
+ * Enchantments, haste, being underwater and mining in mid-air are all absent.
+ * Each is another multiplier in the same expression, and none of them exist in
+ * this world yet.
+ * ------------------------------------------------------------------ */
+
+/** Minecraft's tick rate, which is what break times are actually counted in. */
+const TICKS_PER_SECOND = 20
+
+/*
+ * Which tool suits which block.
+ *
+ * Vanilla answers this with block TAGS -- mineable/pickaxe, mineable/axe and
+ * so on -- which are data files this project does not ship. So it is derived
+ * from the block key instead, in the order below, and the order is what makes
+ * it work: snow_block and the concrete powders are `requiresTool` blocks that
+ * want a SHOVEL, so the material rules have to be consulted before the
+ * "requires a tool, so it must be stone" fallback.
+ *
+ * Derived rather than spelled out per block because the palette is 355 long
+ * and grows by whole families at a time -- a table would be wrong the first
+ * time someone adds a wood set. It is a guess for exactly the blocks where
+ * being wrong costs nothing (no tool in this world speeds up glass or wool by
+ * enough for anyone to notice) and exact for every block that gates a drop.
+ */
+const SHOVEL_KEYS = new Set([
+  'grass', 'dirt', 'coarse_dirt', 'rooted_dirt', 'podzol', 'mycelium', 'mud',
+  'gravel', 'sand', 'red_sand', 'clay', 'soul_sand', 'soul_soil', 'snow_block',
+])
+const AXE_KEYS = new Set([
+  'planks', 'crafting_table', 'bookshelf', 'chiseled_bookshelf', 'barrel',
+  'loom', 'cartography_table', 'fletching_table', 'smithing_table', 'jukebox',
+  'note_block', 'beehive', 'bee_nest', 'melon', 'pumpkin', 'carved_pumpkin',
+  'jack_o_lantern', 'brown_mushroom_block', 'red_mushroom_block',
+  'mushroom_stem', 'bamboo_block', 'stripped_bamboo_block', 'bamboo_mosaic',
+])
+const HOE_KEYS = new Set([
+  'hay_block', 'dried_kelp_block', 'sponge', 'wet_sponge', 'moss_block',
+  'nether_wart_block', 'warped_wart_block', 'shroomlight', 'sculk',
+  'sculk_catalyst', 'target',
+])
+/* Blocks a pickaxe helps with that do NOT require one to drop. */
+const PICKAXE_KEYS = new Set(['ice', 'packed_ice', 'blue_ice'])
+
+const endsWithAny = (key, parts) => parts.some(p => key.endsWith(p))
+
+/** The tool class a block is mined with, or null if no tool helps. */
+export function toolForBlock(id) {
+  const def = BLOCK_BY_ID.get(id)
+  if (!def) return null
+  const key = def.key
+  if (SHOVEL_KEYS.has(key) || key.endsWith('_concrete_powder')) return 'shovel'
+  if (AXE_KEYS.has(key) || endsWithAny(key, ['_planks', '_log', '_wood', '_stem', '_hyphae'])) return 'axe'
+  if (HOE_KEYS.has(key) || key.endsWith('_leaves')) return 'hoe'
+  if (key.endsWith('_wool')) return 'shears'
+  if (def.requiresTool || PICKAXE_KEYS.has(key)) return 'pickaxe'
+  return null
+}
+
+/*
+ * Harvest level, from vanilla's needs_stone_tool / needs_iron_tool /
+ * needs_diamond_tool block tags. Only consulted for blocks that require a tool
+ * at all, so everything absent is level 0 -- a wooden pickaxe.
+ *
+ * Copper is a rule rather than a list because the copper family is eleven
+ * blocks (ore, raw block, block, cut, chiseled, grate, bulb, and three
+ * oxidation stages of most of those) that all sit at stone level.
+ */
+const NEEDS_STONE = new Set([
+  'iron_ore', 'deepslate_iron_ore', 'iron_block', 'raw_iron_block',
+  'lapis_ore', 'deepslate_lapis_ore', 'lapis_block',
+])
+const NEEDS_IRON = new Set([
+  'gold_ore', 'deepslate_gold_ore', 'nether_gold_ore', 'gold_block', 'raw_gold_block',
+  'redstone_ore', 'deepslate_redstone_ore',
+  'diamond_ore', 'deepslate_diamond_ore', 'diamond_block',
+  'emerald_ore', 'deepslate_emerald_ore', 'emerald_block',
+])
+const NEEDS_DIAMOND = new Set([
+  'obsidian', 'crying_obsidian', 'netherite_block', 'ancient_debris', 'respawn_anchor',
+])
+
+/** The tier level needed to get a drop out of this block. */
+export function harvestLevel(id) {
+  const key = BLOCK_BY_ID.get(id)?.key
+  if (!key) return 0
+  if (NEEDS_DIAMOND.has(key)) return 3
+  if (NEEDS_IRON.has(key)) return 2
+  if (NEEDS_STONE.has(key) || key.includes('copper')) return 1
+  return 0
+}
+
+/**
+ * DiggerItem.getDestroySpeed: the tier's speed when the tool suits the block,
+ * 1 otherwise. A sword reads as 1 on everything here -- vanilla gives it 1.5
+ * flat and 15 on cobwebs, neither of which is a block in this world.
+ */
+function destroySpeed(blockId, heldItemId) {
+  const tool = toolOf(heldItemId)
+  if (!tool) return 1
+  return tool.tool === toolForBlock(blockId) ? tool.speed : 1
+}
+
+/**
+ * Will this block give up its drop to this item? False is a real answer, not
+ * an error: it is stone punched by hand, or diamond ore hit with stone.
+ */
+export function canHarvest(blockId, heldItemId = 0) {
+  const def = BLOCK_BY_ID.get(blockId)
+  if (!def) return false
+  if (!def.requiresTool) return true
+  const tool = toolOf(heldItemId)
+  if (!tool || tool.tool !== toolForBlock(blockId)) return false
+  return tool.level >= harvestLevel(blockId)
+}
+
+/**
+ * How long this block takes to break with this item, in seconds.
+ * Infinity for bedrock, which is how interact.js already spells unbreakable.
+ */
+export function miningSeconds(blockId, heldItemId = 0) {
+  const def = BLOCK_BY_ID.get(blockId)
+  if (!def || !Number.isFinite(def.rawHardness)) return Infinity
+  const ticks = def.rawHardness * (canHarvest(blockId, heldItemId) ? 30 : 100) /
+    destroySpeed(blockId, heldItemId)
+  // At least one tick. A hardness of 0 (TNT, slime) is instant in vanilla, and
+  // instant here means one tick rather than a division by zero downstream.
+  return Math.max(1, Math.ceil(ticks)) / TICKS_PER_SECOND
+}
+
+/**
+ * The item a broken block leaves on the floor, or 0 for nothing.
+ *
+ * blocks.js already knows that grass gives dirt and stone gives cobblestone.
+ * What this adds is the tool gate in front of it: the block still breaks when
+ * your tier is too low, it just leaves nothing behind.
+ *
+ * Ores drop THEMSELVES rather than coal, diamonds and lapis. That is silk
+ * touch behaviour, it is what this world already did, and changing it means
+ * an ore -> item table in a file this change does not own.
+ */
+export function dropFor(blockId, heldItemId = 0) {
+  if (!canHarvest(blockId, heldItemId)) return 0
+  const def = BLOCK_BY_ID.get(blockId)
+  if (!def) return 0
+  return def.drops ?? blockId
 }

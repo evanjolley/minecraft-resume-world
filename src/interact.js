@@ -1,5 +1,5 @@
 import { BLOCK_BY_ID } from './blocks.js'
-import { itemPlaces } from './items.js'
+import { itemPlaces, miningSeconds } from './items.js'
 import { createEmitter } from './emitter.js'
 
 /*
@@ -106,12 +106,14 @@ export function installInteraction(noa, inv, fx, authority) {
     try {
       const res = await authority.requestBlockChange({ id: 0, position, cause: 'break' })
       if (!res.ok) return
-      // Minecraft drops a different block than the one mined for some types:
-      // grass gives dirt, stone gives cobblestone. Creative drops nothing at
-      // all -- you already have every block.
-      if (!authority.caps().infiniteResources) {
-        inv.add(BLOCK_BY_ID.get(id)?.drops ?? id, 1)
-      }
+      /*
+       * NOTHING IS ADDED TO THE INVENTORY HERE ANY MORE. A break used to
+       * teleport the block into your bags; it now leaves an item entity on the
+       * floor, and that spawn hangs off requestBlockChange itself rather than
+       * off this function -- see itemEntity.js for why the authority is the
+       * right seam for it. Which drop rule applies, and whether the tool was
+       * good enough to earn a drop at all, lives there too.
+       */
       // Emitted after the world has actually changed, so a subscriber that
       // reads the block back sees air rather than the block it's reacting to.
       // The id it wants is in the payload precisely because it's gone.
@@ -176,7 +178,23 @@ export function installInteraction(noa, inv, fx, authority) {
         showProgress(0, pos, id, dt / 1000)
         return
       }
-      breaking = { x: pos[0], y: pos[1], z: pos[2], id, elapsed: 0, total: def.hardness }
+      /*
+       * THE TOOL. `def.hardness` is the bare-handed seconds and was the only
+       * number this ever used, which is why a diamond pickaxe used to mine
+       * exactly as fast as a fist. miningSeconds() runs Minecraft's real
+       * formula against the held item instead -- the tier's speed when the
+       * tool suits the block, and the 3.33x penalty when it cannot harvest it
+       * at all. See items.js.
+       *
+       * Read once, when the break starts, rather than every tick. Vanilla
+       * recomputes it continuously, so swapping tools mid-swing rescales the
+       * progress you already have; here it means the tool you STARTED with
+       * decides the time. The difference is invisible unless you scroll the
+       * hotbar while holding the button, and it keeps the timer monotonic.
+       */
+      const held = inv.selectedStack()
+      const total = miningSeconds(id, held ? held.id : 0)
+      breaking = { x: pos[0], y: pos[1], z: pos[2], id, elapsed: 0, total }
     }
 
     breaking.elapsed += dt / 1000

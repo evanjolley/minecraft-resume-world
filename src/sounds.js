@@ -117,6 +117,22 @@ const MIX = {
   // hardcodes volume 0.25 while everything else in this table plays at 1.0.
   // Lifted with the rest of the mix, kept the quietest thing in it.
   uiClick: { set: 'uiClick', shared: true, volume: 0.35, pitch: 1.0 },
+
+  /*
+   * Picking an item up off the floor. Vanilla's Player.take:
+   *   playSound(ITEM_PICKUP, 0.2, ((rand - rand) * 0.7 + 1) * 2)
+   * -- so the pitch really is doubled, and the spread really is that wide.
+   * That squeak is the whole character of the sound, and a pop played at 1.0
+   * sounds like a different game.
+   *
+   * THE SAMPLE IS WRONG AND SAYS SO. entity.item.pickup is `random/pop`, and
+   * scripts/build-sounds.mjs does not extract it -- that file is not this
+   * change's to edit. `fallback` is what runs meanwhile: the UI click,
+   * pitched into the same register, which is a short dry tick and lands
+   * surprisingly close. The day `pickup: ['random/pop']` is added to SETS the
+   * manifest wins and this line stops mattering.
+   */
+  pickup: { set: 'pickup', fallback: 'uiClick', shared: true, volume: 0.3, pitch: 2.0, vary: 0.7 },
 }
 
 // Minecraft's LivingEntity.getFallDamageSound: more than 4 half-hearts of fall
@@ -302,7 +318,11 @@ export function installSounds(noa, deps = {}) {
       // No family means air, or a block id blocks.js has never heard of.
       if (!group) return false
     }
-    const name = sampleName(mix.set, group)
+    // `fallback` covers an event whose real sample the sound build does not
+    // produce yet. It is a stand-in, never a second choice for a set that
+    // simply failed to load -- that case should stay silent and visible.
+    const set = (mix.fallback && !manifest?.sets?.[mix.set]) ? mix.fallback : mix.set
+    const name = sampleName(set, group)
     const buf = name && buffers.get(name)
     if (!buf) return false
 
@@ -343,7 +363,7 @@ export function installSounds(noa, deps = {}) {
     // Sources are garbage once played; dropping the connection keeps a
     // stopped node from pinning the pooled gain in the graph.
     src.onended = () => { try { src.disconnect() } catch { /* already gone */ } }
-    lastPlayed = { event, set: mix.set, name }
+    lastPlayed = { event, set, name }
     return true
   }
 
