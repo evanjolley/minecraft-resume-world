@@ -1,6 +1,6 @@
 import {
   SHAPE_BOXES, buildShapeMesh, createMaterialCache,
-  installNonCubeCollision, installPlacementOrientation,
+  installNonCubeCollision, installPlacementOrientation, installThinInstanceUploadFix,
 } from './blockMeshes.js'
 
 /*
@@ -888,6 +888,7 @@ export function registerBlocks(noa) {
   const solidity = noa.registry.getBlockSolidity
   noa.blockTargetIdCheck = (id) => solidity(id) || shapeById[id] !== undefined
 
+  installThinInstanceUploadFix(noa)
   installNonCubeCollision(noa, shapeById)
   installPlacementOrientation(noa, NON_CUBE_VARIANTS)
 

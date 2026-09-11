@@ -124,10 +124,40 @@ multiplayer presence, and deployment.
 
 The block palette is 355 full cubes on a paged texture atlas (128 layers per
 page, 5 pages) -- paged because WebGL2 only guarantees 256 array layers, so a
-single page would cap the palette. Stairs, slabs and other non-cube geometry
-are still missing; noa supports them via blockMesh but nothing here uses it. Fog was
+single page would cap the palette. Fog was
 investigated and rejected: noa's terrain shader has no fog handling at all,
 so Babylon scene fog would tint the sky and leave the world untouched.
+
+Past the cubes there are 280 non-cube blocks: slabs and stairs for 28 material
+families, drawn through noa's `blockMesh` (see `blockMeshes.js`). They add no
+atlas layers -- they reuse their parent cube's texture through a plain Babylon
+material, one draw call per block id.
+
+**noa has no sub-voxel collision, and this is the part worth knowing.** Its
+physics asks `testSolid(x, y, z)` over integer coordinates and nothing else: a
+voxel is a whole cube or it is nothing. So slabs and stairs are registered
+non-solid, noa's sweep ignores them entirely, and `blockMeshes.js` resolves
+them itself after each physics step -- a swept test vertically so a fast fall
+can't tunnel through half a block, penetration depth horizontally, and
+Minecraft's 0.6 step height so you walk up a slab or a staircase without
+jumping. Full cubes are untouched by all of it and still refuse to be stepped
+onto, which is what keeps the parkour honest. Measured: falling onto a bottom
+slab rests at exactly y+0.5, and a five-step staircase is climbed from 71.5 to
+76.0 with no jump.
+
+Two sharp edges came out of that work. The terrain mesher draws a cube for any
+block with a face material, `blockMesh` or not, so non-cube blocks must
+register with no material at all. And noa hands Babylon its thin-instance
+matrix buffer before filling it and then relies on
+`thinInstanceBufferUpdated()`, which does nothing on Babylon 6.49 -- so any
+non-cube block placed fewer than nine at a time was invisible until
+`installThinInstanceUploadFix()` started re-uploading the buffer.
+
+Not modelled: fences, walls, panes and bars, and stair corner shapes. All of
+them pick their geometry from their neighbours, and noa's thin instances can
+vary a transform per voxel but not vertices. See the bottom of
+`blockMeshes.js` for the three ways out and why each is a bigger job than this
+one was.
 
 ## Layout
 

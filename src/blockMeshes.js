@@ -256,6 +256,49 @@ export function createMaterialCache(noa) {
   }
 }
 
+/**
+ * Force noa's thin-instance buffers to actually reach the GPU.
+ *
+ * THIS IS A WORKAROUND FOR A BUG IN noa + Babylon 6.49, and without it half
+ * the non-cube blocks in the world are invisible.
+ *
+ * objectMesher allocates a matrix buffer at capacity 8 and hands it to Babylon
+ * BEFORE writing any instance into it, then relies on
+ * `mesh.thinInstanceBufferUpdated('matrix')` to push the real matrices up
+ * afterwards. On Babylon 6.49 that call does nothing observable: the GPU keeps
+ * the zeroed buffer from the first upload. The only reason this isn't obvious
+ * in noa's own demos is that it self-corrects once the instance count passes 8
+ * -- growing the buffer re-uploads it -- so a wall of a hundred slabs looks
+ * fine and a single slab is invisible.
+ *
+ * Measured, since the symptom is baffling on its own: one brick slab placed
+ * alone rendered nothing at all; eleven more placed beside it made all twelve
+ * appear at once.
+ *
+ * Re-setting the buffer is what re-uploads it. `thinInstanceSetBuffer` also
+ * resets the instance count to the buffer's capacity, so the live count has to
+ * be put back or the seven unused slots draw as ghost blocks at the origin.
+ *
+ * Rejected: calling `thinInstanceBufferUpdated` a second time (measured: no
+ * effect), and patching noa in node_modules (invisible to anyone who reinstalls).
+ */
+export function installThinInstanceUploadFix(noa) {
+  const mesher = noa._objectMesher
+  const original = mesher.buildObjectMeshes.bind(mesher)
+
+  mesher.buildObjectMeshes = () => {
+    original()
+    for (const mesh of mesher.allBaseMeshes) {
+      const count = mesh?.thinInstanceCount
+      if (!count) continue
+      const data = mesh._thinInstanceDataStorage?.matrixData
+      if (!data) continue
+      mesh.thinInstanceSetBuffer('matrix', data)
+      mesh.thinInstanceCount = count
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Collision.
  * ------------------------------------------------------------------ */
