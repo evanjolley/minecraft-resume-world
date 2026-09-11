@@ -10,6 +10,7 @@ import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder'
 import '@babylonjs/core/Meshes/thinInstanceMesh.js'
 
 import { BLOCK_BY_ID } from './blocks.js'
+import { shapeBoxesFor } from './blockMeshes.js'
 import { createHeldBlockMesh, blockTextureUrl } from './heldItem.js'
 import { item, isBlockItem, stackMax, dropFor } from './items.js'
 
@@ -471,6 +472,25 @@ export function installItemEntities(noa, deps = {}) {
     return id !== 0 && noa.registry.getBlockSolidity(id)
   }
 
+  /*
+   * Does the drop's box overlap the sub-boxes of a non-cube block?
+   *
+   * Slabs and stairs register with noa as NOT solid -- that is how they opt
+   * out of noa's whole-voxel sweep and into blockMeshes.js's own resolver. So
+   * `solid()` above answers false for them, and without this a dropped item
+   * falls straight through a staircase and lands on whatever is underneath.
+   */
+  const overlapsShape = (x, y, z, minX, minY, minZ, maxX, maxY, maxZ) => {
+    const boxes = shapeBoxesFor(noa.getBlock(x, y, z))
+    if (!boxes) return false
+    for (const [bx0, by0, bz0, bx1, by1, bz1] of boxes) {
+      if (maxX > x + bx0 && minX < x + bx1 &&
+          maxY > y + by0 && minY < y + by1 &&
+          maxZ > z + bz0 && minZ < z + bz1) return true
+    }
+    return false
+  }
+
   /** Does a drop's box at this centre overlap terrain? */
   function blocked(cx, cy, cz) {
     // A hair inside the box, so a drop resting exactly on y=64.125 does not
@@ -480,6 +500,7 @@ export function installItemEntities(noa, deps = {}) {
       for (let y = Math.floor(cy - h); y <= Math.floor(cy + h); y++) {
         for (let z = Math.floor(cz - h); z <= Math.floor(cz + h); z++) {
           if (solid(x, y, z)) return true
+          if (overlapsShape(x, y, z, cx - h, cy - h, cz - h, cx + h, cy + h, cz + h)) return true
         }
       }
     }

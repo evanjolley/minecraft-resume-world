@@ -543,7 +543,22 @@ function applyStandingFriction(body, dvFromGravity) {
  * @param {*} noa
  * @param {any[]} shapeById sparse array: block id -> boxes, or undefined
  */
+/*
+ * The shape table, captured at install so other systems can ask about real
+ * solidity rather than noa's boolean.
+ *
+ * noa's registry answers `getBlockSolidity(id)` with a boolean, and non-cube
+ * blocks register as NOT solid so noa's own sweep leaves them alone. Anything
+ * else doing its own collision -- dropped items, for one -- would otherwise
+ * see a staircase as empty air and fall straight through it.
+ */
+let shapeLookup = []
+
+/** @returns the sub-boxes for a block id, or undefined for cubes and air. */
+export const shapeBoxesFor = (id) => shapeLookup[id]
+
 export function installNonCubeCollision(noa, shapeById) {
+  shapeLookup = shapeById
   const physics = noa.physics
   const originalTick = physics.tick.bind(physics)
 

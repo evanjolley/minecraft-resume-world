@@ -9,8 +9,8 @@ They came to find out who Evan is, and right now the world cannot tell them.
 Minecraft-accurate physics, survival HUD and inventory from Minecraft's own
 sprites, mining and placing, day/night on Minecraft's clock, a skinned player
 model with F5 perspectives and crouch, chat, block and damage sounds,
-break/landing/sprint particles, rain and thunder, Fancy 3D clouds, a 355-block palette on a paged
-texture atlas, slabs and stairs for 28 material families with real sub-voxel
+break/landing/sprint particles, rain and thunder, Fancy 3D clouds, extruded item models so tools
+are visible in hand, a 355-block palette on a paged texture atlas, slabs and stairs for 28 material families with real sub-voxel
 collision,
 oak trees, game modes behind an OP-gated authority, an item model with crafting
 (2x2 and 3x3), armor and an offhand, and a 109-test browser suite.
@@ -24,10 +24,14 @@ Roughly ascending in how much they depend on a decision from Evan.
 1. **Ore drops.** Ores still drop themselves rather than coal, diamond and
    lapis — which is silk-touch behaviour. Needs an ore-to-item table in
    `blocks.js`. Small, and conspicuous once you mine one.
-2. **The pickup sound** is currently the UI click pitched up, because
-   `random/pop` is not extracted. `sounds.js` already has a `fallback` field
-   that the manifest overrides automatically the day `pickup: ['random/pop']`
-   is added to `build-sounds.mjs`.
+2. **Dropped non-block items are flat planes.** `itemModel.js` now extrudes
+   item sprites for the hand, and the same mesh is reusable in
+   `itemEntity.js` — but it needs a `ground` entry in `DISPLAY` (vanilla's is
+   rotation [0,0,0], translation [0,2,0], scale 0.5, so double the current
+   0.25 and lift 0.125 blocks), and the geometry lands a frame late so the
+   first drop of a new item type pops in. Arguably not worth it: at drop scale
+   an extruded sprite is a handful of pixels, which is why it was a plane in
+   the first place.
 3. **Connected non-cube blocks** — fences, walls, panes, bars, and stair
    corner shapes. Slabs and stairs shipped; these did not, and the reason is
    structural rather than a matter of effort. noa draws a custom block mesh as
