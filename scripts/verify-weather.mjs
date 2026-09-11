@@ -118,6 +118,54 @@ await page.keyboard.press('KeyZ')
 await page.waitForFunction(() => window.game.sounds.state === 'running',
   null, { timeout: 15_000, polling: 50 }).catch(() => {})
 
+/* ---------- the command, driven through chat like a player would ---------- */
+
+const chatCommand = async (text) => {
+  const before = await page.evaluate(() =>
+    document.querySelectorAll('#chat-lines .chat-line').length)
+  await page.keyboard.press('Slash')
+  await page.waitForFunction(() => window.game.chat.isOpen, null, { timeout: 5000 })
+  await page.keyboard.type(text.replace(/^\//, ''))
+  await page.keyboard.press('Enter')
+  await page.waitForFunction(() => !window.game.chat.isOpen, null, { timeout: 5000 })
+  // Commands are async all the way down -- the authority returns a promise --
+  // so a granted request lands a microtask after Enter, not during it.
+  await ticks(2)
+  return page.evaluate((n) => [...document.querySelectorAll('#chat-lines .chat-line')]
+    .slice(n).map(el => ({ kind: el.dataset.kind, text: el.textContent })), before)
+}
+
+const setRain = await chatCommand('/weather rain')
+check('/weather rain reports vanilla\'s wording',
+  setRain.some(l => l.kind === 'system' && l.text.includes('Set the weather to rain')),
+  JSON.stringify(setRain.map(l => l.text)))
+
+const badWeather = await chatCommand('/weather sideways')
+check('/weather still parses like vanilla',
+  badWeather.filter(l => l.kind === 'error').length === 2,
+  JSON.stringify(badWeather.map(l => l.text)))
+
+const withDuration = await chatCommand('/weather thunder 1d')
+check('/weather takes vanilla\'s duration units',
+  withDuration.some(l => l.text.includes('Set the weather to thunder')),
+  JSON.stringify(withDuration.map(l => l.text)))
+
+/* doWeatherCycle: it gates the COUNTDOWN and nothing else. */
+await chatCommand('/gamerule doWeatherCycle false')
+const frozen = await page.evaluate(() => window.game.weather.timeLeft)
+await ticks(40)
+const stillFrozen = await page.evaluate(() => window.game.weather.timeLeft)
+await chatCommand('/gamerule doWeatherCycle true')
+const runningA = await page.evaluate(() => window.game.weather.timeLeft)
+await ticks(40)
+const runningB = await page.evaluate(() => window.game.weather.timeLeft)
+check('doWeatherCycle false freezes the weather clock',
+  frozen === stillFrozen && runningB < runningA - 10,
+  `frozen ${frozen} -> ${stillFrozen}, running ${runningA} -> ${runningB.toFixed(0)}`)
+
+await chatCommand('/weather clear 1d')
+await ticks(200)
+
 /* ---------- clouds ---------- */
 
 const cloud = await page.evaluate(() => {

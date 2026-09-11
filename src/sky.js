@@ -246,21 +246,28 @@ function buildCloudLayer(noa, scene) {
   }
 
   const half = (CLOUD_GRID * CLOUD_CELL) / 2
-  // Cells outside the grid count as empty, so the rim of the layer keeps its
-  // side faces. Testing the hash instead would cull faces against neighbours
-  // that are never drawn and leave the edge cells open.
-  const filled = (i, j) =>
-    i >= 0 && j >= 0 && i < CLOUD_GRID && j < CLOUD_GRID && cellFilled(i, j)
+  const R = CLOUD_GRID / 2
+  /*
+   * Clipped to a CIRCLE, as 1.21.6+ clips its own layer: the corners of a
+   * square reach 40% further than its edges, and the only thing a player can
+   * tell from that is that the sky ends in a straight line over there.
+   *
+   * Anything outside the circle counts as EMPTY rather than as absent, which
+   * is what keeps the rim's side faces: testing cellFilled alone would cull
+   * each edge face against a neighbour that is never drawn and leave the rim
+   * open, so the layer would be a ring of doorless rooms seen from below.
+   */
+  const filled = (i, j) => {
+    if (i < 0 || j < 0 || i >= CLOUD_GRID || j >= CLOUD_GRID) return false
+    const ci = i - R + 0.5, cj = j - R + 0.5
+    if (ci * ci + cj * cj > R * R) return false
+    return cellFilled(i, j)
+  }
 
   let cells = 0
   for (let i = 0; i < CLOUD_GRID; i++) {
     for (let j = 0; j < CLOUD_GRID; j++) {
       if (!filled(i, j)) continue
-      // Circular, as 1.21.6+ is: the corners of a square layer are 40% further
-      // away than its edges, and all a player can tell is that the sky ends
-      // in a straight line over there.
-      const ci = i - CLOUD_GRID / 2 + 0.5, cj = j - CLOUD_GRID / 2 + 0.5
-      if (ci * ci + cj * cj > (CLOUD_GRID / 2) * (CLOUD_GRID / 2)) continue
       cells++
       const x0 = i * CLOUD_CELL - half, x1 = x0 + CLOUD_CELL
       const z0 = j * CLOUD_CELL - half, z1 = z0 + CLOUD_CELL
@@ -280,9 +287,9 @@ function buildCloudLayer(noa, scene) {
   vd.positions = new Float32Array(positions)
   vd.colors = new Float32Array(colors)
   /*
-   * 32-bit indices, because ~10k quads is 40k vertices and a 16-bit index
-   * buffer tops out at 65k -- one Uint16Array away from a layer that silently
-   * folds in on itself. Babylon picks the width from the array type.
+   * 32-bit indices, because ~6800 quads is 27k vertices and a 16-bit index
+   * buffer tops out at 65k -- one CLOUD_GRID bump away from a layer that
+   * silently folds in on itself. Babylon picks the width from the array type.
    */
   vd.indices = new Uint32Array(indices)
   vd.applyToMesh(layer, false)

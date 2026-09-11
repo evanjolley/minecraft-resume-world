@@ -166,6 +166,13 @@ export function installWeather(noa, { sky, authority, sounds = null } = {}) {
   function strike() {
     bolts++
     flashTicks = FLASH_TICKS
+    /*
+     * Pushed to the sky HERE as well as from the tick below, because sky.js
+     * registered its tick handler first and therefore reads these levels one
+     * tick before this module writes them. A 33 ms lag is nothing for a storm
+     * rolling in over five seconds and is a third of a lightning flash.
+     */
+    sky.setWeatherLevels({ rain: rainLevel, thunder: thunderLevel * rainLevel, flash: 1 })
     // Vanilla plays entity.lightning_bolt.thunder at the strike, at a volume
     // that carries for 256 blocks. Distance is what makes one clap a crack and
     // the next a rumble, and here there is no bolt to measure it from.
