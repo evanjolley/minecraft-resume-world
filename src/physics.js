@@ -504,24 +504,28 @@ function preventWalkingOffEdge(noa) {
   const below = Math.floor(y - FOOT_PROBE)
 
   /*
-   * EVERY corner of the player's box must be over solid ground, not just one.
+   * ANY part of the player's box over solid ground counts as support, which
+   * means you can overhang an edge a long way while sneaking.
    *
-   * "Any corner" seems more permissive in a good way but isn't: it counts a
-   * four-thousandth of a block of overlap as support, so you slide to x=40.296
-   * with 99% of your body over the void and call it standing. Requiring all
-   * four stops you with the box fully on the block, which is where Minecraft
-   * stops you.
+   * That is not a looseness to be tightened -- it is the entire mechanic.
+   * Minecraft's Entity.maybeBackOffFromEdge shortens the movement until the
+   * box still finds something beneath it, and the box is 0.6 wide against a
+   * 1.0 block, so a sneaking player really can hang most of their body over
+   * the void. Bridging depends on it: you walk to the edge, overhang, and
+   * place a block into the space under your own feet.
    *
-   * This still allows a one-block-wide bridge -- the player is 0.6 wide, so
-   * all four corners fit inside a single block with room to spare.
+   * An earlier version required all four corners, reasoning that a sliver of
+   * overlap should not count as standing. It stopped the player with the box
+   * fully on the block -- and made bridging impossible, which is the whole
+   * reason anyone sneaks.
    */
   const grounded = (px, pz) => {
     for (const dx of [-half, half]) {
       for (const dz of [-half, half]) {
-        if (noa.getBlock(Math.floor(px + dx), below, Math.floor(pz + dz)) === 0) return false
+        if (noa.getBlock(Math.floor(px + dx), below, Math.floor(pz + dz)) !== 0) return true
       }
     }
-    return true
+    return false
   }
 
   if (grounded(x, z)) {

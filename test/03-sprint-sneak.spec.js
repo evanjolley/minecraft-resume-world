@@ -133,7 +133,11 @@ test.describe('sneak', () => {
     // x = 39.7, with the feet still at y = 64.
     const where = `ended at x=${x.toFixed(3)} y=${y.toFixed(3)}`
     expect(y, `${where} -- fell off the island while sneaking`).toBeCloseTo(SURFACE_Y, 1)
-    expect(x, `${where} -- walked past the rim`).toBeLessThan(ISLAND_HALF - 0.25)
+    // Overhang is the POINT of sneaking, so this only asserts you are still
+    // supported, not that you stopped short. The box is 0.6 wide against a
+    // 1.0 block, so a sneaking player hangs most of their body over the void
+    // -- that is what makes bridging possible.
+    expect(x, `${where} -- lost all footing on the rim`).toBeLessThan(ISLAND_HALF + 0.6)
     expect(x, `${where} -- never actually walked`).toBeGreaterThan(ISLAND_HALF - 0.55)
   })
 
