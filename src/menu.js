@@ -26,6 +26,7 @@ const CONTROLS = [
   ['Left click (hold)', 'Mine a block'],
   ['Right click', 'Place a block'],
   ['1 - 9, or scroll', 'Change hotbar slot'],
+  ['Q', 'Drop the held item (ctrl+Q for the whole stack)'],
   ['E', 'Inventory'],
   ['T', 'Chat'],
   ['/', 'Chat, with a command started'],

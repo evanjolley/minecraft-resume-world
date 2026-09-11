@@ -82,6 +82,12 @@ that cue a 30% speed change is nearly imperceptible.
 Day/night runs Minecraft's clock: 24000 ticks at 20/sec, measured at 19.95,
 so a 20.1 minute day against Minecraft's 20.
 
+Tools work: mining time is `ceil(rawHardness * (canHarvest ? 30 : 100) /
+destroySpeed)` quantised to whole ticks, which reproduces the wiki's stone row
+exactly across all seven tiers. Mined blocks drop on the floor as item
+entities and are picked up by walking over them, rather than teleporting into
+the inventory.
+
 Also implemented: hold-to-break with per-block times and the destroy-stage
 crack overlay, Minecraft's drop rules (grass gives dirt, stone gives
 cobblestone), placement blocked when it would trap the player, stack-merging
@@ -97,7 +103,7 @@ switched off via `HUNGER_DRAIN_ENABLED` in `survival.js`, because a visitor
 reading a resume plot shouldn't starve while doing it.
 
 Not yet done: resume content (the whole point -- the island is still empty),
-multiplayer presence, and non-cube blocks (stairs, slabs, panes).
+multiplayer presence, and deployment.
 
 The block palette is 355 full cubes on a paged texture atlas (128 layers per
 page, 5 pages) -- paged because WebGL2 only guarantees 256 array layers, so a

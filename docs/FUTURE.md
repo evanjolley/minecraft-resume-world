@@ -19,16 +19,13 @@ Nothing is in flight.
 
 Roughly ascending in how much they depend on a decision from Evan.
 
-1. **Dropped item entities.** Mined blocks teleport into the inventory; they
-   should fall, tumble and be picked up, with Q to drop. Now unblocked — the
-   authority's `requestBlockChange` is the single place a break happens, which
-   is exactly where a drop hangs off. Brings pickup sounds and animations with
-   it, and it is the most conspicuous remaining difference from Minecraft.
-2. **Tool mining speed.** The tiers and multipliers exist in `items.js`,
-   unwired. **There is a blocker:** `blocks.js`'s `T()` bakes the bare-handed
-   penalty into `hardness` and discards whether it applied x5 or x1.5, so the
-   raw hardness that `time = hardness * 1.5 / toolSpeed` needs is gone. `T()`
-   has to keep `{ hardness, requiresTool }` first.
+1. **Ore drops.** Ores still drop themselves rather than coal, diamond and
+   lapis — which is silk-touch behaviour. Needs an ore-to-item table in
+   `blocks.js`. Small, and conspicuous once you mine one.
+2. **The pickup sound** is currently the UI click pitched up, because
+   `random/pop` is not extracted. `sounds.js` already has a `fallback` field
+   that the manifest overrides automatically the day `pickup: ['random/pop']`
+   is added to `build-sounds.mjs`.
 3. **Non-cube blocks** — stairs, slabs, fences, walls, panes, via noa's
    `blockMesh`. Roughly half of what makes a build look built, and a hard
    prerequisite for importing anything made in real Minecraft.
