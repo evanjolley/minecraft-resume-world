@@ -42,6 +42,23 @@ Roughly ascending in how much they depend on a decision from Evan.
    system driven off the registry's onSet/onUnset hooks, which has to
    reimplement noa's origin rebasing because noa offers no hook to shift our
    matrices when it shifts its own.
+4. **A credits surface — blocks deployment, not optional.** There was a
+   Credits sheet in the pause menu and it was pulled: it made the button count
+   odd and it is not what the menu is for. The obligation it was discharging
+   did not go with it. Pixel Perfection CE is CC BY-SA 4.0, Monocraft is SIL
+   OFL 1.1, and the sound set is a mix of CC0, CC BY and CC BY-SA; all of them
+   except CC0 require credit wherever the work is distributed, and a deployed
+   page is a distribution. The NOTICE files do ship — `/textures/NOTICE.txt`
+   and `/sounds/NOTICE.txt` both resolve — but nothing on the page points at
+   them, and an unadvertised file is not attribution. Nothing is live, so
+   nothing is out of compliance today; the day it goes live, it is. CC lets
+   the condition be met "in any reasonable manner based on the medium",
+   explicitly including a link to a resource carrying the details, so this can
+   be small and need not be a pause-menu button: a line in the F3 debug
+   screen, a `/credits` chat command, a footer on the page around the canvas,
+   or a link from the Controls sheet would each do it. Cheapest to build is
+   the chat command, since chat already renders links.
+
 6. **Deployment** — platform decided, see `docs/DEPLOYMENT.md`. Then
    **content**, then **video screens** and
    **multiplayer** — see Sequencing below. These are the ones that need Evan,
@@ -51,7 +68,9 @@ Roughly ascending in how much they depend on a decision from Evan.
 
 1. **Content on the island.** Blocked on nothing technical. This is the gap.
 2. **Deployment.** There is still no hosting config. Nothing is live, so no
-   visitor has ever seen any of this.
+   visitor has ever seen any of this. Do the credits surface above first, or
+   at the same time — it is cheap, and it stops being optional the moment
+   anything is served.
 3. **Video screens.** The richest way to deliver the content, and independent
    of everything else.
 4. **An AI version of Evan, in the world, that visitors can talk to and book

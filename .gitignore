@@ -23,3 +23,7 @@ public/sounds/
 # that must never be committed, and the time to ignore it is before it exists.
 .dev.vars
 .dev.vars.*
+
+# Playwright's failure artifacts: traces and error contexts for the last run.
+# Regenerated every run, useless once it passes.
+test-results/

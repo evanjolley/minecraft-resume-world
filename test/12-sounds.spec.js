@@ -275,7 +275,7 @@ test.describe('sounds', () => {
      * but this test says menu.js still puts that class on what it builds.
      */
     await page.evaluate(() => window.game.menu.open())
-    const button = page.getByRole('button', { name: 'Credits' })
+    const button = page.getByRole('button', { name: 'Controls' })
     await expect(button).toBeVisible()
 
     await audio.clear()
@@ -285,7 +285,7 @@ test.describe('sounds', () => {
     expect(click, 'a pause-menu button was silent').toBeTruthy()
     expect(click.gain).toBeCloseTo(UI_GAIN, 5)
 
-    await page.locator('#credits-close').click()
+    await page.locator('#controls-close').click()
     await page.evaluate(() => window.game.menu.close())
   })
 

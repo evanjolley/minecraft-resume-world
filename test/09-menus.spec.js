@@ -77,6 +77,80 @@ test.describe('menus', () => {
     expect(Math.hypot(x1 - x0, z1 - z0), 'coasted into the menu').toBeLessThan(0.01)
   })
 
+  /*
+   * INPUT THAT IS NOT MOVEMENT.
+   *
+   * The lock detaches noa's receivesInputs, which covers walking and nothing
+   * else. Our own tick handlers poll noa.inputs.state straight off the
+   * keyboard -- sneak for the camera drop and the edge guard, sprint for the
+   * FOV -- so both of those kept running behind an open screen. You stood
+   * still with the camera dropped, or stood still at sprint FOV, which is the
+   * bug Evan hit from both ends.
+   *
+   * These read the camera rather than the position deliberately. Position is
+   * already covered above and would pass either way: the symptom here is
+   * precisely that the player does NOT move while something else reacts.
+   */
+  const eyeHeight = (page) => page.evaluate(() =>
+    window.noa.ents.getState(window.noa.camera.cameraTarget, 'followsEntity').offset[1])
+  const fov = (page) => page.evaluate(() => window.noa.rendering.camera.fov)
+
+  test('sneaking behind a menu does not drop the camera', async ({ page }) => {
+    const standing = await eyeHeight(page)
+    await page.evaluate(() => window.game.menu.open())
+    await page.keyboard.down('ShiftLeft')
+    await waitTicks(page, 12)   // the drop eases in over a few ticks, not instantly
+    const held = await eyeHeight(page)
+    await page.keyboard.up('ShiftLeft')
+
+    expect(held, 'the camera crouched behind an open menu').toBeCloseTo(standing, 3)
+  })
+
+  test('double-tapping sprint behind a menu does not widen the FOV', async ({ page }) => {
+    /*
+     * Sprint is set by the double-tap DOWN event, which fires whatever is
+     * open, and then held by the tick as long as forward is down -- and
+     * during the second tap it is. So the FOV lerped out to sprint width
+     * while the player stood still.
+     */
+    const base = await fov(page)
+    await page.evaluate(() => window.game.menu.open())
+    await page.keyboard.press('KeyW')
+    await page.keyboard.down('KeyW')
+    await waitTicks(page, 20)   // FOV eases at 9/sec; 20 ticks is most of the way
+    const widened = await fov(page)
+    await page.keyboard.up('KeyW')
+
+    expect(widened, 'the FOV sprinted behind an open menu').toBeCloseTo(base, 4)
+  })
+
+  test('a key held across the close does not act until it is pressed again',
+    async ({ page }) => {
+      /*
+       * Minecraft calls KeyMapping.releaseAll() when a screen opens: close the
+       * menu still holding W and you stand there until you let go and press
+       * again. Without it the gate hands back a key that was never released
+       * and you resume mid-sprint, which is smoother and is not the game.
+       */
+      await page.keyboard.down('KeyW')
+      await page.waitForTimeout(200)
+      await page.evaluate(() => window.game.menu.open())
+      await waitTicks(page, 3)
+      await page.evaluate(() => window.game.menu.close())
+      await waitTicks(page, 3)
+
+      const [x0, , z0] = await position(page)
+      await page.waitForTimeout(500)
+      const [x1, , z1] = await position(page)
+      expect(Math.hypot(x1 - x0, z1 - z0), 'a held key resumed on its own')
+        .toBeLessThan(0.01)
+
+      // And the other half of the claim: it comes back when re-pressed.
+      await page.keyboard.up('KeyW')
+      await waitTicks(page, 2)
+      expect(await drift(page), 'the key never came back').toBeGreaterThan(1)
+    })
+
   test('the menu screens render', async ({ page }) => {
     // Visual: Minecraft's button sprite, the paired rows and the controls
     // sheet are layout judgements, not values.
@@ -90,101 +164,4 @@ test.describe('menus', () => {
     await page.locator('#controls-close').click()
   })
 
-  /*
-   * CREDITS IS A LICENCE, NOT A FEATURE.
-   *
-   * The attribution used to be 9px grey type pinned to the bottom-right of the
-   * HUD. It is gone from there, and these tests exist because it could not
-   * simply be deleted: Pixel Perfection CE is CC BY-SA 4.0 and the sound set is
-   * CC0 / CC BY / CC BY-SA, and credit is a condition of redistributing any of
-   * them. This page IS the redistribution.
-   *
-   * So the pair of assertions below is one claim in two halves -- gone from the
-   * HUD, still reachable -- and failing EITHER half is a bug. A test that only
-   * checked the first would pass on a build that quietly dropped the notice.
-   */
-  test.describe('credits', () => {
-    const openCredits = async (page) => {
-      await page.evaluate(() => window.game.menu.open())
-      await page.getByRole('button', { name: 'Credits' }).click()
-      await expect(page.locator('#credits')).toBeVisible()
-    }
-
-    test('the attribution is gone from the HUD', async ({ page }) => {
-      // By id, and then by the text itself: renaming the element would slip
-      // past the first check on its own.
-      expect(await page.locator('#credit').count()).toBe(0)
-      await expect(page.locator('#hud')).not.toContainText('CC BY-SA')
-      await expect(page.locator('#hud')).not.toContainText('Pixel Perfection')
-    })
-
-    test('every licensed work is named on the credits screen', async ({ page }) => {
-      await openCredits(page)
-      const text = await page.locator('#credits').innerText()
-
-      // Every work that carries an attribution condition, by name and licence.
-      expect(text).toContain('Pixel Perfection CE')
-      expect(text).toContain('CC BY-SA 4.0')
-      expect(text).toContain('Monocraft')
-      expect(text).toContain('SIL OFL 1.1')
-    })
-
-    test('the sounds NOTICE the credits link to exists', async ({ page }) => {
-      /*
-       * The sound set's condition is satisfied by the NOTICE rather than by
-       * the credits screen itself -- 60-odd files across three licences do not
-       * fit on a menu -- so the LINK is what makes the screen compliant, and a
-       * link that 404s is the whole notice missing. Fetched, not just read off
-       * the href, because the build is what emits that file.
-       */
-      await openCredits(page)
-      const href = await page.locator('#credits a[href$="/sounds/NOTICE.txt"]').first()
-        .getAttribute('href')
-      expect(href).toBe('/sounds/NOTICE.txt')
-
-      const res = await page.request.get(href)
-      expect(res.status(), 'the credits link to a NOTICE the build never emitted').toBe(200)
-      expect(await res.text()).toContain('CC BY-SA')
-    })
-
-    test('every credits link resolves', async ({ page }) => {
-      // The off-site ones are not fetched: a licence deed being unreachable is
-      // Creative Commons having an outage, not this repo regressing. What IS
-      // checked is that each anchor carries an absolute or rooted href and
-      // opens away from the game, since a link that navigates the page kills
-      // the world behind it.
-      await openCredits(page)
-      const links = await page.locator('#credits a').evaluateAll(
-        as => as.map(a => ({ href: a.getAttribute('href'), target: a.target, rel: a.rel })))
-
-      expect(links.length).toBeGreaterThanOrEqual(4)
-      for (const l of links) {
-        expect(l.href, 'a credits link with no destination').toMatch(/^(https?:\/\/|\/)/)
-        expect(l.target).toBe('_blank')
-        expect(l.rel).toContain('noopener')
-      }
-    })
-
-    test('Done closes the credits sheet', async ({ page }) => {
-      await openCredits(page)
-      await page.locator('#credits-close').click()
-      await expect(page.locator('#credits')).toBeHidden()
-      await expect(page.locator('#pause')).toBeVisible()
-    })
-
-    test('closing the menu closes the credits sheet', async ({ page }) => {
-      // The sheet is a sibling of #pause, not a child, so hiding the menu does
-      // not hide it -- menu.js has to, and it used to name only #controls.
-      await openCredits(page)
-      await page.evaluate(() => window.game.menu.close())
-      await expect(page.locator('#credits')).toBeHidden()
-    })
-
-    test('the credits screen renders', async ({ page }) => {
-      await openCredits(page)
-      await waitTicks(page, 2)
-      await shot(page, 'menu-credits')
-      await page.locator('#credits-close').click()
-    })
-  })
 })
