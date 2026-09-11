@@ -206,8 +206,10 @@ export function createInventory() {
    * Take the crafted result.
    *
    * Take-only: nothing can be PUT here, which is why this is its own function
-   * rather than a branch in clickSlot. Vanilla's shift-click "craft as many as
-   * fit" is not implemented -- see the report.
+   * rather than a branch in clickSlot. This is the PLAIN click; the
+   * shift-click "craft as many as fit" is a different code path entirely and
+   * lives in quickMoveStack below, which is also true of vanilla -- ResultSlot
+   * splits them into onTake and onQuickCraft.
    */
   const takeResult = () => {
     const result = inv.craft.result
@@ -239,6 +241,393 @@ export function createInventory() {
     return armorOf(id)?.slot === ARMOR_SLOTS[index]
   }
 
+  /* ---------------- shift-click (quick move) ---------------- */
+
+  /*
+   * Minecraft's shift-click, taken from the decompiled source rather than
+   * from the wiki, because the two disagree in three places and the source
+   * wins all three (each disagreement is flagged where it bites).
+   *
+   * Three vanilla pieces make the feature, and you need all of them:
+   *
+   *   AbstractContainerMenu.moveItemStackTo   the two-pass mover
+   *   <Menu>.quickMoveStack                   a per-screen chain of ranges
+   *   AbstractContainerMenu.doClick           the QUICK_MOVE repeat loop
+   *
+   * Build only the first two and you get a shift-click that crafts exactly
+   * one item, which is the bug every Minecraft player spots in the first ten
+   * seconds -- because "craft until the grid runs out" is not in the crafting
+   * code at all, it is in doClick's while loop.
+   */
+
+  /*
+   * CONTAINER INDICES ARE NOT INVENTORY INDICES. This is the one mapping the
+   * whole feature turns on, so it is spelled out rather than derived.
+   *
+   * quickMoveStack's ranges index the MENU's slot list -- the order the screen
+   * calls addSlot in -- and that order is not `inv.slots`:
+   *
+   *   InventoryMenu (the 2x2 player screen)   CraftingMenu (the table)
+   *     0       result                          0      result
+   *     1-4     craft 0-3                       1-9    craft 0-8
+   *     5-8     armor 0-3 (helmet..boots)      10-36   slots 9-35
+   *     9-35    slots 9-35                     37-45   slots 0-8
+   *    36-44    slots 0-8
+   *    45       offhand 0
+   *
+   * The trap is the player's own 36. Minecraft's Inventory stores the hotbar
+   * at 0-8 and the main grid at 9-35 -- exactly as `inv.slots` does -- but the
+   * MENU adds the main grid FIRST and the hotbar LAST. So container 9-35 and
+   * inventory 9-35 coincide by luck, while container 36-44 means inventory
+   * 0-8. Read 36-44 as "the last nine of inv.slots" and shift-clicking from
+   * the hotbar quietly moves the wrong row, in a way that looks correct until
+   * something lands on the boundary.
+   *
+   * Note also what the crafting table does NOT have: no armor slots, no
+   * offhand. Vanilla's CraftingMenu really does stop at 46, which is why
+   * shift-clicking a helmet at a table can never equip it.
+   */
+  const buildMenu = (gridSize) => {
+    const slots = [{ area: 'result', index: 0 }]
+    for (let i = 0; i < gridSize * gridSize; i++) slots.push({ area: 'craft', index: i })
+    if (gridSize === 2) for (let i = 0; i < 4; i++) slots.push({ area: 'armor', index: i })
+    for (let i = HOTBAR_SIZE; i < TOTAL_SLOTS; i++) slots.push({ area: 'main', index: i })
+    for (let i = 0; i < HOTBAR_SIZE; i++) slots.push({ area: 'main', index: i })
+    if (gridSize === 2) slots.push({ area: 'offhand', index: 0 })
+    return slots
+  }
+
+  /*
+   * The range constants, under vanilla's own field names so the chains below
+   * read against the source line for line. Ends are EXCLUSIVE, as
+   * moveItemStackTo's `endIndex` is.
+   *
+   * Built once. The descriptors hold indices, not stacks, so they survive
+   * setCraftSize reallocating `inv.craft.cells` underneath them.
+   */
+  const INV_MENU = {
+    slots: buildMenu(2),
+    chain: quickMoveInventoryMenu,
+    RESULT: 0,
+    CRAFT_START: 1, CRAFT_END: 5,
+    ARMOR_START: 5, ARMOR_END: 9,
+    INV_START: 9, INV_END: 36,
+    USE_ROW_START: 36, USE_ROW_END: 45,
+    SHIELD_SLOT: 45,
+  }
+  const TABLE_MENU = {
+    slots: buildMenu(3),
+    chain: quickMoveCraftingMenu,
+    RESULT: 0,
+    CRAFT_START: 1, CRAFT_END: 10,
+    INV_START: 10, INV_END: 37,
+    USE_ROW_START: 37, USE_ROW_END: 46,
+  }
+
+  /*
+   * Which screen's menu is live.
+   *
+   * Keyed off the grid size rather than off the screen handle, because the
+   * MODEL has to answer this with no DOM attached -- the test suite drives
+   * clickSlot directly. `craft.size` is the model's own record of which
+   * container it is currently part of: 2 for the player inventory, 3 for a
+   * crafting table, set by show() on open and put back on close.
+   */
+  const openMenu = () => (inv.craft.size === 3 ? TABLE_MENU : INV_MENU)
+
+  /** Slot.getItem, over whichever container the descriptor names. */
+  const slotGet = (d) => (d.area === 'result' ? inv.craft.result : container(d.area)[d.index])
+
+  /** Slot.set / Slot.setByPlayer. */
+  const slotSet = (d, stack) => {
+    if (d.area === 'result') inv.craft.result = stack
+    else container(d.area)[d.index] = stack
+  }
+
+  /**
+   * Slot.mayPlace. ResultSlot.mayPlace returns false unconditionally; armor
+   * slots are picky; everything else takes anything. `accepts` already
+   * encodes the armor rule for ordinary clicks, so this is the result slot
+   * plus a delegation rather than a second copy of the rule.
+   */
+  const mayPlace = (d, stack) => d.area !== 'result' && accepts(d.area, d.index, stack.id)
+
+  /**
+   * Slot.getMaxStackSize(stack) = min(the slot's own cap, the item's cap).
+   * No slot here caps below 64: vanilla's ArmorSlot caps at 1, but every
+   * armor item in items.js is already `stack: 1`, so the item's cap is the
+   * whole answer and a slot cap would only restate it.
+   */
+  const slotMaxStackSize = (stack) => stackMax(stack.id)
+
+  /**
+   * AbstractContainerMenu.moveItemStackTo, verbatim.
+   *
+   * `stack` is the LIVE stack out of the source slot and is mutated in place,
+   * exactly as vanilla mutates its ItemStack; `count === 0` is ItemStack.EMPTY.
+   * Returns whether anything moved, which is all quickMoveStack looks at.
+   *
+   * TWO PASSES, and their order is the part people feel:
+   *
+   *   1. top up every compatible stack already in the range
+   *   2. only then, drop what is left into the FIRST empty slot
+   *
+   * Fusing them into one loop is the obvious simplification and it is wrong:
+   * 40 cobblestone shift-clicked past an empty slot into a row holding a
+   * 30-stack would land in the empty slot and fragment, where Minecraft fills
+   * the 30 up to 64 and puts the remaining 6 in the empty one.
+   *
+   * `reverseDirection` walks the range from the far end. Only the crafting
+   * RESULT slot ever passes true, in both menus, and that is why a crafted
+   * item lands in your RIGHTMOST free hotbar slot instead of the first free
+   * slot of your inventory.
+   */
+  const moveItemStackTo = (menu, stack, startIndex, endIndex, reverseDirection) => {
+    let moved = false
+    let i = reverseDirection ? endIndex - 1 : startIndex
+    const inRange = () => (reverseDirection ? i >= startIndex : i < endIndex)
+    const step = () => { i += reverseDirection ? -1 : 1 }
+
+    // ItemStack.isStackable(). Unstackable items skip the merge pass outright,
+    // which is why two pickaxes never combine into one slot.
+    if (stackMax(stack.id) > 1) {
+      while (stack.count > 0 && inRange()) {
+        const target = slotGet(menu.slots[i])
+        /*
+         * NO mayPlace CHECK HERE, and that is vanilla rather than an
+         * oversight on our part: the merge pass tests only "same item", and
+         * only the empty-slot pass below asks the slot whether it will accept
+         * the item at all. Unobservable in these two screens -- nothing in
+         * range refuses an item it is already holding -- but reproducing it
+         * keeps the two passes honestly different from each other.
+         */
+        if (target && target.id === stack.id) {
+          const sum = target.count + stack.count
+          const max = slotMaxStackSize(stack)
+          if (sum <= max) {
+            stack.count = 0
+            target.count = sum
+            moved = true
+          } else if (target.count < max) {
+            stack.count -= max - target.count
+            target.count = max
+            moved = true
+          }
+        }
+        step()
+      }
+    }
+
+    if (stack.count > 0) {
+      i = reverseDirection ? endIndex - 1 : startIndex
+      while (inRange()) {
+        const d = menu.slots[i]
+        if (!slotGet(d) && mayPlace(d, stack)) {
+          /*
+           * ONE empty slot, then `break`. Vanilla does not keep filling, and
+           * the break is load-bearing the moment a slot's cap is lower than
+           * the stack being moved -- the remainder stays on the stack and the
+           * caller decides what happens to it. With everything capped at 64
+           * there is no remainder today; keeping the break costs nothing and
+           * keeps that true by construction rather than by luck.
+           */
+          const put = Math.min(stack.count, slotMaxStackSize(stack))
+          slotSet(d, { id: stack.id, count: put })
+          stack.count -= put
+          moved = true
+          break
+        }
+        step()
+      }
+    }
+
+    return moved
+  }
+
+  /**
+   * Player.getEquipmentSlotForItem: where an item equips itself. Armor
+   * answers its own piece, a shield would answer 'offhand', everything else
+   * answers 'mainhand'.
+   *
+   * items.js has no shield, so the offhand branch of the chain below is
+   * dormant. Kept anyway, because deleting it would change the ORDER of the
+   * chain, and the order is the specification.
+   */
+  const equipmentSlotForItem = (id) => armorOf(id)?.slot ?? 'mainhand'
+
+  /**
+   * InventoryMenu.quickMoveStack's if/else chain, verbatim.
+   *
+   * Returns false where vanilla returns ItemStack.EMPTY -- "refuse the whole
+   * click, change nothing else" -- and true otherwise.
+   */
+  function quickMoveInventoryMenu(m, index, stack) {
+    const equip = equipmentSlotForItem(stack.id)
+    /*
+     * Vanilla writes the armor destination as `8 - equipmentslot.getIndex()`,
+     * where the EquipmentSlot indices run FEET 0, LEGS 1, CHEST 2, HEAD 3 --
+     * i.e. it counts BACKWARDS from the boots slot at 8 to the helmet at 5.
+     * ARMOR_SLOTS runs helmet-first, so the same number is ARMOR_START + i,
+     * and writing it that way is what stops the boots landing on your head.
+     */
+    const armorAt = ARMOR_SLOTS.indexOf(equip)
+    const armorSlot = armorAt < 0 ? -1 : m.ARMOR_START + armorAt
+
+    if (index === m.RESULT) {
+      if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_END, true)) return false
+      /*
+       * slot.onQuickCraft(itemstack1, itemstack) belongs here. All it does is
+       * add (original count - remaining count) to ResultSlot.removeCount so
+       * that checkTakeAchievements can award the "crafted N of X" statistic
+       * and the recipe unlock once per batch instead of once per item. There
+       * are no stats, advancements or recipe book here, so there is nothing
+       * for it to accumulate -- the half of that path that IS observable is
+       * the ingredient spend, and that happens in onTake below.
+       */
+    } else if (index >= m.CRAFT_START && index < m.CRAFT_END) {
+      if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_END, false)) return false
+    } else if (index >= m.ARMOR_START && index < m.ARMOR_END) {
+      if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_END, false)) return false
+    } else if (armorSlot >= 0 && !slotGet(m.slots[armorSlot])) {
+      /*
+       * An armor piece equips itself -- but ONLY into an EMPTY slot. Vanilla
+       * guards on `!slots.get(8 - index).hasItem()`, so a second helmet while
+       * you are already wearing one falls through to the plain main<->hotbar
+       * moves below instead of swapping with the one you have on.
+       *
+       * The one-slot range (i, i+1) is also what makes this land in the
+       * helmet slot rather than the first free slot anywhere.
+       */
+      if (!moveItemStackTo(m, stack, armorSlot, armorSlot + 1, false)) return false
+    } else if (equip === 'offhand' && !slotGet(m.slots[m.SHIELD_SLOT])) {
+      if (!moveItemStackTo(m, stack, m.SHIELD_SLOT, m.SHIELD_SLOT + 1, false)) return false
+    } else if (index >= m.INV_START && index < m.INV_END) {
+      if (!moveItemStackTo(m, stack, m.USE_ROW_START, m.USE_ROW_END, false)) return false
+    } else if (index >= m.USE_ROW_START && index < m.USE_ROW_END) {
+      if (!moveItemStackTo(m, stack, m.INV_START, m.INV_END, false)) return false
+    } else if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_END, false)) {
+      return false
+    }
+    return true
+  }
+
+  /**
+   * CraftingMenu.quickMoveStack's if/else chain, verbatim.
+   *
+   * THE WIKI IS WRONG HERE, and this is the branch to read twice. The
+   * Inventory page says shift-clicking "immediately moves it between the
+   * inventory and the hotbar", full stop. At a crafting table the source
+   * tries the 3x3 GRID FIRST -- moveItemStackTo(stack, 1, 10, false) -- and
+   * only falls back to the hotbar<->main swap when the grid refuses, which it
+   * does only when all nine cells are occupied. So with any free cell,
+   * shift-clicking a stack in your inventory LOADS THE GRID with it.
+   *
+   * Verified identical in 1.20.1 and 1.21.1, so it is not a version quirk.
+   */
+  function quickMoveCraftingMenu(m, index, stack) {
+    if (index === m.RESULT) {
+      // access.execute(... onCraftedBy ...) sits here in vanilla: the item's
+      // own "you just made me" callback. Nothing in items.js has one.
+      if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_END, true)) return false
+      // slot.onQuickCraft -- see the note in the InventoryMenu chain.
+    } else if (index >= m.INV_START && index < m.USE_ROW_END) {
+      if (!moveItemStackTo(m, stack, m.CRAFT_START, m.CRAFT_END, false)) {
+        if (index < m.USE_ROW_START) {
+          if (!moveItemStackTo(m, stack, m.USE_ROW_START, m.USE_ROW_END, false)) return false
+        } else if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_START, false)) return false
+      }
+    } else if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_END, false)) {
+      return false
+    }
+    return true
+  }
+
+  /**
+   * The tail both quickMoveStack overrides share, character for character.
+   *
+   * Returns vanilla's `itemstack` -- a COPY of the stack as it was before the
+   * move -- or null for ItemStack.EMPTY. That distinction is the only thing
+   * the repeat loop terminates on, which is why this returns the copy rather
+   * than a boolean.
+   */
+  const quickMoveStack = (menu, index) => {
+    const d = menu.slots[index]
+    const live = slotGet(d)
+    if (!live) return null                          // slot.hasItem()
+    const original = { id: live.id, count: live.count }
+
+    if (!menu.chain(menu, index, live)) return null
+
+    if (live.count <= 0) slotSet(d, null)           // slot.setByPlayer(EMPTY)
+
+    /*
+     * Defensive in vanilla and kept for the same reason: a chain that moved
+     * nothing has already bailed out above, so the only way here is a future
+     * range that turns out to be a no-op. Returning EMPTY is what stops the
+     * repeat loop spinning on it.
+     */
+    if (live.count === original.count) return null
+
+    // slot.onTake. Only ResultSlot overrides it, and what it does is spend
+    // the grid: ONE item out of every occupied cell, per craft.
+    if (d.area === 'result') {
+      consumeGrid(inv.craft.cells)
+      /*
+       * Container.setChanged -> slotsChanged -> slotChangedCraftingGrid. This
+       * has to happen BEFORE the repeat loop looks at the slot again, because
+       * the refreshed result is exactly what that loop terminates on.
+       */
+      refreshResult()
+      /*
+       * player.drop(itemstack1, false). A result that only PARTLY fitted does
+       * not go back in the slot -- it goes on the floor. Surprising, and it
+       * is the reason crafting into a nearly-full inventory can cost you the
+       * ingredients for items you never receive. The wiki's "moves it
+       * straight to the inventory" does not mention it.
+       */
+      if (live.count > 0) discard(live.id, live.count)
+    }
+
+    return original
+  }
+
+  /**
+   * AbstractContainerMenu.doClick's ClickType.QUICK_MOVE case, verbatim.
+   *
+   * THIS LOOP IS THE REPEATED CRAFTING. quickMoveStack is called again and
+   * again for as long as it moved something AND the slot has refilled with
+   * the same item. For an ordinary slot that is one iteration, because the
+   * slot is empty the second time round. For the crafting result, taking it
+   * spends the grid and the grid immediately produces another one, so it runs
+   * until the grid runs dry or the inventory stops accepting.
+   *
+   * Road not taken: a `while (result && roomSomewhere)` loop written specially
+   * for the result slot. It agrees in the easy case and is wrong in every
+   * partial one -- notably the last craft that only half fits, which vanilla
+   * performs anyway and then drops the remainder on the floor.
+   */
+  const quickMove = (area, index) => {
+    const menu = openMenu()
+    const at = menu.slots.findIndex(d => d.area === area && d.index === index)
+    // A slot the open screen does not have: armor and offhand while a
+    // crafting table is up. Vanilla cannot even express the click -- there is
+    // no such cell on the screen to aim at.
+    if (at < 0) return
+
+    let moved = quickMoveStack(menu, at)
+    // ItemStack.isSameItem(slot.getItem(), moved). An empty slot is never
+    // "the same item", and that is what ends the ordinary one-shot case.
+    while (moved && slotGet(menu.slots[at])?.id === moved.id) {
+      moved = quickMoveStack(menu, at)
+    }
+
+    // Any of those moves can have changed the crafting grid -- pulling an
+    // ingredient out of it, or, at a table, pushing one in -- and the result
+    // is derived from the grid.
+    refreshResult()
+    changed()
+  }
+
   /*
    * Click handling, matching Minecraft's rules exactly:
    *   left  + empty hand -> take the whole stack
@@ -246,10 +635,26 @@ export function createInventory() {
    *   right + empty hand -> take half (rounded up)
    *   right + full hand  -> place a single item
    *
-   * `area` defaults to the main 36 so every existing caller -- and the test
-   * suite, which drives this directly -- keeps working unchanged.
+   * `area` defaults to the main 36 and `shift` to false, so every existing
+   * caller -- and the test suite, which drives this directly -- keeps working
+   * unchanged. Shift-click is a fourth argument rather than a second entry
+   * point because that is how vanilla models it too: one doClick, branching
+   * on ClickType. A parallel `inv.shiftClick()` would have to re-derive every
+   * guard this function already owns.
    */
-  inv.clickSlot = (index, button, area = 'main') => {
+  inv.clickSlot = (index, button, area = 'main', shift = false) => {
+    /*
+     * Shift-click is dispatched FIRST because vanilla dispatches on the click
+     * TYPE before it ever looks at the slot: doClick's QUICK_MOVE case runs to
+     * completion without consulting the carried stack once. So shift-clicking
+     * while you are holding a stack moves the SLOT's items and leaves your
+     * hand exactly as it was -- it does not swap, merge or drop.
+     *
+     * Both buttons quick-move. Vanilla's guard is `button == 0 || button == 1`,
+     * which is either of them, so `button` is deliberately unread here.
+     */
+    if (shift) { quickMove(area, index); return }
+
     if (area === 'result') { takeResult(); return }
 
     const cells = container(area)
@@ -316,8 +721,9 @@ export function createInventory() {
     changed()
   }
 
-  /** Equip a piece into the slot it belongs in. Convenience for tests and
-   *  for whatever eventually shift-clicks armor from the main grid. */
+  /** Equip a piece into the slot it belongs in. Convenience for tests and for
+   *  anything that wants to dress the player without going through a click;
+   *  shift-clicking armor takes the quickMove path above instead. */
   inv.equip = (id) => {
     const a = armorOf(id)
     if (!a) return false
@@ -474,7 +880,10 @@ export function installInventoryScreen(noa, inv, inputLock) {
     cell.style.width = cell.style.height = px(SLOT_SIZE)
     cell.addEventListener('mousedown', (e) => {
       e.preventDefault()
-      inv.clickSlot(index, e.button === 2 ? 'right' : 'left', area)
+      // e.shiftKey off the REAL event, rather than tracking Shift ourselves
+      // from keydown/keyup: a keyup that lands while the window is unfocused
+      // is missed, and then every click is a shift-click.
+      inv.clickSlot(index, e.button === 2 ? 'right' : 'left', area, e.shiftKey)
     })
     cell.addEventListener('contextmenu', e => e.preventDefault())
     host.appendChild(cell)
@@ -586,7 +995,12 @@ export function installInventoryScreen(noa, inv, inputLock) {
     tableScreen.classList.toggle('hidden', which !== 'table')
     document.body.classList.toggle('inv-open', inv.open)
 
-    if (which) inv.setCraftSize(which === 'table' ? 3 : 2)
+    // Set on CLOSE as well as on open. `craft.size` is how the model knows
+    // which container it is part of -- openMenu() reads it to pick between
+    // InventoryMenu and CraftingMenu -- so leaving it at 3 after a table
+    // closes would have the next shift-click use the table's slot ranges
+    // against the player's own screen.
+    inv.setCraftSize(which === 'table' ? 3 : 2)
 
     // Pointer lock and a mouse-driven UI are mutually exclusive; releasing the
     // lock is what brings the cursor back. The world keeps ticking, so the sky
