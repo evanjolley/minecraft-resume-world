@@ -313,6 +313,46 @@ maps the wide layout only, and says so.
   a couple of wandering chickens would make the island feel alive for a
   fraction of the cost. The model infrastructure now exists.
 
+## Someday
+
+Further out than everything above — no timeline, not costed, recorded so they
+are not lost. Evan has more to add here.
+
+### AI agents controlling NPC characters
+
+Characters in the world who move and talk, driven by a model rather than a
+script.
+
+**Most of the body already exists.** `playerModel.js` builds a skinned
+humanoid from a factory, `poseModel()` takes an explicit state object rather
+than reading the player, and the skin is one swappable material. An NPC is
+that model with a different skin and no keyboard attached. What does not exist
+is **pathfinding** — A* over the voxel grid with costs for jumping and falling,
+which is a real piece of work and the thing that makes an NPC look alive or
+look broken.
+
+**The version that actually fits this site** is a guide: someone who walks a
+visitor to a resume plot, answers "where did he work?", and points at things.
+That is the one idea that genuinely fuses the game and the document instead of
+sitting beside them — a visitor who would never read a CV might ask a question.
+
+**Three things that make it harder than it sounds:**
+
+- **It needs a server.** Model calls cannot go from the browser with a key in
+  the bundle. The Worker and Durable Object planned for multiplayer are the
+  natural home, so this lands after that, not before.
+- **Latency is the design problem, not the model.** A guide that pauses three
+  seconds before answering reads as broken. Idle behaviour, walking animation
+  and acknowledgement have to cover the wait.
+- **An NPC speaking as Evan is a liability.** Visitors will type things to see
+  what it says, and it is on his domain, next to his resume, with his name on
+  it. It needs bounds on what it will claim, and the same care nicknames and
+  chat need.
+
+**Prerequisites**, in order: multiplayer infrastructure (for the server),
+pathfinding, then the model layer. Nothing here should start before the island
+has content — a guide with nothing to guide you to is a demo of a guide.
+
 ## Not worth building
 
 - **Hostile mobs and combat.** Large effort, and actively harmful: a zombie
