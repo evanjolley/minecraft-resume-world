@@ -160,23 +160,36 @@ room object that holds the multiplayer state is the natural owner of the diff.
 `authority.requestBlockChange` is already the single place a block changes, so
 persistence hooks there and nowhere else.
 
-**The decision it forces.** Shared plus persistent means any visitor can
-permanently deface the island — and the resume content is the island. Three
-options:
+**DECIDED: a sandbox area.** One bounded region anyone may build in; the rest
+of the island protected. Visitors get to do something rather than walk through
+a museum, and the resume content cannot be touched.
 
-1. **Only the owner builds.** Visitors are in adventure and cannot place or
-   break at all. The default is already adventure, so this is the current
-   behaviour and needs nothing. Safest, and the least fun.
-2. **A sandbox area.** One region of the island where anyone may build, the
-   rest protected. `requestBlockChange` already receives the position, so the
-   check is one bounds test in one place.
-3. **Per-visitor persistence.** Everyone gets their own diff, so their changes
-   persist for them and are invisible to others. More storage, no moderation
-   surface, and nobody can ruin anything. Arguably the best fit for a
-   portfolio, and the least Minecraft-like.
+`requestBlockChange` already receives the position, so it is one bounds test in
+one place — and it can ship BEFORE multiplayer, since it changes what adventure
+mode permits in the current single-player world too.
 
-Not decided. Worth deciding before multiplayer ships rather than after, because
-the first griefer decides it otherwise.
+Rejected: owner-only building (safe, but visitors can only look), and
+per-visitor diffs (nobody can ruin anything, but nobody can show anyone
+anything either — which throws away the reason to have other people present).
+
+Two sub-decisions still open:
+
+- **Where, and how is it marked?** A visitor must be able to tell at a glance
+  where they may build. Fenced, or a different floor material, or simply set
+  apart from the resume plots. Undecided because it depends on the island
+  layout, which does not exist yet.
+- **Shared or per-visitor, WITHIN the sandbox?** This is the moderation
+  question, and it does not go away by being confined. A shared persistent
+  sandbox on a personal domain will eventually contain something obscene —
+  that is not pessimism, it is what happens. Options: per-visitor diffs inside
+  the sandbox (no moderation surface at all, but you cannot see each other's
+  builds), shared with an automatic daily reset (honest, self-limiting, and a
+  sign can say so), or shared and permanent with a `/fill` to clear it, which
+  means noticing.
+
+Recommendation: shared with a daily reset. It keeps the point of multiplayer —
+seeing what someone else made — while capping how long anything bad survives,
+and it needs no judgement calls from Evan.
 
 ---
 
