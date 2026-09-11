@@ -140,6 +140,46 @@ one, decided before it ships rather than after.
 
 ---
 
+## 1c. Persistence: a world that stays changed
+
+Break a block, leave, come back, it is still broken. Technically small, and the
+codebase is already shaped for it — but it forces a product decision first.
+
+**Store the DIFF, not the world.** The island is 80x80x64 = 409,600 blocks, and
+storing all of it would be absurd. It does not need storing: `island.js` is a
+pure function of position, so the base world regenerates byte-identically on
+every load, for free. Only blocks that DIFFER from generation need recording —
+a few thousand for an authored island, each a coordinate and an id.
+
+That is what the pure-function discipline in `island.js` has been buying all
+along, and it is worth not breaking: the moment generation depends on hidden
+state, the base world stops being reproducible and the whole diff trick dies.
+
+A Durable Object gets 10GB of SQLite, free-plan storage is not charged, and the
+room object that holds the multiplayer state is the natural owner of the diff.
+`authority.requestBlockChange` is already the single place a block changes, so
+persistence hooks there and nowhere else.
+
+**The decision it forces.** Shared plus persistent means any visitor can
+permanently deface the island — and the resume content is the island. Three
+options:
+
+1. **Only the owner builds.** Visitors are in adventure and cannot place or
+   break at all. The default is already adventure, so this is the current
+   behaviour and needs nothing. Safest, and the least fun.
+2. **A sandbox area.** One region of the island where anyone may build, the
+   rest protected. `requestBlockChange` already receives the position, so the
+   check is one bounds test in one place.
+3. **Per-visitor persistence.** Everyone gets their own diff, so their changes
+   persist for them and are invisible to others. More storage, no moderation
+   surface, and nobody can ruin anything. Arguably the best fit for a
+   portfolio, and the least Minecraft-like.
+
+Not decided. Worth deciding before multiplayer ships rather than after, because
+the first griefer decides it otherwise.
+
+---
+
 ## 2. Multiplayer presence
 
 Concurrent visitors seeing each other walk around.
