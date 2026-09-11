@@ -40,7 +40,8 @@ Roughly ascending in how much they depend on a decision from Evan.
    volume that skips sheltered columns, a sky and light-level change, an
    ambient loop and a thunder timer. A `/weather` that flipped a boolean
    nothing rendered would be worse than one that admits the truth.
-6. **Deployment**, then **content**, then **video screens** and
+6. **Deployment** — platform decided, see `docs/DEPLOYMENT.md`. Then
+   **content**, then **video screens** and
    **multiplayer** — see Sequencing below. These are the ones that need Evan,
    not more engine work.
 
