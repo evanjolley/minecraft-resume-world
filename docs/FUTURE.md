@@ -9,7 +9,8 @@ They came to find out who Evan is, and right now the world cannot tell them.
 Minecraft-accurate physics, survival HUD and inventory from Minecraft's own
 sprites, mining and placing, day/night on Minecraft's clock, a skinned player
 model with F5 perspectives and crouch, chat, block and damage sounds,
-break/landing/sprint particles, a 355-block palette on a paged texture atlas,
+break/landing/sprint particles, rain and thunder, Fancy 3D clouds, a 355-block palette on a paged
+texture atlas,
 oak trees, game modes behind an OP-gated authority, an item model with crafting
 (2x2 and 3x3), armor and an offhand, and a 109-test browser suite.
 
@@ -32,11 +33,6 @@ Roughly ascending in how much they depend on a decision from Evan.
 4. **Shift-click in the inventory**, both senses: move a stack to the other
    container, and craft as many as fit. Its absence is felt immediately by
    anyone who has played.
-5. **Weather.** `/weather` currently parses correctly and reports honestly that
-   it is not implemented. Doing it properly is a camera-following particle
-   volume that skips sheltered columns, a sky and light-level change, an
-   ambient loop and a thunder timer. A `/weather` that flipped a boolean
-   nothing rendered would be worse than one that admits the truth.
 6. **Deployment** — platform decided, see `docs/DEPLOYMENT.md`. Then
    **content**, then **video screens** and
    **multiplayer** — see Sequencing below. These are the ones that need Evan,

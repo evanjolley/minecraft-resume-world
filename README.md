@@ -115,8 +115,7 @@ edge-protection, first-person held item with view bob and swing, a geometry
 cloud layer, the sun, Minecraft's black wireframe block outline, and the
 Monocraft typeface.
 
-Deliberately NOT implemented: mobs, crafting, tool tiers and durability,
-day/night, block crack overlays, armor slots. Hunger *drain* is written but
+Deliberately NOT implemented: mobs, durability, enchanting, smelting. Hunger *drain* is written but
 switched off via `HUNGER_DRAIN_ENABLED` in `survival.js`, because a visitor
 reading a resume plot shouldn't starve while doing it.
 
