@@ -3,6 +3,7 @@ import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
+import { MC } from './physics.js'
 
 /*
  * Clouds, sun and moon, and the way the sky answers the weather.
@@ -46,7 +47,6 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
  */
 
 const TICKS_PER_DAY = 24000
-const TICKS_PER_SECOND = 20
 // Minecraft starts a new world at ~1000, just after sunrise.
 const START_TIME = 1000
 
@@ -445,7 +445,7 @@ export function installSky(noa) {
     const secs = dt / 1000
     const p = noa.ents.getPositionData(player).position
 
-    time = (time + secs * TICKS_PER_SECOND) % TICKS_PER_DAY
+    time = (time + secs * MC.TICKS_PER_SECOND) % TICKS_PER_DAY
 
     // t=0 sunrise in the east, 6000 overhead, 12000 west, 18000 below.
     const angle = (time / TICKS_PER_DAY) * Math.PI * 2

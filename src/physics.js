@@ -17,9 +17,25 @@ import { createEmitter } from './emitter.js'
  * MC per-tick values converted to per-second:
  *   gravity   0.08 blocks/tick^2  ->  0.08 / 0.05^2  = 32 blocks/s^2
  *   jump vel  0.42 blocks/tick    ->  0.42 / 0.05    = 8.4 blocks/s
+ *
+ * MC IS THE TABLE OF MINECRAFT'S OWN NUMBERS, not just the movement ones.
+ * Movement is most of it and is why the table lives in this file, but every
+ * entry is a fact about MINECRAFT rather than about this engine, and that is
+ * what makes them shareable. sky.js, particles.js, weather.js, itemEntity.js,
+ * chat.js and items.js each used to restate the tick rate privately, under
+ * five different names between them (TICKS_PER_SECOND three times, TPS,
+ * TICK_MS). One fact, one spelling.
  */
-
 export const MC = {
+  /*
+   * The clock everything in Minecraft is actually counted in. noa ticks at 30
+   * Hz and this number is NOT that -- every per-tick value below is converted
+   * to per-second at the point of definition precisely so that the two rates
+   * never have to meet.
+   */
+  TICKS_PER_SECOND: 20,
+  TICK_MS: 50,
+
   GRAVITY: 32,
   JUMP_APEX: 1.2522,
 
@@ -476,25 +492,18 @@ function installMovementFeedback(noa) {
  * nicety and becomes the difference between building near the rim and
  * repeatedly dying at it.
  *
- * Done PER AXIS on purpose. Cancelling the whole horizontal velocity the
- * moment any edge is near freezes you in place at a corner and feels broken;
- * cancelling only the component that heads out over nothing lets you still
- * slide along the rim, which is what Minecraft does.
- */
-
-/*
- * Sneak edge-protection.
+ * IT RESTORES POSITION, it does not cancel motion. The first version zeroed
+ * body.velocity and that was NOT enough: noa's movement component pushes with
+ * body.applyForce(), and a queued force is integrated on the next physics step
+ * regardless of what velocity was set to. So each tick re-accelerated from
+ * zero and you crept off the rim at about a third speed -- a brake rather than
+ * a barrier. Measured: sneaking east from x=39.5 ended at x=40.58, y=62.73.
+ * Off the edge, just slowly.
  *
- * The first version zeroed body.velocity and that was NOT enough. noa's
- * movement component pushes with body.applyForce(), and a queued force is
- * integrated on the next physics step regardless of what velocity was set to.
- * So each tick re-accelerated from zero and you crept off the rim at about a
- * third speed -- a brake rather than a barrier. Measured: sneaking east from
- * x=39.5 ended at x=40.58, y=62.73. Off the edge, just slowly.
- *
- * So this restores POSITION instead of trying to cancel motion. Per axis, so
- * sliding along a rim still works: only the axis that left solid ground gets
- * put back.
+ * Done PER AXIS on purpose, and for two reasons that point the same way.
+ * Undoing the whole horizontal move the moment any edge is near freezes you at
+ * a corner and feels broken; putting back only the axis that left solid ground
+ * lets you still slide along the rim, which is what Minecraft does.
  */
 
 // How far under the feet to look for support.

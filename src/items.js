@@ -1,4 +1,5 @@
 import { BLOCK_TYPES, BLOCK_BY_ID } from './blocks.js'
+import { MC } from './physics.js'
 
 /*
  * The item registry.
@@ -56,6 +57,19 @@ const DEFAULT_STACK = 64
  * bottom of this file, which is where Minecraft's break-time formula lives.
  * They were defined and deliberately unwired for one commit, because the raw
  * hardness the formula needs did not exist yet.
+ *
+ * `attack` AND `uses` ARE READ BY NOTHING, AND THAT IS SETTLED -- it does not
+ * need re-litigating on the next sweep. Vanilla's Tier record carries all
+ * four, and keeping the table whole is what makes it checkable against the
+ * wiki at a glance; two of the four happened to be the two this world needed
+ * first. `attack` is combat, which docs/FUTURE.md files under "Not worth
+ * building" deliberately. `uses` is durability, which nothing has ruled out
+ * and which is a MINING feature rather than a combat one -- a pickaxe wearing
+ * out is much the likelier of the two to land.
+ *
+ * What is NOT fine is a caller having to guess which of the four matter, so
+ * `toolOf` names the two it returns rather than spreading the row into its
+ * result. The table is reference data; the function's shape is the API.
  */
 const TIERS = {
   wood: { level: 0, speed: 2, attack: 3, uses: 59 },
@@ -264,7 +278,10 @@ export const stackMax = (id) => ITEM_BY_ID.get(id)?.stack ?? DEFAULT_STACK
 function toolOf(id) {
   const def = ITEM_BY_ID.get(id)
   if (!def?.tool) return null
-  return { tool: def.tool, tier: def.tier, ...TIERS[def.tier] }
+  // Picked out rather than spread. Spreading the row also handed every caller
+  // `attack` and `uses`, which nothing reads -- see the note on TIERS above.
+  const { level, speed } = TIERS[def.tier]
+  return { tool: def.tool, tier: def.tier, level, speed }
 }
 
 /** Armor data, or null. */
@@ -327,9 +344,6 @@ for (const i of BLOCK_ITEMS) {
  * Each is another multiplier in the same expression, and none of them exist in
  * this world yet.
  * ------------------------------------------------------------------ */
-
-/** Minecraft's tick rate, which is what break times are actually counted in. */
-const TICKS_PER_SECOND = 20
 
 /*
  * Which tool suits which block.
@@ -449,7 +463,7 @@ export function miningSeconds(blockId, heldItemId = 0) {
     destroySpeed(blockId, heldItemId)
   // At least one tick. A hardness of 0 (TNT, slime) is instant in vanilla, and
   // instant here means one tick rather than a division by zero downstream.
-  return Math.max(1, Math.ceil(ticks)) / TICKS_PER_SECOND
+  return Math.max(1, Math.ceil(ticks)) / MC.TICKS_PER_SECOND
 }
 
 /**

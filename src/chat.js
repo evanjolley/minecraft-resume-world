@@ -1,4 +1,5 @@
-import { SCALE } from './hud.js'
+import { SCALE, px } from './hud.js'
+import { MC } from './physics.js'
 
 /*
  * Minecraft's chat: the message log that floats above the hotbar and fades on
@@ -42,7 +43,6 @@ const BOTTOM = 44
 const MAX_LENGTH = 256        // Minecraft's cap since 1.11; it was 100 before
 const SCROLLBACK = 100        // ChatComponent trims allMessages to 100
 const FADE_TICKS = 200        // 10 seconds at 20 tps, of which the last 1s fades
-const TICK_MS = 50            // Minecraft's tick, not noa's
 const BLINK_MS = 300          // EditBox blinks on `frame / 6 % 2`, i.e. 6 ticks
 
 /*
@@ -93,7 +93,6 @@ export function installChat(noa, {
   name = 'Player',
   send = null,
 } = {}) {
-  const px = (n) => `${n * SCALE}px`
 
   const root = document.getElementById('chat')
   const lines = document.getElementById('chat-lines')
@@ -169,7 +168,7 @@ export function installChat(noa, {
   const paint = () => {
     const now = performance.now()
     for (const entry of log) {
-      const a = open ? 1 : timeFactor((now - entry.addedAt) / TICK_MS)
+      const a = open ? 1 : timeFactor((now - entry.addedAt) / MC.TICK_MS)
       // Writing style.opacity every tick for every line forces style
       // recalculation on lines that are sitting at a flat 0 or 1.
       if (Math.abs(a - entry.alpha) < 0.004) continue

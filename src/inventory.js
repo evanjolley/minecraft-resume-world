@@ -1,5 +1,5 @@
 import { createItemIcon } from './blockIcon.js'
-import { SCALE as HUD_SCALE, FONT_PX } from './hud.js'
+import { SCALE as HUD_SCALE, FONT_PX, px } from './hud.js'
 import { stackMax, armorOf, ARMOR_SLOTS, itemId } from './items.js'
 import { findRecipe, consumeGrid } from './crafting.js'
 
@@ -59,7 +59,18 @@ export function createInventory() {
   inv.onChange = fn => { listeners.add(fn); fn(inv); return () => listeners.delete(fn) }
   inv.emitChange = changed
 
-  /** The backing array for a container name. */
+  /*
+   * Area name -> the array behind it. THE one place that mapping is written.
+   *
+   * `inv.craft.cells` is read through `inv` on every call rather than captured,
+   * because setCraftSize REPLACES the array when you open a crafting table --
+   * a captured reference would go on addressing the closed screen's 2x2.
+   *
+   * 'result' is deliberately absent: it is a single stack, not an array, so it
+   * has no index to subscript. `stackAt`/`slotSet` below are where the result
+   * slot joins in, and they are the entry points anything outside the click
+   * machinery should use.
+   */
   const container = (area) => (
     area === 'armor' ? inv.armor
       : area === 'offhand' ? inv.offhand
@@ -330,8 +341,19 @@ export function createInventory() {
    */
   const openMenu = () => (inv.craft.size === 3 ? TABLE_MENU : INV_MENU)
 
-  /** Slot.getItem, over whichever container the descriptor names. */
+  /**
+   * Slot.getItem, over whichever container the descriptor names.
+   *
+   * Hung off `inv` as well, because installInventoryScreen needs exactly this
+   * to paint a cell and had its own five-branch copy of it -- which meant two
+   * independent answers to "which array is 'offhand'", in a file where adding a
+   * container means finding both. The screen is a separate function with no
+   * access to this closure, so exposing the read is the only way to share it.
+   * Road not taken: exporting `container` instead, which would hand the screen
+   * a mutable array and invite it to write through it.
+   */
   const slotGet = (d) => (d.area === 'result' ? inv.craft.result : container(d.area)[d.index])
+  inv.stackAt = slotGet
 
   /** Slot.set / Slot.setByPlayer. */
   const slotSet = (d, stack) => {
@@ -816,7 +838,6 @@ export function installInventoryScreen(noa, inv, inputLock) {
   const tablePanel = document.getElementById('craft-panel')
   const carried = document.getElementById('inv-carried')
 
-  const px = (n) => `${n * HUD_SCALE}px`
   carried.style.width = carried.style.height = px(SLOT_SIZE)
 
   for (const [el, sprite] of [[panel, 'inventory'], [tablePanel, 'crafting_table']]) {
@@ -945,16 +966,8 @@ export function installInventoryScreen(noa, inv, inputLock) {
    * painting hidden DOM costs nothing next to the alternative of tracking
    * which panel is live.
    */
-  const stackAt = ({ area, index }) => (
-    area === 'result' ? inv.craft.result
-      : area === 'craft' ? inv.craft.cells[index]
-        : area === 'armor' ? inv.armor[index]
-          : area === 'offhand' ? inv.offhand[index]
-            : inv.slots[index]
-  )
-
   inv.onChange(() => {
-    for (const cell of cells) paintSlot(cell.el, stackAt(cell))
+    for (const cell of cells) paintSlot(cell.el, inv.stackAt(cell))
     paintSlot(carried, inv.carried)
     carried.classList.toggle('hidden', !inv.carried)
   })

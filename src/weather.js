@@ -1,4 +1,5 @@
 import { GAMERULES } from './authority.js'
+import { MC } from './physics.js'
 import { createRainVolume } from './particles.js'
 import { createRainAmbience } from './rainAudio.js'
 
@@ -40,8 +41,6 @@ import { createRainAmbience } from './rainAudio.js'
  * temperature, so every column would be the same one -- which is a decision
  * about world generation wearing a weather costume.
  */
-
-const TICKS_PER_SECOND = 20
 
 /*
  * Vanilla's four weather timers, as UniformInt providers. /weather with no
@@ -180,7 +179,7 @@ export function installWeather(noa, { sky, authority, sounds = null } = {}) {
   }
 
   noa.on('tick', (dtMs) => {
-    const ticks = (dtMs / 1000) * TICKS_PER_SECOND
+    const ticks = (dtMs / 1000) * MC.TICKS_PER_SECOND
 
     /*
      * doWeatherCycle gates the COUNTDOWN and nothing else, which is exactly

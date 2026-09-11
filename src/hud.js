@@ -70,7 +70,15 @@ const GAP_UNDER_XP = 2       // the wide one: the level number sits in it
 const GAP_UNDER_HEARTS = 1
 const GAP_UNDER_ARMOR = 1
 
-const px = (n) => `${n * SCALE}px`
+/**
+ * GUI pixels to CSS pixels. Exported because chat.js and inventory.js both
+ * lay themselves out in Minecraft's GUI pixels against this same SCALE, and
+ * each had its own identical copy of this line. Three copies of a conversion
+ * is three chances for one of them to be multiplying by the wrong thing --
+ * and the whole reason SCALE is a single constant is that the HUD, the chat
+ * overlay and the container panels have to agree on it exactly.
+ */
+export const px = (n) => `${n * SCALE}px`
 
 function spriteEl(src, w, h) {
   const el = document.createElement('div')

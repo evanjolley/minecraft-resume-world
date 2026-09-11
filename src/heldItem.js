@@ -6,6 +6,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { Vector3, Vector4, Quaternion } from '@babylonjs/core/Maths/math.vector'
 import { BLOCK_BY_ID } from './blocks.js'
 import { item } from './items.js'
+import { MC } from './physics.js'
 import { cachedItemGeometry, displayFor, itemTexture, itemTextureUrl, loadItemGeometry } from './itemModel.js'
 import { createFirstPersonArm } from './playerModel.js'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
@@ -489,7 +490,7 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
     if (speed < 0.1) bobPhase += (0 - (bobPhase % (Math.PI * 2))) * secs * 4
 
 
-    const bobAmount = Math.min(speed / 4.317, 1.3)
+    const bobAmount = Math.min(speed / MC.WALK_SPEED, 1.3)
     const bx = Math.cos(bobPhase) * 0.022 * bobAmount
     const by = Math.abs(Math.sin(bobPhase)) * -0.026 * bobAmount
 

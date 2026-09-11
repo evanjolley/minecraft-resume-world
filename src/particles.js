@@ -4,6 +4,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { BLOCK_BY_ID } from './blocks.js'
+import { MC } from './physics.js'
 
 /*
  * Block particles: the burst when a block breaks, the puff when you land, the
@@ -47,7 +48,6 @@ const POOL = 160
 // multiplier per tick, converted to per-second.
 const GRAVITY = 16
 const DRAG_PER_TICK = 0.98
-const TICKS_PER_SECOND = 20
 
 // Minecraft chips a random 4x4 texel corner out of the 16x16 block texture.
 const CROPS = 4
@@ -275,7 +275,7 @@ export function installParticles(noa, deps = {}) {
     const level = noa.rendering.light ? noa.rendering.light.intensity : 1
     const lit = Math.min(1, 0.22 + level * 0.78) * 0.9
 
-    const drag = Math.pow(DRAG_PER_TICK, dt * TICKS_PER_SECOND)
+    const drag = Math.pow(DRAG_PER_TICK, dt * MC.TICKS_PER_SECOND)
 
     for (const sys of systems.values()) {
       const { pool, positions, uvs } = sys

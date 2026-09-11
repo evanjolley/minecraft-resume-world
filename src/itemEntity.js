@@ -10,6 +10,7 @@ import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder'
 import '@babylonjs/core/Meshes/thinInstanceMesh.js'
 
 import { BLOCK_BY_ID } from './blocks.js'
+import { MC } from './physics.js'
 import { shapeBoxesFor } from './blockMeshes.js'
 import { createHeldBlockMesh, blockTextureUrl } from './heldItem.js'
 import { item, isBlockItem, stackMax, dropFor } from './items.js'
@@ -77,7 +78,11 @@ import { item, isBlockItem, stackMax, dropFor } from './items.js'
  * like "items feel floaty" instead of like a bug.
  * ------------------------------------------------------------------ */
 
-const TPS = 20
+/* Aliased rather than spelled out at all thirteen use sites below: every
+ * one of them is a vanilla per-tick number being converted, and
+ * `0.04 * MC.TICKS_PER_SECOND ** 2` buries the 0.04 that is the actual
+ * fact. One definition, a short local name. */
+const TPS = MC.TICKS_PER_SECOND
 
 /** ItemEntity gravity: 0.04 blocks/tick^2. */
 const GRAVITY = 0.04 * TPS * TPS
@@ -414,8 +419,8 @@ export function installItemEntities(noa, deps = {}) {
     const fz = Math.cos(heading) * cp
 
     return spawn(stack.id, stack.count,
-      // Vanilla throws from eyeY - 0.3. Minecraft's eye is at 1.62.
-      [px, py + 1.62 - 0.3, pz],
+      // Vanilla throws from eyeY - 0.3.
+      [px, py + MC.EYE_HEIGHT - 0.3, pz],
       [
         fx * THROW_SPEED + rand(-THROW_SPREAD, THROW_SPREAD),
         -Math.sin(pitch) * THROW_SPEED + THROW_LIFT + rand(-THROW_SPREAD, THROW_SPREAD),

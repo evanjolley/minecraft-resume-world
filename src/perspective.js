@@ -4,6 +4,7 @@ import {
 } from './heldItem.js'
 import { displayFor, itemTexture, itemTextureUrl } from './itemModel.js'
 import { item } from './items.js'
+import { MC } from './physics.js'
 import { BLOCK_BY_ID } from './blocks.js'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
@@ -236,7 +237,7 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
      */
     const speed = Math.hypot(body.velocity[0], body.velocity[2])
     limbSwing += speed * secs * 2.0
-    const targetAmount = Math.min(speed / 4.317, 1) * 0.9
+    const targetAmount = Math.min(speed / MC.WALK_SPEED, 1) * 0.9
     limbSwingAmount += (targetAmount - limbSwingAmount) * Math.min(1, secs * 10)
 
     const sneaking = !!noa.inputs.state.sneak

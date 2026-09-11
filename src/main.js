@@ -2,7 +2,7 @@ import { Engine } from 'noa-engine'
 
 import { registerBlocks } from './blocks.js'
 import { getVoxelID, SPAWN } from './island.js'
-import { installPhysics, installSpeedModes } from './physics.js'
+import { installPhysics, installSpeedModes, MC } from './physics.js'
 import { createSurvival } from './survival.js'
 import { createInventory, installInventoryScreen } from './inventory.js'
 import { installInteraction, installHotbarControls } from './interact.js'
@@ -67,8 +67,12 @@ const noa = new Engine({
   playerStart: SPAWN,
 
   // Minecraft's exact player box. These also happen to be noa's defaults.
-  playerHeight: 1.8,
-  playerWidth: 0.6,
+  // From physics.js rather than written out again: the collision box and
+  // the eye height that rides on it are one set of numbers, and noa gets
+  // told the box here while physics.js is the only file that reasons about
+  // it. Two copies that agree today is how they stop agreeing.
+  playerHeight: MC.PLAYER_HEIGHT,
+  playerWidth: MC.PLAYER_WIDTH,
 
   // Minecraft's step height is 0.6, so you can walk onto a slab but never
   // onto a full block. Autostep would let you climb the parkour course by
