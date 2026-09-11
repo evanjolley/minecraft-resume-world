@@ -9,12 +9,18 @@
  * so this is a standalone script with the same launch flags the suite uses.
  * It prints a PASS/FAIL line per assertion and exits non-zero on any failure.
  *
- * It also INSTALLS weather.js the way main.js will, by importing the module
- * inside the page (Vite serves src/ as modules in dev, and the URL is the same
- * one commands.js imports, so it is the same module instance and the same
- * GAMERULES table -- not a second copy). That is deliberate: this script is
- * the only place the wiring runs until main.js picks it up, and it means the
- * wiring itself is under test rather than described in a report.
+ * It measures the LIVE weather system -- `window.game.weather`, the one
+ * main.js stood up -- and nothing else.
+ *
+ * It used to install its own on top, back when main.js did not yet import
+ * installWeather and this script was the only place the wiring ran. main.js
+ * imports it now, so that call had quietly become a SECOND rain volume, a
+ * second thunder clock and a second ambience bed running beside the real ones,
+ * with `window.game.weather` repointed at the copy while `/weather` went on
+ * driving main.js's. Every assertion below was reading the wrong object. The
+ * lesson is worth more than the fix: a verification script that sets up what
+ * it verifies stops testing the real thing the moment the real wiring lands,
+ * and does it without failing.
  *
  * Screenshots are EVIDENCE, not assertions. Anything a number can answer is
  * answered by a number below; a screenshot is for "do the clouds look like
@@ -96,16 +102,13 @@ const fps = (ms = 2000) => page.evaluate((window_ms) => new Promise((resolve) =>
   requestAnimationFrame(step)
 }), ms)
 
-/* ---------- the wiring, exactly as main.js will do it ---------- */
+/* ---------- the live system, not one of our own ---------- */
 
-await page.evaluate(async () => {
-  const { installWeather } = await import('/src/weather.js')
-  window.game.weather = installWeather(window.noa, {
-    sky: window.game.sky,
-    authority: window.game.authority,
-    sounds: window.game.sounds,
-  })
-})
+/* Asserted rather than assumed. If main.js ever stops installing weather, the
+ * failure should be this line rather than a hundred confusing NaNs below. */
+check('main.js installed the weather system',
+  await page.evaluate(() => typeof window.game.weather?.isRaining === 'function'))
+
 await page.evaluate(async () => {
   await window.game.authority.requestOp('diamond-pickaxe')
 })

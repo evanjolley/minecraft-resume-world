@@ -42,7 +42,23 @@ Roughly ascending in how much they depend on a decision from Evan.
    system driven off the registry's onSet/onUnset hooks, which has to
    reimplement noa's origin rebasing because noa offers no hook to shift our
    matrices when it shifts its own.
-4. **A credits surface — blocks deployment, not optional.** There was a
+4. **Sneaking does not shrink you.** `MC.SNEAK_HEIGHT` (1.5) sits in
+   `src/physics.js` and is read by nothing. `MC.SNEAK_EYE_HEIGHT` beside it IS
+   read, so Shift already drops the camera, slows you to 1.295 b/s and turns on
+   the edge protection — everything sneaking does EXCEPT the part that changes
+   what you can walk through. Vanilla shrinks the collision box from 1.8 to
+   1.5, which is how you get under a two-high gap with a slab in it. Here the
+   box stays 1.8 and you simply stop. Nobody has noticed because there is
+   nothing on the island to crawl under yet; the day a build has a crawlspace
+   in it, this is the bug. The constant is already correct and already named —
+   what is missing is writing it into the player's position component on the
+   sneak transition, which `installSpeedModes` is already easing the eye height
+   across. The catch is standing up: vanilla refuses to un-sneak while
+   something is over your head, and without that check you would unsneak inside
+   a block. Small, and the collision box is the only piece of Minecraft's sneak
+   that is not here.
+
+5. **A credits surface — blocks deployment, not optional.** There was a
    Credits sheet in the pause menu and it was pulled: it made the button count
    odd and it is not what the menu is for. The obligation it was discharging
    did not go with it. Pixel Perfection CE is CC BY-SA 4.0, Monocraft is SIL
@@ -400,6 +416,30 @@ maps the wide layout only, and says so.
 **Effort.** ~0.5 day for upload; ~1 day with username lookup.
 
 ---
+
+## Test coverage the suite does not have
+
+Two shipped features are covered only by throwaway verification scripts that
+predate the browser suite, and one of those scripts no longer tests what its
+header claims.
+
+- **`scripts/verify-weather.mjs` was installing weather TWICE.** Its header
+  said it was the only place the wiring ran "until main.js picks it up", and
+  main.js picked it up — so the script's own `installWeather` call stood a
+  second rain system, a second thunder clock and a second ambience bed on top
+  of the live one, then pointed `window.game.weather` at its copy while
+  `/weather` went on driving main.js's. Fixed in place; recorded here because
+  the shape of the mistake is the interesting part. A verification script that
+  sets up what it verifies goes stale silently the moment the real wiring
+  lands, and nothing fails.
+- **There is no weather spec and no slab/stair spec.** `verify-weather.mjs` and
+  `verify-non-cube.mjs` are the only coverage either feature has, and neither
+  runs under `npm test` — so a change that breaks rain or stair collision goes
+  green. Both should move into `test/` as real specs against
+  `test/helpers/world.js`, which already has the boot gates, the FPS helper and
+  the screenshot plumbing they hand-roll. That is mostly translation work
+  rather than new assertions: the numbers in both scripts are good, they are
+  just parked outside the harness that would run them.
 
 ## Also worth building
 
