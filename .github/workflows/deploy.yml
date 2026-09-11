@@ -58,7 +58,12 @@ jobs:
       # already looks complete, and "looks complete" is a heuristic; a forced
       # build costs about a second and removes the class of failure where the
       # site deploys with missing-texture checkerboard everywhere.
-      - run: npm run textures
+      #
+      # `:ce` rather than plain `textures`, which now means "rebuild whatever
+      # is installed". A clean runner has nothing installed and would fall back
+      # to CE anyway; naming it is how this step stays a forced build rather
+      # than a no-op that happens to be right.
+      - run: npm run textures:ce
 
       # --with-deps installs the system libraries Chromium needs on a bare
       # ubuntu runner. Only chromium: the suite runs one browser, and the
@@ -67,9 +72,9 @@ jobs:
 
       # The WHOLE suite, including test/12-sounds.spec.js. That spec used to be
       # excluded because it arms an audio harness against a manifest only a
-      # local Minecraft install could produce. `npm run sounds` now defaults to
-      # the committed CC0/CC-BY set, so a runner builds real audio and the
-      # exclusion is gone along with its reason.
+      # local Minecraft install could produce. The committed CC0/CC-BY set is
+      # what a runner builds, so it gets real audio and the exclusion is gone
+      # along with its reason.
       #
       # This exclusion and the silent deployed site are the same root cause,
       # and both disappear the day a redistributable sound set is committed.
@@ -106,13 +111,10 @@ jobs:
             test -s "dist/textures/atlas$n.png" || { echo "missing atlas$n.png"; exit 1; }
           done
           test -n "$(ls dist/assets/*.js 2>/dev/null)" || { echo "no JS bundle"; exit 1; }
-          # Mojang audio must never reach a public host. It cannot be here --
-          # a CI checkout has no Minecraft install to extract from -- so if it
-          # ever is, something has gone wrong enough to stop for.
-          # Assert WHICH sounds, not whether any. Mojang's audio must never
-          # be published from this domain; silence is now also a failure.
-          test "$(cat dist/sounds/.source)" = "free" || {
-            echo "dist/sounds/.source is not 'free'; refusing"; exit 1; }
+          # Which sounds and which textures, not whether any, is asserted by
+          # scripts/check-deploy-assets.mjs -- which build:deploy above already
+          # ran and failed on. Duplicating it here would be a second copy of
+          # the rule to keep in step with the first.
           echo "dist: $(find dist -type f | wc -l) files, $(du -sh dist | cut -f1)"
 
       # Runs on every push, including today's, so the config is proven to parse

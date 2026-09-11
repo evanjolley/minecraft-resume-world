@@ -105,8 +105,9 @@ enforced that -- `npm run build:deploy` deleted `dist/sounds`, and
 `scripts/build-sounds.mjs` grew a second source, exactly the way
 `build-textures.mjs` has `ce` and `vanilla`:
 
-    npm run sounds           # the committed free set, from sounds-src/free/
+    npm run sounds:free      # the committed free set, from sounds-src/free/
     npm run sounds:vanilla   # your own Minecraft install, unchanged
+    npm run sounds           # neither -- rebuilds whichever is installed
 
 Both emit the SAME logical names -- `step/grass1`, `dig/stone3`,
 `damage/hit1`, `random/pop` -- because `src/sounds.js` and
@@ -175,9 +176,9 @@ have a cheap test available to them: `dist/sounds/.source` reads `free` or
 
 1. **`package.json`, `build:deploy`.** It ends with `rm -rf dist/sounds`. The
    fix is the same shape as the line beside it: `build:deploy` already runs
-   `npm run textures` to force the redistributable texture source, so it should
-   run `npm run sounds` to force the redistributable sound source, and drop the
-   delete.
+   `npm run textures:ce` to force the redistributable texture source, so it
+   should run `npm run sounds:free` to force the redistributable sound source,
+   and drop the delete.
 2. **`deploy/.assetsignore`.** Its last line is `sounds/`. It has to go, and
    the belt-and-braces it provided has to come back somewhere that can tell
    `free` from `vanilla` -- which an assetsignore file cannot.
@@ -217,6 +218,41 @@ Two more substitutions worth knowing, both flagged in the build script: sand's
 `dig` is gravel's, because no open pack has a sand break sound; and the GUI
 click and the item-pickup blip are Kenney UI clicks, because Minetest has no
 interface audio at all to borrow.
+
+## Which asset source is installed, and the two ways it gets changed for you
+
+Both asset builds can emit from a committed, openly licensed source or from a
+local Minecraft install, and the choice is recorded in `public/textures/.source`
+and `public/sounds/.source`. Everything below exists because that choice is
+invisible once the build finishes -- an atlas looks like an atlas -- so it can
+be replaced without anyone noticing.
+
+`npm run textures` and `npm run sounds` name no source. They mean "build this
+again", and they keep whatever is installed. Switching is `textures:ce`,
+`textures:vanilla`, `sounds:free`, `sounds:vanilla` -- by name, never by
+default. The plain scripts used to be the switch, and running `npm run textures`
+to check an unrelated edit to the build script silently put a vanilla install
+back on CE. Five seconds, no warning, and the only visible symptom is that the
+world looks slightly wrong.
+
+`npm install` is safe: postinstall runs `--ensure`, which reads the marker and
+rebuilds the same source, or does nothing if the build is already complete.
+
+**`npm run build:deploy` is NOT safe, and this is the one rough edge left.** It
+pins `textures:ce` and `sounds:free` on purpose, because those are the only
+sources that may be served -- and it writes them into `public/`, not just
+`dist/`. So a deploy leaves a vanilla developer on CE, and the fix is to run
+`npm run textures:vanilla` afterwards. Building the redistributable set straight
+into `dist/` without touching `public/` would remove the edge entirely; it is
+not built because nothing has ever been deployed. Worth doing before deploying
+becomes routine.
+
+`scripts/check-deploy-assets.mjs` runs last in `build:deploy` and asserts
+`dist/textures/.source` is `ce` and `dist/sounds/.source` is `free`, failing the
+build otherwise. The pinned flags are a convention; this is the thing that
+notices when an edit breaks it. It reads `dist/` rather than `public/` on
+purpose -- `public/` is a working directory and is allowed to be vanilla,
+`dist/` is the artifact that ships.
 
 ## Is the 1.24MB bundle a problem
 

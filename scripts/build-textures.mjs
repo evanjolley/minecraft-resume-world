@@ -2,8 +2,16 @@
 /*
  * Builds public/textures/ from a chosen source.
  *
- *   npm run textures            -> Pixel Perfection CE (committed, CC-BY-SA-4.0)
+ *   npm run textures            -> rebuild whatever is already installed
+ *   npm run textures:ce         -> Pixel Perfection CE (committed, CC-BY-SA-4.0)
  *   npm run textures:vanilla    -> your own Minecraft install
+ *
+ * The plain `textures` script deliberately names no source, so it means
+ * "build this again" rather than "switch to CE". It used to mean the latter,
+ * and running it to check an unrelated change to this file silently replaced
+ * a developer's vanilla textures with CE -- a five-second command that undoes
+ * a deliberate choice and says nothing about it. Switching sources is now
+ * something you can only ask for by name.
  *
  * public/textures/ is generated and gitignored. That split exists for one
  * reason: Mojang's textures are not redistributable. Extracting them from a

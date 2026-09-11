@@ -2,8 +2,13 @@
 /*
  * Builds public/sounds/ from a chosen source.
  *
- *   npm run sounds            -> the committed free set (sounds-src/free)
+ *   npm run sounds            -> rebuild whatever is already installed
+ *   npm run sounds:free       -> the committed free set (sounds-src/free)
  *   npm run sounds:vanilla    -> your own Minecraft install
+ *
+ * The plain `sounds` script names no source on purpose -- see the same note in
+ * build-textures.mjs. "Build this again" and "switch back to the committed
+ * set" are different requests and used to be the same command.
  *
  * Same two-source shape as build-textures.mjs, and for the same reason.
  * Mojang's audio is no more redistributable than their textures: extracting it

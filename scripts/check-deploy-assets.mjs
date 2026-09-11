@@ -1,0 +1,53 @@
+#!/usr/bin/env node
+/*
+ * Asserts that what is about to be deployed carries only redistributable art.
+ *
+ * Both asset builds can emit from two sources: a committed, openly licensed
+ * set, or an extraction from a local Minecraft install. The second is fine on
+ * your own machine and is copyright infringement on a public site. Nothing
+ * about the output says which one it is -- an atlas is an atlas -- so each
+ * build stamps a .source marker, and this reads it back.
+ *
+ * It runs against dist/, NOT public/. public/ is a developer's working state
+ * and is allowed to be vanilla; dist/ is the artifact that ships, and vite
+ * copies public/ into it wholesale. dist/ is therefore the last point where
+ * the question "is this legal to serve" still has a checkable answer.
+ *
+ * Rejected: trusting build:deploy's pinned --source flags. They are correct
+ * today and they are a convention, and a convention is exactly what a rushed
+ * edit to a script line breaks. This is the assertion that notices.
+ */
+import { existsSync, readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const DIST = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist')
+
+// [directory, the one source that may be served, what the other one is]
+const REQUIRED = [
+  ['textures', 'ce', 'Mojang textures from a local Minecraft install'],
+  ['sounds', 'free', 'Mojang audio from a local Minecraft install'],
+]
+
+const problems = []
+for (const [dir, allowed, otherwise] of REQUIRED) {
+  const marker = join(DIST, dir, '.source')
+  if (!existsSync(marker)) {
+    problems.push(`dist/${dir}/ has no .source marker -- cannot tell what it holds`)
+    continue
+  }
+  const found = readFileSync(marker, 'utf8').trim()
+  if (found !== allowed) {
+    problems.push(
+      `dist/${dir}/ was built from "${found}", not "${allowed}" -- that is ${otherwise}`)
+  }
+}
+
+if (problems.length) {
+  console.error('\nREFUSING TO DEPLOY. This build is not redistributable:\n')
+  for (const p of problems) console.error(`  - ${p}`)
+  console.error('\nRebuild with `npm run build:deploy`, which pins both sources.\n')
+  process.exit(1)
+}
+
+console.log('deploy assets: textures=ce, sounds=free -- redistributable')
