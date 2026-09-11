@@ -40,8 +40,23 @@
     .icon-top { transform: rotateX(90deg) translateZ(calc(var(--face) / 2)); }
     .icon-front { transform: translateZ(calc(var(--face) / 2)); }
     .icon-side { transform: rotateY(90deg) translateZ(calc(var(--face) / 2)); }
-    .count { position: absolute; right: 2px; bottom: 0; font-size: 14px; font-weight: 700;
-      color: #fff; text-shadow: 2px 2px 0 #3f3f3f; pointer-events: none; }
+    /* The stack-size badge, drawn over an icon in a slot. Three containers use
+       it -- the hotbar, the container panels and the carried stack -- which is
+       why it lives up here with the icons rather than in any one of them.
+
+       This was TWO `.count` rules for a while, one here and one down in the
+       hotbar section. Same specificity, so the later one won every property it
+       named and the only thing the first still contributed was font-weight.
+       That reads as dead code and is not, which is the worst way for a rule to
+       look. What survives below is the computed result of both, verified
+       property by property against the old cascade rather than reasoned about:
+       right -2px, bottom -4px, 18px, weight 700, z-index 3.
+
+       The offsets are NEGATIVE on purpose -- the number hangs off the bottom
+       right corner of the slot, past its edge, which is where Minecraft draws
+       it. z-index puts it over the selection frame. */
+    .count { position: absolute; right: -2px; bottom: -4px; font-size: 18px; font-weight: 700;
+      color: #fff; text-shadow: 2px 2px 0 #3f3f3f; pointer-events: none; z-index: 3; }
     /* Non-block items are FLAT sprites, not cubes. They fill the slot rather
        than being inset like the cube: the 16x16 art already has its own
        padding, so shrinking it again leaves it swimming. */
@@ -93,8 +108,6 @@
       image-rendering: pixelated; }
     .hotbar-slot { position: absolute; display: grid; place-items: center; }
     #hotbar-selection { position: absolute; z-index: 2; pointer-events: none; }
-    .count { position: absolute; right: -2px; bottom: -4px; font-size: 18px;
-      color: #fff; text-shadow: 2px 2px 0 #3f3f3f; pointer-events: none; z-index: 3; }
     #coords { position: absolute; left: 10px; top: 10px; font-size: 12px; opacity: 0.55;
       text-shadow: 1px 1px 0 #000; pointer-events: none; z-index: 4; }
 
