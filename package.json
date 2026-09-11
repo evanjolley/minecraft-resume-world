@@ -11,7 +11,10 @@
     "textures:vanilla": "node scripts/build-textures.mjs --source=vanilla",
     "sounds": "node scripts/build-sounds.mjs",
     "postinstall": "node scripts/build-textures.mjs --ensure",
-    "test": "playwright test -c test/playwright.config.js"
+    "test": "playwright test -c test/playwright.config.js",
+    "build:deploy": "rm -rf dist && npm run textures && vite build && rm -rf dist/sounds && cp deploy/_headers deploy/.assetsignore dist/",
+    "deploy": "npm run build:deploy && npx --yes wrangler@4 deploy",
+    "deploy:dry-run": "npm run build:deploy && npx --yes wrangler@4 deploy --dry-run"
   },
   "dependencies": {
     "@babylonjs/core": "^6.49.0",

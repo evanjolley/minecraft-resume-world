@@ -1,0 +1,134 @@
+# Build, test and (once Evan adds the secret) deploy world.evanjolley.com.
+#
+# THE DEPLOY STEP CANNOT FIRE TODAY. It is guarded on CLOUDFLARE_API_TOKEN
+# being non-empty, and that secret does not exist in this repository. Until
+# someone adds it this workflow is a CI job that happens to end in a skipped
+# step, which is the point: the pipeline gets exercised on every push long
+# before anything is published, so going live is not also the first time any of
+# this ran.
+#
+# Adding the secret is the switch. docs/DEPLOYMENT.md says where it goes and
+# what scopes the token needs.
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  # So Evan can trigger the first real deploy from the Actions tab the moment
+  # he adds the secret, without having to invent a commit.
+  workflow_dispatch:
+
+# A deploy is a mutation of one live site, so two of them racing is never what
+# anyone wanted. An in-flight run for an older commit is cancelled rather than
+# queued -- the newer commit is about to overwrite it anyway.
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # Mapped to job env rather than read inline in the `if:`, because the
+    # secrets context is not reliably available in a step-level condition and
+    # the env context always is. An absent secret becomes an empty string here,
+    # which is exactly the test we want.
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          # Matches what this is developed on. noa pins Babylon ^6 against a
+          # Babylon that ships 9.x, so the toolchain is worth pinning too.
+          node-version: '24'
+          cache: npm
+
+      # A clean checkout has almost no public/ at all -- textures, UI sprites
+      # and skins are generated and gitignored. npm ci's postinstall hook runs
+      # build-textures.mjs --ensure, so they exist before anything else needs
+      # them. That is load-bearing, not incidental.
+      - run: npm ci
+
+      # Belt and braces over that postinstall. --ensure is a no-op when a build
+      # already looks complete, and "looks complete" is a heuristic; a forced
+      # build costs about a second and removes the class of failure where the
+      # site deploys with missing-texture checkerboard everywhere.
+      - run: npm run textures
+
+      # --with-deps installs the system libraries Chromium needs on a bare
+      # ubuntu runner. Only chromium: the suite runs one browser, and the
+      # other two are a two-minute download for nothing.
+      - run: npx playwright install --with-deps chromium
+
+      # 97 of the 109 tests. The twelve left out are test/12-sounds.spec.js,
+      # and leaving them out is not a convenience -- the suite CANNOT pass on a
+      # clean checkout. Those tests arm an audio harness against
+      # public/sounds/manifest.json, which `npm run sounds` extracts from a
+      # local Minecraft install, which a runner does not have. Verified: the
+      # full suite on a fresh clone is 98 passed, 1 failed, 10 did not run.
+      #
+      # This exclusion and the silent deployed site are the same root cause,
+      # and both disappear the day a redistributable sound set is committed.
+      # Until then the honest choice is a green CI that is explicit about what
+      # it skipped, rather than a red one everybody learns to ignore.
+      #
+      # Matched on the filename rather than the describe titles because
+      # Playwright's --grep runs against the whole title path, filename
+      # included, and a filename is the stabler half of that.
+      #
+      # CI is what tells playwright.config.js not to reuse an existing dev
+      # server. The runner has none, but a config that behaves differently in
+      # CI should be given the flag it is looking for.
+      - run: npm run test -- --grep-invert 12-sounds
+        env:
+          CI: 'true'
+
+      # NOT `npm run build`. build:deploy additionally strips dist/sounds and
+      # copies deploy/_headers and deploy/.assetsignore in. See deploy/ for why
+      # the sounds part matters.
+      - run: npm run build:deploy
+
+      # The real check that dist/ is whole, running on the machine that would
+      # publish it. A deploy of a dist/ missing its atlases is the exact
+      # failure this whole pipeline exists to prevent, and it is silent from
+      # the outside -- the site loads, the world is checkerboard.
+      - name: Verify the build is complete
+        run: |
+          set -euo pipefail
+          for f in dist/index.html dist/fonts/Monocraft.ttf dist/ui/hotbar.png; do
+            test -s "$f" || { echo "missing or empty: $f"; exit 1; }
+          done
+          for n in 0 1 2 3 4; do
+            test -s "dist/textures/atlas$n.png" || { echo "missing atlas$n.png"; exit 1; }
+          done
+          test -n "$(ls dist/assets/*.js 2>/dev/null)" || { echo "no JS bundle"; exit 1; }
+          # Mojang audio must never reach a public host. It cannot be here --
+          # a CI checkout has no Minecraft install to extract from -- so if it
+          # ever is, something has gone wrong enough to stop for.
+          test ! -d dist/sounds || { echo "dist/sounds present; refusing"; exit 1; }
+          echo "dist: $(find dist -type f | wc -l) files, $(du -sh dist | cut -f1)"
+
+      # Runs on every push, including today's, so the config is proven to parse
+      # and dist/ is proven to resolve whether or not the deploy below fires.
+      - name: Validate wrangler config
+        run: npx --yes wrangler@4 deploy --dry-run
+
+      # The switch. Skipped, loudly, until the secret exists.
+      #
+      # Plain npx rather than cloudflare/wrangler-action: one fewer third party
+      # holding a token that can publish to Evan's account, and the action's
+      # only real convenience is installing wrangler, which npx does anyway.
+      - name: Deploy to Cloudflare
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: npx --yes wrangler@4 deploy
+
+      - name: Deploy skipped
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: |
+          echo "::notice::Built and verified, not deployed."
+          echo "::notice::Add repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to go live. See docs/DEPLOYMENT.md."

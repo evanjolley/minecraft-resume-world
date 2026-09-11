@@ -1,0 +1,86 @@
+# Cloudflare Workers with static assets.
+#
+# The platform argument is in docs/DEPLOYMENT.md and is not repeated here. What
+# matters when reading this file: nothing below is a static-hosting choice.
+# Workers won because multiplayer wants a Durable Object, a Durable Object can
+# only live on a Worker, and serving the site from the same Worker means
+# multiplayer is a binding added to this file rather than a second platform.
+#
+# Nothing is deployed yet. `npm run deploy:dry-run` validates this file without
+# an account; `npm run deploy` is Evan's to run.
+
+name = "world"
+
+# Pinned deliberately. Cloudflare gates runtime behaviour changes behind this
+# date, so a deploy a year from now behaves like a deploy today. Bumping it is
+# a decision, not a chore.
+compatibility_date = "2026-09-11"
+
+# Free, and the only way to see a 500 that happens to someone else. Costs
+# nothing until there is a Worker script to produce logs.
+[observability]
+enabled = true
+
+[assets]
+# dist/, not public/. public/ is a build INPUT that is itself generated
+# (`npm run textures` writes most of it) and largely gitignored, so it is never
+# the complete thing. dist/ is what vite assembles and the only directory that
+# is true at any single moment.
+#
+# Uploaded via `npm run build:deploy`, which is not the same as `npm run build`
+# -- see deploy/.assetsignore for the reason that distinction is load-bearing.
+directory = "./dist"
+
+# not_found_handling is left at its default ("none": a real 404) rather than
+# "single-page-application". SPA handling would answer /textures/atlas9.png
+# with index.html and a 200, so a texture the build forgot to emit would render
+# as a broken image instead of a 404 in the network tab. This site has exactly
+# one HTML page and no client-side routes, so it gains nothing from SPA
+# handling and loses the only signal that says an asset is missing.
+
+# --------------------------------------------------------------------------
+# Multiplayer, later. Commented out because none of it exists yet.
+#
+# This block IS the "adding multiplayer is not a re-platform" claim in
+# docs/DEPLOYMENT.md, written out so it can be checked rather than believed.
+# docs/FUTURE.md section 2 describes the room; section 1c describes the block
+# diff it also stores.
+#
+#   main = "./worker/index.js"
+#
+#   [[durable_objects.bindings]]
+#   name = "ROOM"
+#   class_name = "Room"
+#
+#   # new_sqlite_classes, NOT new_classes. The storage backend is fixed at
+#   # class creation and cannot be changed afterwards, and the SQLite backend
+#   # is what the persisted block diff in FUTURE.md 1c needs. Getting this
+#   # wrong is a migration, not an edit.
+#   [[migrations]]
+#   tag = "v1"
+#   new_sqlite_classes = ["Room"]
+#
+#   # And inside [assets] above, so the WebSocket upgrade reaches the Worker
+#   # instead of being answered by the asset server:
+#   #   run_worker_first = ["/ws"]
+# --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# The custom domain, deliberately NOT configured.
+#
+# A Workers custom domain requires the zone to be on Cloudflare, and
+# evanjolley.com is on GoDaddy's nameservers today (ns69/ns70.domaincontrol.com)
+# pointing at GitHub Pages. Cloudflare only sells subdomain-only zones on
+# Enterprise, so world.evanjolley.com cannot be attached without moving the
+# whole zone -- which is a decision about evanjolley.com, not about this repo,
+# and therefore Evan's. docs/DEPLOYMENT.md lays out both paths.
+#
+# Until then the Worker is live and shareable on its workers.dev URL, which
+# needs no DNS at all. Once the zone moves, uncomment:
+#
+#   [[routes]]
+#   pattern = "world.evanjolley.com"
+#   custom_domain = true
+#
+# and `wrangler deploy` creates the DNS record itself.
+# --------------------------------------------------------------------------

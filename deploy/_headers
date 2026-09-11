@@ -1,0 +1,47 @@
+# Response headers for the deployed site.
+#
+# Copied into dist/ by `npm run build:deploy`. Cloudflare reads it out of the
+# asset directory, applies it, and does not serve the file itself.
+#
+# It lives here rather than in public/ -- which is where Vite would pick it up
+# for free -- because public/ is almost entirely generated and gitignored, and
+# a hand-written source-of-truth file hiding inside a build output is a file
+# that eventually gets deleted by a script that owns that directory.
+#
+# WHY BOTHER. The Workers default for static assets is
+#   Cache-Control: public, max-age=0, must-revalidate
+# which is safe and expensive: a returning visitor makes ~900 conditional
+# requests before the world can boot. Almost all of those files are a few
+# hundred bytes, so the round trips cost far more than the bytes do.
+
+# Vite writes a content hash into these filenames, so the URL changes whenever
+# the bytes do. This is the one place `immutable` is unconditionally correct.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Monocraft and its OFL text are a pinned third-party drop. If the typeface
+# ever changes it will be a different file with a different name.
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# NOT immutable, and this is the subtle one. These names come out of public/
+# verbatim, so `atlas0.png` is a permanent URL whose CONTENT changes every time
+# the block palette does -- and an atlas layer index IS a block identity, so a
+# stale atlas doesn't look slightly old, it draws the wrong blocks. A day is
+# long enough to skip revalidation across a visit and short enough that a
+# palette change cannot haunt anyone.
+#
+# The real fix is content-hashed atlas filenames out of build-textures.mjs, at
+# which point these move up to join /assets/*.
+/textures/*
+  Cache-Control: public, max-age=86400
+
+/ui/*
+  Cache-Control: public, max-age=86400
+
+/skins/*
+  Cache-Control: public, max-age=86400
+
+# Left on the must-revalidate default on purpose: index.html is what points at
+# every hashed bundle, so caching it is caching the whole deploy. The resume is
+# a document Evan will replace without renaming.

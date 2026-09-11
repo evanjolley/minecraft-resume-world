@@ -1,0 +1,14 @@
+# Never upload these, whatever happens to be sitting in dist/.
+#
+# `npm run sounds` extracts audio from a local Minecraft install into
+# public/sounds/, vite copies public/ into dist/ wholesale, and from there a
+# single `wrangler deploy` would publish Mojang's audio from Evan's domain.
+# That is redistribution, and public/sounds/ is gitignored precisely to stop
+# it -- but gitignore only guards the repo, not the deploy.
+#
+# `npm run build:deploy` already deletes dist/sounds. This is the second lock,
+# for the day someone deploys a dist/ that a plain `npm run build` left behind.
+# Until there is a legally redistributable sound set (docs/DEPLOYMENT.md), the
+# deployed site is silent, and that is the intended behaviour rather than a bug
+# -- src/sounds.js treats a missing manifest as "stay quiet".
+sounds/
