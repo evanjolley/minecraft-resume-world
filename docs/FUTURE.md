@@ -10,7 +10,8 @@ Minecraft-accurate physics, survival HUD and inventory from Minecraft's own
 sprites, mining and placing, day/night on Minecraft's clock, a skinned player
 model with F5 perspectives and crouch, chat, block and damage sounds,
 break/landing/sprint particles, rain and thunder, Fancy 3D clouds, a 355-block palette on a paged
-texture atlas,
+texture atlas, slabs and stairs for 28 material families with real sub-voxel
+collision,
 oak trees, game modes behind an OP-gated authority, an item model with crafting
 (2x2 and 3x3), armor and an offhand, and a 109-test browser suite.
 
@@ -27,9 +28,16 @@ Roughly ascending in how much they depend on a decision from Evan.
    `random/pop` is not extracted. `sounds.js` already has a `fallback` field
    that the manifest overrides automatically the day `pickup: ['random/pop']`
    is added to `build-sounds.mjs`.
-3. **Non-cube blocks** — stairs, slabs, fences, walls, panes, via noa's
-   `blockMesh`. Roughly half of what makes a build look built, and a hard
-   prerequisite for importing anything made in real Minecraft.
+3. **Connected non-cube blocks** — fences, walls, panes, bars, and stair
+   corner shapes. Slabs and stairs shipped; these did not, and the reason is
+   structural rather than a matter of effort. noa draws a custom block mesh as
+   a thin instance, so every voxel of a block id shares one geometry and can
+   only differ by a transform — and a fence post with two arms is not a
+   transform of one with three. The three ways out are written up at the
+   bottom of `src/blockMeshes.js`; the least bad is a parallel instanced-mesh
+   system driven off the registry's onSet/onUnset hooks, which has to
+   reimplement noa's origin rebasing because noa offers no hook to shift our
+   matrices when it shifts its own.
 4. **Shift-click in the inventory**, both senses: move a stack to the other
    container, and craft as many as fit. Its absence is felt immediately by
    anyone who has played.
@@ -45,9 +53,10 @@ Roughly ascending in how much they depend on a decision from Evan.
    visitor has ever seen any of this.
 3. **Video screens.** The richest way to deliver the content, and independent
    of everything else.
-4. **Multiplayer presence.** The most distinctive feature, but it only pays
-   off once there's something to gather around.
-5. **Skin customization**, then the long tail.
+4. **An AI version of Evan, in the world, that visitors can talk to and book
+   time with.** See section 2. This displaced multiplayer.
+5. **Skin customization**, then the long tail. Multiplayer is no longer near
+   the top; the reasoning is in section 2b.
 
 The ordering rule: anything that makes the world worth visiting beats anything
 that makes it more elaborate. Engine polish has been the easy, fun work; it is
@@ -186,9 +195,87 @@ and it needs no judgement calls from Evan.
 
 ---
 
-## 2. Multiplayer presence
+## 2. AI Evan: an agent in the world
+
+A character standing in the world that visitors can talk to — answering
+questions about Evan's work, and **booking time with him**. Not a chatbot
+beside the game: a thing you walk up to.
+
+### Why this displaced multiplayer
+
+Multiplayer has an empty-room problem no engineering fixes. Traffic here is a
+handful of visitors a day, so the probability two are in the world in the same
+moment is near zero. The feature's value scales with concurrency and the
+concurrency is one — a shared world where everyone is alone.
+
+AI Evan is there for every visitor, every time. And it serves the site's actual
+purpose, which multiplayer never does: multiplayer is spectacle standing next
+to a resume, while this **is** the resume, in the one form someone might
+actually engage with. People who would never open a CV will ask a question.
+
+### The MVP is much smaller than "AI agents controlling NPCs"
+
+No pathfinding, no navigation, no autonomy. A character standing in one place,
+proximity to start a conversation, chat wired to a model call through the
+Worker. A Minecraft Evan standing at his own resume plot is a stronger image
+than one wandering around, and it skips the single hardest piece (A* over a
+voxel grid with jump and fall costs).
+
+Most of the body already exists: `playerModel.js` is a factory, `poseModel()`
+takes explicit state rather than reading the player, and the skin is one
+swappable material. An NPC is that model with no keyboard attached.
+
+### Tools, which is what makes it an agent rather than a chatbot
+
+- **Answer questions** about Evan's work, grounded in real content.
+- **Check availability and book a meeting.** This is the one that makes it
+  real — a visitor leaves with a calendar invite rather than an impression.
+  Cal.com is the obvious backend: purpose-built, has an API, and already
+  handles timezones, availability and confirmations, none of which are worth
+  rebuilding. Google Calendar directly is the alternative and means owning
+  OAuth for no benefit.
+- **Point at things in the world** — walk a visitor to a plot, or just
+  highlight it. Cheap, and it ties the agent to the space.
+
+The Worker holds the keys and runs the tool loop. Nothing model-facing can live
+in the bundle.
+
+### What will actually be hard
+
+- **Grounding.** A vague AI Evan is worse than none — it reads as a gimmick
+  that dodges questions. It needs real career detail to draw on, which is the
+  same content gap blocking everything else on this list.
+- **Hallucinating a job he never had** is the failure that matters. This
+  speaks as Evan, on Evan's domain, to people evaluating him. Bounds on what it
+  will claim are not optional.
+- **Prompt injection.** Visitors will try to make it say things. Assume that
+  from the first line of the system prompt, not after someone screenshots it.
+- **Booking abuse.** Anyone can book. Rate limits, and probably an email
+  confirmation step before anything reaches the real calendar.
+- **Latency is the design problem, not the model.** A character that pauses
+  three seconds before replying reads as broken. Idle animation, a typing
+  indicator in Minecraft's own chat style, and acknowledgement have to cover it.
+- **Cost per visitor.** Model calls with a tool loop are not free. Cap it.
+
+### Prerequisites
+
+The Worker (shared with everything else), then content to ground it. Nothing
+should start before the island has something on it — an agent with nothing to
+talk about is a demo of an agent.
+
+---
+
+## 2b. Multiplayer presence
 
 Concurrent visitors seeing each other walk around.
+
+**Demoted, not abandoned.** See section 2 for why: the value scales with
+concurrency, and on a site with a handful of visitors a day two of them are
+almost never in the world at the same moment. Most of the infrastructure below
+gets built anyway for AI Evan — the Worker, the Durable Object, remote
+characters rendered from the player model — so this becomes a smaller job
+later rather than a cancelled one. Worth doing if traffic ever justifies it,
+or simply because it is fun.
 
 **Implementation.** A Cloudflare Worker fronting one Durable Object as the
 room, using WebSocket hibernation so an empty room costs nothing while idle.
@@ -296,14 +383,14 @@ maps the wide layout only, and says so.
 
 ## Also worth building
 
-- **Non-cube blocks: stairs, slabs, fences, panes.** The palette is 355 full
-  cubes; these need custom block meshes via noa's `blockMesh`. They are also
-  roughly half of what makes a Minecraft build look built rather than blocky,
-  and a hard prerequisite for importing anything made in real Minecraft.
 - **Importing real Minecraft builds.** Build in creative with WorldEdit,
   export a litematic, map block ids, paint onto the island. The authoring
-  story for all the content above — and blocked on non-cube blocks, since any
-  real build uses stairs.
+  story for all the content above. No longer blocked: slabs and stairs exist,
+  which is what every real build is made of. An importer has to map vanilla
+  blockstates onto this table's ids — `oak_stairs[facing=east,half=bottom]`
+  onto `oak_stairs_east_bottom` — and address the variants directly rather
+  than through `noa.setBlock`'s placement orientation, which deliberately only
+  rewrites a family's canonical id.
 - **Spawn signage or a guided path.** A visitor drops into an empty field with
   no idea what to do. Even one sign at spawn changes that.
 - **Mobile.** Explicitly dropped, and that's a real decision — but pointer lock
@@ -318,40 +405,14 @@ maps the wide layout only, and says so.
 Further out than everything above — no timeline, not costed, recorded so they
 are not lost. Evan has more to add here.
 
-### AI agents controlling NPC characters
+### Autonomous NPCs that move
 
-Characters in the world who move and talk, driven by a model rather than a
-script.
+The full version of section 2: characters that walk, follow, and act rather
+than standing still. The hard piece is **pathfinding** — A* over the voxel grid
+with costs for jumping and falling — and it is what makes an NPC look alive or
+look broken. Deliberately not in the MVP, because a stationary AI Evan gets
+most of the value without it.
 
-**Most of the body already exists.** `playerModel.js` builds a skinned
-humanoid from a factory, `poseModel()` takes an explicit state object rather
-than reading the player, and the skin is one swappable material. An NPC is
-that model with a different skin and no keyboard attached. What does not exist
-is **pathfinding** — A* over the voxel grid with costs for jumping and falling,
-which is a real piece of work and the thing that makes an NPC look alive or
-look broken.
-
-**The version that actually fits this site** is a guide: someone who walks a
-visitor to a resume plot, answers "where did he work?", and points at things.
-That is the one idea that genuinely fuses the game and the document instead of
-sitting beside them — a visitor who would never read a CV might ask a question.
-
-**Three things that make it harder than it sounds:**
-
-- **It needs a server.** Model calls cannot go from the browser with a key in
-  the bundle. The Worker and Durable Object planned for multiplayer are the
-  natural home, so this lands after that, not before.
-- **Latency is the design problem, not the model.** A guide that pauses three
-  seconds before answering reads as broken. Idle behaviour, walking animation
-  and acknowledgement have to cover the wait.
-- **An NPC speaking as Evan is a liability.** Visitors will type things to see
-  what it says, and it is on his domain, next to his resume, with his name on
-  it. It needs bounds on what it will claim, and the same care nicknames and
-  chat need.
-
-**Prerequisites**, in order: multiplayer infrastructure (for the server),
-pathfinding, then the model layer. Nothing here should start before the island
-has content — a guide with nothing to guide you to is a demo of a guide.
 
 ## Not worth building
 
