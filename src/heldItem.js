@@ -1,7 +1,12 @@
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder'
+import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
+import { Material } from '@babylonjs/core/Materials/material'
+import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { Vector3, Vector4, Quaternion } from '@babylonjs/core/Maths/math.vector'
 import { BLOCK_BY_ID } from './blocks.js'
+import { item } from './items.js'
+import { cachedItemGeometry, displayFor, itemTexture, itemTextureUrl, loadItemGeometry } from './itemModel.js'
 import { createFirstPersonArm } from './playerModel.js'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 
@@ -97,6 +102,142 @@ export function blockTextureUrl(def) {
   return `/textures/held/${def.key}.png`
 }
 
+/*
+ * An empty mesh ready to be handed the extruded geometry of whatever item is
+ * selected, with the material an alpha-tested cut-out.
+ *
+ * ALPHA TEST, not alpha blend. An item sprite is a cut-out -- every pixel is
+ * either fully there or not there at all -- and a blended one has to be sorted
+ * against itself, which for a mesh that folds back on itself (the rim quads sit
+ * between the front and back faces) has no correct answer. itemEntity.js's
+ * dropped-item plane blends instead, and gets away with it only because a
+ * single flat quad cannot overlap itself.
+ *
+ * BOTH flags are required and that is the trap. transparencyMode alone gets
+ * you #define ALPHATEST in the shader, which reads:
+ *
+ *     if (alpha < alphaCutOff) discard;
+ *
+ * but `alpha` there starts life as the material's own alpha -- a flat 1 -- and
+ * only picks up the texture's alpha channel under #define ALPHAFROMDIFFUSE,
+ * which is what useAlphaFromDiffuseTexture turns on. With one and not the
+ * other the test runs, discards nothing, and every item is drawn on an opaque
+ * black square. That is exactly what the first screenshot showed.
+ *
+ * Setting useAlphaFromDiffuseTexture does NOT drag alpha blending back in:
+ * StandardMaterial's _disableAlphaBlending is true whenever transparencyMode is
+ * OPAQUE or ALPHATEST, so needAlphaBlending stays false and this draws as
+ * ordinary opaque geometry that happens to discard fragments.
+ *
+ * Shared by the first-person viewmodel and the third-person model's fist for
+ * the same reason createHeldBlockMesh is: both must show the same object, and
+ * one factory is how that stays true.
+ */
+export function createItemMesh(noa, name) {
+  const scene = noa.rendering.getScene()
+  const mesh = new Mesh(name, scene)
+  const mat = noa.rendering.makeStandardMaterial(`${name}-mat`)
+  mat.transparencyMode = Material.MATERIAL_ALPHATEST
+  mat.useAlphaFromDiffuseTexture = true
+  // The same threshold extrudeSprite uses to decide what is solid, so the
+  // silhouette the shader cuts and the silhouette the rim was built around
+  // cannot disagree.
+  mat.alphaCutOff = 0.5
+  mat.specularColor = new Color3(0, 0, 0)
+  /*
+   * Same emissive floor createSkinMaterial uses, and for the same reason: this
+   * scene has one directional light, so a rim quad facing away from it falls to
+   * pure black and a diamond axe grows a matte stripe down one edge. Minecraft
+   * lights held items with a fixed pair of lights that never let a face go
+   * fully dark; this is the cheap equivalent.
+   */
+  mat.emissiveColor = new Color3(0.45, 0.45, 0.45)
+  mesh.material = mat
+  mesh.isPickable = false
+  mesh.rotationQuaternion = new Quaternion()
+  // Same trap as every other mesh here: noa renders from its own selection
+  // octree, and a mesh it has never been handed is silently never drawn.
+  noa.rendering.addMeshToScene(mesh)
+  return mesh
+}
+
+/**
+ * Point a mesh at an item sprite and pose it with that item's display
+ * transform.
+ *
+ * ONE function for both views, because the transform numbers are the same
+ * numbers and only the FRAME differs -- and the frame difference is the part
+ * this repo has got wrong twice:
+ *
+ *   'camera'  the first-person viewmodel. Minecraft's camera space reflected
+ *             in Z (its -Z is forward, Babylon's +Z is). Translations keep x
+ *             and y and flip z; rotations about X and Y flip sign, about Z do
+ *             not. This is the rule heldItem's block cube already follows.
+ *
+ *   'model'   the third-person fist. playerModel.js builds the player as
+ *             Minecraft's model reflected through the ORIGIN -- x, y and z all
+ *             negate -- so every translation flips and every rotation angle
+ *             carries over untouched. That file says so at length.
+ *
+ * Both are reflections, which is why the two rules are exact opposites rather
+ * than independent: conjugating a rotation by a reflection flips the axes that
+ * the reflection did NOT flip. Getting the pair the wrong way round is how you
+ * end up with a sword held blade-inward.
+ *
+ * `units` is the scale of the parent node -- 1 in first person, where the
+ * viewmodel hangs off the camera in blocks, and 16 in third person, where
+ * everything under an arm pivot is in Minecraft model units.
+ *
+ * `spin` is an extra rotation about Z folded into the display rotation. Only
+ * the third-person caller uses it; see the note there.
+ */
+export function poseItemMesh(mesh, texture, display, { frame, units = 1, spin = 0 }) {
+  texture.hasAlpha = true
+  mesh.material.diffuseTexture = texture
+
+  const t = frame === 'model' ? -1 : 1
+  const r = -t
+
+  const [tx, ty, tz] = display.translation
+  const [rx, ry, rz] = display.rotation
+
+  // Display translations are in model units (1/16 block); the deserializer's
+  // 0.0625 multiply is the /16 here.
+  mesh.position.set(t * tx * units / 16, t * ty * units / 16, -tz * units / 16)
+
+  /*
+   * ItemTransform.apply composes the display rotation as JOML's
+   * rotationXYZ(x, y, z) = Rx * Ry * Rz -- X then Y then Z in the local frame.
+   * Babylon's q.multiply(p) chains the same way, so this is that product with
+   * the mirrored signs substituted. NOT an Euler triple: Babylon applies those
+   * in its own fixed order and would put a handheld tool's -90 and 55 in the
+   * wrong sequence.
+   */
+  Quaternion.RotationAxisToRef(AXIS_X, deg(r * rx), qA)
+  Quaternion.RotationAxisToRef(AXIS_Y, deg(r * ry), qB)
+  qA.multiplyToRef(qB, qC)
+  Quaternion.RotationAxisToRef(AXIS_Z, deg(rz + spin), qB)
+  qC.multiplyToRef(qB, mesh.rotationQuaternion)
+
+  mesh.scaling.setAll(display.scale * units)
+}
+
+/**
+ * Give `mesh` the extruded geometry for `url`, and say whether that happened
+ * synchronously.
+ *
+ * False means the sprite is still being fetched and decoded, and the caller
+ * must keep the mesh hidden until `then` fires -- an empty Mesh with no vertex
+ * data draws as nothing, but it also has no bounding box, which noa's octree
+ * does not enjoy.
+ */
+export function applyItemGeometry(mesh, url, then) {
+  const cached = cachedItemGeometry(url)
+  if (cached) { cached.applyToMesh(mesh); return true }
+  loadItemGeometry(url).then((data) => { data.applyToMesh(mesh); then() })
+  return false
+}
+
 export function installHeldItem(noa, inventory, skinMaterial, swing) {
   const scene = noa.rendering.getScene()
   const camera = noa.rendering.camera
@@ -122,9 +263,30 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
     new Vector4(third * 2, 0, 1, 1),       // bottom -> bottom tile
   ]
 
+  /*
+   * The viewmodel root: one node holding the hand's PLACE, with the block cube
+   * and the item slab hanging off it as siblings.
+   *
+   * It is literally ItemInHandRenderer.applyItemArmTransform -- the
+   * translate(0.56, -0.52, -0.72) that both kinds of held thing share -- so
+   * putting it on its own node is not just tidying. The two children diverge
+   * immediately after it: a block model carries its own +45 yaw that cancels
+   * the swing's trailing -45, and an item model does not.
+   *
+   * It is also the handle gamemode.js gets. That file snapshots
+   * `[held.mesh, ...held.mesh.getChildMeshes()]` ONCE at install and drives
+   * `isVisible` on the result, so anything built later would stay visible to a
+   * spectator. Returning this node as `held.mesh` is what puts the item slab
+   * inside that snapshot -- and is the reason the item mesh is created here and
+   * has its geometry swapped, rather than one mesh being created per item type
+   * on demand.
+   */
+  const viewmodel = new TransformNode('viewmodel', scene)
+  viewmodel.parent = camera
+
   const mesh = CreateBox('held', { size: 1, faceUV, wrap: true }, scene)
   mesh.material = noa.rendering.makeStandardMaterial('held-mat')
-  mesh.parent = camera
+  mesh.parent = viewmodel
   mesh.renderingGroupId = 1
   mesh.isPickable = false
   mesh.scaling.setAll(SCALE)
@@ -137,6 +299,27 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
   // mesh built directly in the scene and never registered here is simply
   // never drawn -- no error, no warning, it just isn't there.
   noa.rendering.addMeshToScene(mesh)
+
+  /*
+   * The non-block item, and the thing this file used to draw nothing at all
+   * for: an axe, an ingot, a stick.
+   *
+   * TWO nodes, because Minecraft's chain does not collapse into one the way
+   * the block's does. The swing ends with a rotateY(-45) that the block model's
+   * own rotateY(+45) cancels; an item model has no such yaw, so the -45
+   * survives and has to be applied BEFORE the item's own display transform.
+   * Flattening them would mean recomputing the product every frame.
+   *
+   *   itemSwing   the arm's motion, shared in spirit with the block cube
+   *   itemMesh    the item/generated or item/handheld display transform
+   */
+  const itemSwing = new TransformNode('held-item-swing', scene)
+  itemSwing.parent = viewmodel
+  itemSwing.rotationQuaternion = new Quaternion()
+
+  const itemMesh = createItemMesh(noa, 'held-item')
+  itemMesh.parent = itemSwing
+  itemMesh.renderingGroupId = 1
 
   /*
    * The empty hand is the real arm from the player model, sharing the skin
@@ -239,12 +422,43 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
     return textures.get(path)
   }
 
-  let holdingBlock = false
+  /*
+   * What is in the hand, as one of exactly three states rather than a boolean.
+   *
+   * It was a boolean -- `holdingBlock` -- and that is precisely why a tool was
+   * invisible: "not a block" collapsed onto "empty hand", and the empty hand
+   * draws an arm, so an axe drew an arm holding nothing. Three states, one
+   * mesh enabled for each, and the tick below can assert that.
+   */
+  const EMPTY = 'empty', BLOCK = 'block', ITEM = 'item'
+  let mode = EMPTY
+
+  // The sprite currently applied to itemMesh, and whether its geometry has
+  // landed. Held separately because the first selection of any item is a
+  // network fetch away and the mesh must stay hidden until it resolves.
+  let itemUrl = null
+  let itemReady = false
 
   const setHeld = (stack) => {
-    const def = stack ? BLOCK_BY_ID.get(stack.id) : null
-    holdingBlock = !!def
-    if (def) mesh.material.diffuseTexture = textureFor(`/textures/held/${def.key}.png`)
+    const def = stack ? item(stack.id) : null
+    if (!def) { mode = EMPTY; return }
+
+    const block = def.places ? BLOCK_BY_ID.get(def.places) : null
+    if (block) {
+      mode = BLOCK
+      mesh.material.diffuseTexture = textureFor(blockTextureUrl(block))
+      return
+    }
+
+    mode = ITEM
+    const url = itemTextureUrl(def)
+    poseItemMesh(itemMesh, itemTexture(scene, url), displayFor(def.id, 'firstperson_righthand'),
+      { frame: 'camera' })
+    // Re-applying identical geometry would re-upload the vertex buffers for
+    // nothing, and scrolling the hotbar does this several times a second.
+    if (url === itemUrl && itemReady) return
+    itemUrl = url
+    itemReady = applyItemGeometry(itemMesh, url, () => { if (itemUrl === url) itemReady = true })
     // Visibility is decided ONLY in the tick below, which also knows whether
     // we're in first person. Enabling here made the block flash onto the
     // screen in third person every time the hotbar selection changed.
@@ -301,20 +515,36 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
     const f = Math.sin(p * p * Math.PI)
     const g = Math.sin(Math.sqrt(p) * Math.PI)
 
-    mesh.position.set(REST.x + bx, REST.y + by, REST.z)
+    // The bob and the hand's resting place are shared by both children, so
+    // they live on the root rather than being written twice.
+    viewmodel.position.set(REST.x + bx, REST.y + by, REST.z)
+
     Quaternion.RotationAxisToRef(AXIS_Y, deg(-(45 - 20 * f)), qA)
     Quaternion.RotationAxisToRef(AXIS_Z, deg(-20 * g), qB)
     qA.multiplyToRef(qB, qC)
     Quaternion.RotationAxisToRef(AXIS_X, deg(80 * g), qB)
     qC.multiplyToRef(qB, mesh.rotationQuaternion)
 
+    /*
+     * The item's swing is the block's plus the trailing rotateY(-45) that the
+     * block model's own +45 cancelled and an item's does not. Mirrored to +45
+     * here for the same reason every other Y rotation in this file is: camera
+     * space is Minecraft's reflected in Z.
+     *
+     * The cube's quaternion is already that product, so this costs one more
+     * multiply rather than a second chain.
+     */
+    Quaternion.RotationAxisToRef(AXIS_Y, deg(45), qB)
+    mesh.rotationQuaternion.multiplyToRef(qB, itemSwing.rotationQuaternion)
+
     // Minecraft hides the viewmodel in third person.
     const firstPerson = noa.camera.zoomDistance < 0.5
-    mesh.setEnabled(firstPerson && holdingBlock)
-    armRoot.setEnabled(firstPerson && !holdingBlock)
+    mesh.setEnabled(firstPerson && mode === BLOCK)
+    itemMesh.setEnabled(firstPerson && mode === ITEM && itemReady)
+    armRoot.setEnabled(firstPerson && mode === EMPTY)
     // The arm swings with the same arc as a held block.
-    if (!holdingBlock) setArmPose(p)
+    if (mode === EMPTY) setArmPose(p)
   })
 
-  return { mesh, arm }
+  return { mesh: viewmodel, block: mesh, item: itemMesh, arm, get mode() { return mode } }
 }

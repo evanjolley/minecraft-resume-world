@@ -20,8 +20,10 @@ import { installCrackOverlay } from './crackOverlay.js'
 import { installSky } from './sky.js'
 import { createArmorReduction } from './armor.js'
 import { itemName, itemId } from './items.js'
+import { itemModelStats } from './itemModel.js'
 import { installSounds } from './sounds.js'
 import { installParticles } from './particles.js'
+import { installWeather } from './weather.js'
 import { installItemEntities } from './itemEntity.js'
 import { installHighlightStyle } from './highlight.js'
 import { createAuthority } from './authority.js'
@@ -244,6 +246,13 @@ const sounds = installSounds(noa, { interaction, movement, survival })
 const particles = installParticles(noa, { interaction, movement })
 
 /*
+ * Weather. After `sounds` because the rain bed hangs off its AudioContext, and
+ * before installCommands because it registers doWeatherCycle into GAMERULES --
+ * /gamerule builds its help line from that table when the command registers.
+ */
+const weather = installWeather(noa, { sky, authority, sounds })
+
+/*
  * Dropped items. Installed after `sounds` because it plays the pickup, and
  * after `interaction` for no reason at all -- it does not listen to breaks, it
  * decorates `authority.requestBlockChange`, which is the only place a break
@@ -327,7 +336,15 @@ noa.container.on('lostPointerLock', () => {
 window.noa = noa
 window.game = {
   inventory, survival, move, sky, menu, chat, inputLock, perspective,
-  skinMaterial, sounds, particles, drops,
+  skinMaterial, sounds, particles, drops, weather,
+  /*
+   * The viewmodel and the extrusion counters, for the console and the test
+   * suite. `held` was not exposed before because nothing outside main.js
+   * needed it; asserting that a tool is actually drawn needs to reach the
+   * meshes, and `itemModelStats` is how a test proves the geometry cache is
+   * real rather than rebuilt every frame.
+   */
+  held, itemModelStats,
   authority, gamemode, commands, interaction, flight: movement.flight,
   // Key -> item id, for the console and for the test suite. Item ids above
   // ITEM_BASE are positional, so anything outside this module that wants an

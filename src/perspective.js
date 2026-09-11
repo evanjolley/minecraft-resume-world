@@ -1,7 +1,12 @@
 import { createPlayerModel, poseModel } from './playerModel.js'
-import { createHeldBlockMesh, blockTextureUrl } from './heldItem.js'
+import {
+  applyItemGeometry, blockTextureUrl, createHeldBlockMesh, createItemMesh, poseItemMesh,
+} from './heldItem.js'
+import { displayFor, itemTexture, itemTextureUrl } from './itemModel.js'
+import { item } from './items.js'
 import { BLOCK_BY_ID } from './blocks.js'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector'
 
 /*
@@ -75,20 +80,110 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
   handBlock.rotationQuaternion = Quaternion.RotationAxis(AXIS_X, (15 * Math.PI) / 180)
     .multiply(Quaternion.RotationAxis(AXIS_Y, (135 * Math.PI) / 180))
 
+  /*
+   * The non-block item in the same fist, and the half of this that decides
+   * whether a sword reads as a sword.
+   *
+   * Built as a chain of nodes rather than one collapsed pose, because the chain
+   * is what the numbers came from. ItemInHandLayer.renderArmWithItem, starting
+   * at the arm's pivot (translateToHand gives the SHOULDER, not the hand):
+   *
+   *   rotateX(-90)  rotateY(180)  translate(1/16, 0.125, -0.625)
+   *
+   * which is (1, 2, -10) in model units, then the item's own display transform.
+   * Converted into this model's frame by playerModel.js's rule -- x, y and z
+   * all negate, rotation angles carry over unchanged -- so the two rotations
+   * stand as written and the offset becomes (-1, -2, 10).
+   *
+   * The same conversion applied to the BLOCK's chain reproduces the (1, -10,
+   * 4.5) that handBlock above was hand-derived to, which is the check that this
+   * is the right conversion rather than a plausible one.
+   */
+  const handAxis = new TransformNode('hand-item-axis', noa.rendering.getScene())
+  handAxis.parent = model.parts.armRight.pivot
+  handAxis.rotation.x = (-90 * Math.PI) / 180
+
+  const handTurn = new TransformNode('hand-item-turn', noa.rendering.getScene())
+  handTurn.parent = handAxis
+  handTurn.rotation.y = Math.PI
+
+  const handOffset = new TransformNode('hand-item-offset', noa.rendering.getScene())
+  handOffset.parent = handTurn
+  handOffset.position.set(-1, -2, 10)
+
+  const handItem = createItemMesh(noa, 'hand-item')
+  handItem.parent = handOffset
+
+  /*
+   * THE half turn, and it is not a fudge.
+   *
+   * One extruded mesh serves both views, and it is built in the first-person
+   * frame -- Minecraft's camera space reflected in Z. This frame is Minecraft's
+   * model space reflected through the origin. Compose the two reflections and
+   * you get diag(-1, -1, 1): a rotation of 180 degrees about Z, not a
+   * reflection, so the sprite stays the right way round and only its footing
+   * changes. Folded into the display rotation because both are about Z.
+   *
+   * Drop it and every item is held upside down and end-for-end.
+   *
+   * Which is exactly the trap the block cube next door walked into and got away
+   * with. Run this derivation on block.json's thirdperson_righthand and the
+   * result differs from handBlock's hand-derived pose by precisely a half turn
+   * about Y -- and a cube whose four sides all sample the same atlas tile is
+   * symmetric under a 180 degree yaw, so both look perfect. handBlock is left
+   * alone because it IS perfect; the moral is only that a pose checked by eye
+   * on a cube proves nothing about a sword.
+   */
+  const MODEL_FRAME_SPIN = 180
+
   const handTextures = new Map()
-  inventory.onChange((inv) => {
-    const stack = inv.slots[inv.selected]
-    const def = stack ? BLOCK_BY_ID.get(stack.id) : null
-    handBlock.setEnabled(!!def)
-    if (!def) return
-    const url = blockTextureUrl(def)
+  const handTexture = (url) => {
     if (!handTextures.has(url)) {
       const t = new Texture(url, noa.rendering.getScene(), true, false,
         Texture.NEAREST_SAMPLINGMODE)
       t.hasAlpha = true
       handTextures.set(url, t)
     }
-    handBlock.material.diffuseTexture = handTextures.get(url)
+    return handTextures.get(url)
+  }
+
+  /*
+   * Same three states heldItem.js tracks, for the same reason: "not a block" is
+   * not "empty hand", and conflating them is what made tools invisible. Held as
+   * a variable rather than read off the meshes because the geometry for a
+   * never-before-held item arrives a frame later, and the callback that
+   * finishes it has to know whether the hand has moved on since.
+   */
+  let handMode = 'empty'
+  let handUrl = null
+  let handItemReady = false
+
+  inventory.onChange((inv) => {
+    const stack = inv.slots[inv.selected]
+    const def = stack ? item(stack.id) : null
+    const block = def?.places ? BLOCK_BY_ID.get(def.places) : null
+
+    handMode = block ? 'block' : def ? 'item' : 'empty'
+    handBlock.setEnabled(handMode === 'block')
+    if (handMode !== 'item') { handItem.setEnabled(false) }
+    if (handMode === 'block') {
+      handBlock.material.diffuseTexture = handTexture(blockTextureUrl(block))
+      return
+    }
+    if (handMode === 'empty') return
+
+    const url = itemTextureUrl(def)
+    poseItemMesh(handItem, itemTexture(noa.rendering.getScene(), url), displayFor(def.id, 'thirdperson_righthand'),
+      { frame: 'model', units: 16, spin: MODEL_FRAME_SPIN })
+    if (url !== handUrl || !handItemReady) {
+      handUrl = url
+      handItemReady = applyItemGeometry(handItem, url, () => {
+        if (handUrl !== url) return
+        handItemReady = true
+        handItem.setEnabled(handMode === 'item')
+      })
+    }
+    handItem.setEnabled(handItemReady)
   })
 
   const local = [0, 0, 0]
@@ -208,5 +303,8 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
     get mode() { return MODES[mode] },
     get isFirstPerson() { return mode === 0 },
     model,
+    // Exposed for the test suite, which has to be able to ask which of the two
+    // hand meshes is drawn without screenshotting to find out.
+    hand: { block: handBlock, item: handItem, get mode() { return handMode } },
   }
 }

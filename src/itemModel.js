@@ -1,4 +1,5 @@
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
+import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { item } from './items.js'
 
 /*
@@ -289,22 +290,25 @@ export const displayFor = (itemId, context) =>
  * ------------------------------------------------------------------ */
 
 /**
- * url -> Promise<VertexData>. THE cache, and the reason a held axe costs
- * nothing per frame: the same 96 sprites are drawn over and over, and the
- * extrusion for each runs exactly once per page.
+ * url -> the in-flight decode. THE cache, and the reason a held axe costs
+ * nothing per frame: the same sprite is drawn thirty times a second and the
+ * extrusion for it runs exactly once per page.
  *
- * Keyed by URL rather than by item id because two items can share a sprite.
- *
- * Rejected: extruding all 96 at startup. It is only a few milliseconds, but it
- * is a few milliseconds spent on 90-odd sprites nobody will hold, on the same
- * main thread that is meshing chunks during the worst part of the load.
- *
- * Rejected: baking the geometry at build time into public/. The texture
- * pipeline owns that directory, the output would be a second artifact to keep
- * in step with the sprites, and decoding a 16x16 PNG in a canvas is under a
- * millisecond.
+ * Keyed by URL rather than by item id because two items can share a sprite,
+ * and because the URL is what both the geometry and the texture are fetched
+ * with.
  */
-const geometry = new Map()
+const pending = new Map()
+
+/**
+ * url -> VertexData, once the sprite has actually been decoded.
+ *
+ * Split from `pending` so a caller can ask "is it ready NOW" without awaiting.
+ * That is not tidiness: even a resolved promise only calls back on the next
+ * microtask, so a single promise-only API makes the held mesh blink out for a
+ * frame every time you scroll back onto an item you were already holding.
+ */
+const ready = new Map()
 
 /** Counters, for the test suite to prove the cache is real. */
 export const itemModelStats = { builds: 0, hits: 0, quads: 0, buildMs: 0 }
@@ -316,6 +320,8 @@ function decode(url) {
       const c = document.createElement('canvas')
       c.width = img.width
       c.height = img.height
+      // willReadFrequently, because getImageData on a GPU-backed canvas forces
+      // a readback; these canvases exist only to be read.
       const ctx = c.getContext('2d', { willReadFrequently: true })
       ctx.drawImage(img, 0, 0)
       resolve(ctx.getImageData(0, 0, img.width, img.height))
@@ -325,22 +331,42 @@ function decode(url) {
   })
 }
 
+/** The extruded geometry for this sprite if it has already been built, else
+ *  null. Synchronous, which is the whole point -- see `ready` above. */
+export function cachedItemGeometry(url) {
+  const data = ready.get(url)
+  if (data) itemModelStats.hits++
+  return data ?? null
+}
+
 /**
- * The extruded mesh data for one item sprite, built once and cached.
+ * The extruded mesh data for one item sprite, built once and cached forever.
  *
- * Async because the pixels have to come back from the network before the
- * silhouette is known. Callers keep their mesh disabled until it resolves,
- * which in practice is one frame after the first time you select the item and
- * instant on every later selection.
+ * Async because the pixels have to come back over the network before the
+ * silhouette is known, so the first time you hold a given item its mesh
+ * appears a frame late. Every later selection is a synchronous cache hit.
+ *
+ * Rejected: extruding all 96 sprites at startup. It is only about 3 ms of
+ * extrusion, but it is 96 network fetches and 96 canvas readbacks on the same
+ * main thread that is meshing chunks during the worst part of the load, for
+ * 90-odd sprites nobody is going to hold.
+ *
+ * Rejected: baking the geometry at build time into public/. The texture
+ * pipeline owns that directory, the output would be a second artifact to keep
+ * in step with the sprites it came from, and decoding a 16x16 PNG costs less
+ * than a frame.
  */
-export function itemVertexData(url) {
-  const hit = geometry.get(url)
-  if (hit) { itemModelStats.hits++; return hit }
+export function loadItemGeometry(url) {
+  const done = ready.get(url)
+  if (done) { itemModelStats.hits++; return Promise.resolve(done) }
+
+  const inflight = pending.get(url)
+  if (inflight) { itemModelStats.hits++; return inflight }
 
   const built = decode(url).then((image) => {
     const t0 = performance.now()
-    const { positions, normals, uvs, indices, quads } = extrudeSprite(
-      image.data, image.width, image.height)
+    const { positions, normals, uvs, indices, quads } =
+      extrudeSprite(image.data, image.width, image.height)
     const data = new VertexData()
     data.positions = positions
     data.normals = normals
@@ -349,12 +375,37 @@ export function itemVertexData(url) {
     itemModelStats.builds++
     itemModelStats.quads += quads
     itemModelStats.buildMs += performance.now() - t0
+    ready.set(url, data)
     return data
   })
 
-  geometry.set(url, built)
+  pending.set(url, built)
   return built
 }
 
 /** Where the texture pipeline puts an item's sprite. */
 export const itemTextureUrl = (def) => `/textures/item/${def.texture}.png`
+
+/**
+ * Item sprites as Babylon textures, one per URL per scene.
+ *
+ * invertY TRUE, and this is the trap. Babylon's constructor takes invertY as
+ * its FOURTH argument and heldItem.js passes false there for the block atlas,
+ * so copying that call would have been the obvious move -- and would have
+ * uploaded every item sprite upside down. `extrudeSprite` computes v as
+ * 1 - row/height, which is playerModel.js's convention, and that file records
+ * why: with invertY true, v = 1 is the TOP of the image. Get the pair wrong and
+ * a diamond axe is held by its blade.
+ */
+const textures = new Map()
+export function itemTexture(scene, url) {
+  let t = textures.get(url)
+  if (!t) {
+    // NEAREST, like every other texture here: a 16x16 sprite filtered
+    // bilinearly is a smudge.
+    t = new Texture(url, scene, true, true, Texture.NEAREST_SAMPLINGMODE)
+    t.hasAlpha = true
+    textures.set(url, t)
+  }
+  return t
+}

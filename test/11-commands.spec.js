@@ -261,17 +261,18 @@ test.describe('operator commands, opped', () => {
     })
 
   /*
-   * /weather is the one command that reports rather than acts. There is no
-   * weather system in this world -- see the comment on the command in
-   * commands.js for why that was the honest call -- and the test asserts the
-   * honesty rather than papering over it.
+   * /weather used to report honestly that there was nothing to set. weather.js
+   * landed and main.js wires it, so the command acts now -- and the trailing
+   * /weather clear is not tidiness: a spec left in the rain changes the light
+   * level and the frame rate for whatever runs next.
    */
-  test('/weather parses like vanilla and then admits it does nothing',
-    async ({ page }) => {
-      const out = await chatCommand(page, '/weather rain')
-      expect(errorsIn(out)[0]).toContain('not implemented')
+  test('/weather sets the weather and parses like vanilla', async ({ page }) => {
+    const out = await chatCommand(page, '/weather rain')
+    expect(systemIn(out)).toEqual(['Set the weather to rain'])
+    expect(await page.evaluate(() => window.game.weather.kind)).toBe('rain')
 
-      const bad = await chatCommand(page, '/weather sideways')
-      expect(errorsIn(bad)).toEqual([REFUSED, '/weather sideways<--[HERE]'])
-    })
+    const bad = await chatCommand(page, '/weather sideways')
+    expect(errorsIn(bad)).toEqual([REFUSED, '/weather sideways<--[HERE]'])
+    await chatCommand(page, '/weather clear')
+  })
 })
