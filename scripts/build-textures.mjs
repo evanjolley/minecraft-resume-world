@@ -590,6 +590,14 @@ async function fromCE() {
   for (const f of readdirSync(CE_SRC)) {
     if (f.endsWith('.png')) copyFileSync(join(CE_SRC, f), join(OUT, f))
   }
+  /*
+   * The attribution travels with the textures. CC-BY-SA requires it wherever
+   * the work is distributed, and public/ is what gets deployed -- the source
+   * tree is not. build-sounds.mjs already does this for audio; textures did
+   * not, so /textures/NOTICE.txt 404'd for anyone who followed the credit.
+   */
+  copyFileSync(join(CE_SRC, 'NOTICE.txt'), join(OUT, 'NOTICE.txt'))
+
   await uiFromAtlases(join(CE_SRC, 'gui'))
 
   /*

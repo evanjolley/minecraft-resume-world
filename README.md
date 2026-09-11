@@ -29,8 +29,8 @@ collision isn't a domain that rots, but we own it if we hit a bug.
 
 **Pixel Perfection** for textures, by Hugh "XSSheep" Rutland, CC-BY-SA-4.0.
 Mojang's own assets can't be redistributed, so this is one of the few genuinely
-open 16x packs. Attribution is on the entry overlay because the license requires
-it wherever the work is distributed. See `public/textures/NOTICE.txt`, which also
+open 16x packs. Attribution is on the Credits screen in the Escape menu, because the licence
+requires it wherever the work is distributed. See `public/textures/NOTICE.txt`, which also
 records that `grass_side.png` is our derivative.
 
 Passed on ProgrammerArt (CC-BY, but rougher art) and on generating pixel art
