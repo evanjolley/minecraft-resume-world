@@ -340,3 +340,31 @@ From a clean `git clone` of `main` into an empty directory, on Node 24:
   authenticated.
 
 Still true: nothing is live, and going live is Evan's call.
+
+
+## Open: which domain (undecided, deliberately)
+
+Not deployed yet, and the domain is unchosen. The thing that makes this less
+obvious than it looks:
+
+**`evanjolley.com` and `world.evanjolley.com` cost the same DNS work.**
+Cloudflare needs the whole zone for any custom domain, apex included, so
+dropping the subdomain does not avoid the GoDaddy migration. The only option
+that avoids DNS entirely is the free `workers.dev` URL, which is a real
+shareable link and needs nothing.
+
+And `evanjolley.com` is not free real estate: it currently serves a 13.6MB
+portfolio from GitHub Pages. Pointing the apex at this Worker replaces that
+site. That may well be the intent one day — the world becoming the portfolio
+rather than sitting beside it — but it is a bigger decision than picking a
+host, and it should be made on purpose.
+
+A third option exists and is the best end state if the answer is "both":
+serve the portfolio at the apex and the world at `evanjolley.com/world` via a
+Cloudflare route. It needs app changes — Vite has no `base` set and roughly
+seven files hardcode absolute asset paths like `/textures/...` — so it is the
+most work, not the least.
+
+Recommendation while the island is still empty: `workers.dev`. Deciding the
+domain is cheap later and the choice is reversible; replacing a working
+portfolio with an empty island is neither.
