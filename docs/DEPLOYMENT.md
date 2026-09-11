@@ -85,87 +85,138 @@ Cloudflare account has been touched, and no DNS record has been created.
 - `npm run deploy:dry-run` — proves the config parses and `dist/` resolves,
   without an account.
 
-## The sounds problem, which is the real one
+## The sounds problem, and what is left of it
 
-**A deploy today is silent, on purpose, and that needs saying out loud rather
-than being discovered.**
+**Solved on the repository side, not yet on the deploy side.** A clean checkout
+now has audio; a `wrangler deploy` still strips it. The rest of this section is
+why, and the exact four lines that change it.
 
-`public/sounds/` is built by `npm run sounds`, which reads the asset store of a
-Minecraft install on the machine it runs on. CI has no such install, so a CI
-build has no audio at all. That is not the interesting half. The interesting
-half is that the audio is Mojang's, and `scripts/build-sounds.mjs` says at
-length why it is gitignored: extracting it onto your own machine from a copy
-you own is fine, publishing it from a public domain is redistribution. The
-same rule the textures already follow.
+### What this used to say
 
-So the failure mode to avoid is not "CI forgot the sounds". It is Evan running
-`npm run build` on the laptop that *does* have them, then `wrangler deploy`,
-and publishing 76 Mojang `.ogg` files from his own domain without noticing.
-`.gitignore` does not prevent that, because it only guards the repository.
-Two things do:
+That a deploy was silent on purpose. `public/sounds/` was built only by
+`npm run sounds`, which read the asset store of a Minecraft install on the
+machine it ran on: CI had no such install, and the audio was Mojang's anyway,
+so publishing it from a public domain would have been redistribution. Two locks
+enforced that -- `npm run build:deploy` deleted `dist/sounds`, and
+`deploy/.assetsignore` told wrangler never to upload a `sounds/` directory.
 
-- `npm run build:deploy` deletes `dist/sounds` after vite copies it in.
-- `deploy/.assetsignore` tells wrangler never to upload a `sounds/` directory,
-  which catches a deploy from a `dist/` some earlier `npm run build` left
-  behind.
+### What changed
 
-`src/sounds.js` already treats a missing manifest as "stay quiet", so the
-deployed site degrades to silence rather than throwing. It also means the
-deployed site is a voxel world where nothing makes a sound, which for a
-three-minute visit is a real loss — footsteps are most of why moving through
-it feels physical.
+`scripts/build-sounds.mjs` grew a second source, exactly the way
+`build-textures.mjs` has `ce` and `vanilla`:
 
-The same root cause makes the test suite unable to pass on a clean checkout.
-`test/12-sounds.spec.js` arms an audio harness against a manifest that is not
-there; a fresh clone runs 98 passed, 1 failed, 10 did not run. CI therefore
-skips that one file and says so in the log. Both the skip and the silence
-disappear together.
+    npm run sounds           # the committed free set, from sounds-src/free/
+    npm run sounds:vanilla   # your own Minecraft install, unchanged
 
-### Recommendation: take VoxeLibre's sound set
+Both emit the SAME logical names -- `step/grass1`, `dig/stone3`,
+`damage/hit1`, `random/pop` -- because `src/sounds.js` and
+`test/12-sounds.spec.js` name samples by vanilla's flat asset path and neither
+was this change's to edit. The manifest is the contract; which source filled it
+is an implementation detail, recorded in `public/sounds/.source` the way the
+texture build records its own.
 
-Of the options investigated — commit a CC0/CC-BY set, ship silent and say so,
-or synthesise something — committing a real set wins, and the one to take is
-**VoxeLibre's `mcl_sounds`** (`github.com/VoxeLibre/VoxeLibre`, 77 `.ogg`
-files, 898KB, already Vorbis and already cut to game length). VoxeLibre is the
-project formerly called MineClone2, and its textures descend from the same
-Pixel Perfection lineage this repo already ships, so the sonic character and
-the licence posture both already match.
+`postinstall` runs `build-sounds.mjs --ensure` alongside the texture one, so
+`npm ci` on a bare runner produces 42 samples before anything asks for them.
 
-The deciding factor is not coverage, it is paperwork.
-`mods/CORE/mcl_sounds/README.txt` maps **every single file** to a named author,
-a licence and a source URL. Minetest's own `default` mod has near-identical
-audio under the same licences and gives no file-to-author mapping at all —
-which would mean writing a NOTICE.txt that says "some of these are CC BY 3.0
-by one of these seven people", and this repo does not do attribution that way.
-The licences are a mix of CC0, CC BY 3.0 and CC BY-SA 3.0; the footstep core is
-ShareAlike, which is the same obligation `public/textures/NOTICE.txt` already
-carries, so it costs nothing new.
+**`test/12-sounds.spec.js` now passes on a clean checkout.** That is the half
+of this the CI workflow cares about: its `--grep-invert 12-sounds` exists
+solely because the suite could not produce a manifest, and that reason no
+longer holds. The comment above that step in `.github/workflows/deploy.yml`
+should go with it.
 
-Three gaps, all fillable from **Kenney** (kenney.nl, CC0, attribution
-genuinely optional):
+### The licensing, which was the whole exercise
 
-- Player hurt. VoxeLibre has one sample where `sounds.js` wants three. Take
-  two more from qubodup's CC0 vocal pack on OpenGameArt.
-- UI click. VoxeLibre has none; Kenney's Interface Sounds has `click_001.ogg`
-  at 6KB.
-- Snow footsteps. VoxeLibre's are credited to "Unknown authors", which is
-  exactly the kind of provenance this repo has refused elsewhere. Kenney's
-  `footstep_snow_000-004` replaces them with something actually traceable.
+The recommendation this file used to carry -- take VoxeLibre's `mcl_sounds` --
+was checked rather than trusted, and it survived, with one correction and one
+addition.
 
-Rejected: **Sonniss's GDC bundles**, whose licence is royalty-free but
-explicitly forbids redistributing the sounds as standalone files, which is
-precisely what a public repo of `.ogg`s and a web server handing them to
-browsers does. **Curating Freesound directly**, because licences there are
-per-sample and include CC BY-NC — hours of work to reproduce the manifest
-VoxeLibre already wrote. **Terasology and Craft**: nineteen dig sounds and no
-footsteps, and no audio at all, respectively.
+It survived for the reason given: `mods/CORE/mcl_sounds/README.txt` maps every
+file to a named author, a licence and a source URL, where Minetest Game's
+`default` mod ships nearly the same audio credited to a bare list of twelve
+people with no mapping at all. That claim was verified against
+`minetest_game/mods/default/license.txt`, which does exactly that. VoxeLibre's
+`LEGAL.md` also says in as many words that its media is dual-licensed away from
+the GPL that covers its code, which is the thing that has to be true before any
+of the per-file licences matter.
 
-This is left unimplemented deliberately. It needs a `sounds-src/` committed
-alongside `textures-src/`, and `scripts/build-sounds.mjs` growing a
-`--source=free` path next to its Minecraft extraction the way
-`build-textures.mjs` already has `ce` and `vanilla` — and that script belongs
-to someone else right now. The Minecraft extraction should stay: it is the
-higher-fidelity local developer build, exactly as `textures:vanilla` is.
+Every per-file licence was then re-read on its own Freesound or OpenGameArt
+page rather than taken from the upstream README. Two corrections came out of
+that, both recorded in `sounds-src/free/NOTICE.txt`: Erdie's stone footsteps
+and Benboncan's pickaxe sample read CC BY **4.0** on Freesound today where
+VoxeLibre's README says 3.0, and the CC0 body-fall sample's uploader account
+has since been deleted, which does not matter because a CC0 waiver cannot be
+withdrawn.
+
+**The correction: Kenney is unusable as an automated source.** This file
+proposed filling the gaps from kenney.nl. That site sits behind a bot check
+that hangs `curl` indefinitely, and Kenney publishes no asset repository on
+GitHub. The same files are on OpenGameArt, uploaded by Kenney, CC0, and that
+is where they came from instead.
+
+**The addition: the snow rejection was right, and generalised.** VoxeLibre's
+snow footsteps are credited to "Unknown authors", so they are out -- a licence
+without an author is a licence nobody granted. qubodup's CC0 dry snow steps
+replace them, and there are exactly four of them, which matters more than it
+looks: vanilla ships one snow recording under both `step/snowN` and
+`dig/snowN`, and `test/12-sounds.spec.js` asserts exactly four fingerprint
+collisions and no others. The free build reproduces that property deliberately.
+
+Also rejected, having looked: several OpenGameArt entries that list CC-BY-SA
+alongside GPL 2.0/3.0 and one whose licence field reads CC0 while its own
+comment thread argues it was GPL. Neither is a licence you want to be wrong
+about on a public domain.
+
+### What is left, and it is four lines in three files this change does not own
+
+The deployed site is still silent, because every lock built for Mojang's audio
+is still closed and none of them can tell the two sources apart. All four now
+have a cheap test available to them: `dist/sounds/.source` reads `free` or
+`vanilla`, and vite copies it into `dist/` along with `NOTICE.txt`.
+
+1. **`package.json`, `build:deploy`.** It ends with `rm -rf dist/sounds`. The
+   fix is the same shape as the line beside it: `build:deploy` already runs
+   `npm run textures` to force the redistributable texture source, so it should
+   run `npm run sounds` to force the redistributable sound source, and drop the
+   delete.
+2. **`deploy/.assetsignore`.** Its last line is `sounds/`. It has to go, and
+   the belt-and-braces it provided has to come back somewhere that can tell
+   `free` from `vanilla` -- which an assetsignore file cannot.
+3. **`.github/workflows/deploy.yml`, the verify step.** `test ! -d dist/sounds`
+   should invert into an assertion that `dist/sounds/manifest.json` exists and
+   `dist/sounds/.source` reads `free`. That is strictly stronger than the
+   delete it replaces: it fails on a Mojang build AND on a silent one, where
+   deleting could only ever produce silence quietly.
+4. **`.github/workflows/deploy.yml`, the test step.** `--grep-invert
+   12-sounds` can go.
+
+Until (1) and (2) happen the site stays silent, and that is now a bug rather
+than a policy. `src/sounds.js` still treats a missing manifest as "stay quiet",
+so nothing breaks in the meantime.
+
+### Coverage, honestly
+
+The free set is 42 files and 402KB committed, producing 42 samples and 441KB
+built. Vanilla produces 62. Where they differ:
+
+| | vanilla | free |
+|---|---|---|
+| `step` variants | 6/6/6/4/5/4 | 3/3/2/4/3/4 |
+| `dig` variants | 4 per group | 3/3/3/3/2/4 |
+| `hurt` | 3 samples | **1** |
+| everything else | 1 each | 1 each |
+
+Fewer footstep variants is audible as more repetition and nothing worse. The
+single hurt sample is the one real gap: `sounds.js` applies vanilla's
+`(rand - rand) * 0.2 + 1.0` pitch spread per play, which is what keeps repeated
+damage from reading as a metronome, so one sample is survivable where one flat
+sample would not be. Three CC0 grunts were available and rejected -- they are a
+different person's voice from VoxeLibre's hurt sound, and three samples that
+are obviously two different people is worse than one repeated.
+
+Two more substitutions worth knowing, both flagged in the build script: sand's
+`dig` is gravel's, because no open pack has a sand break sound; and the GUI
+click and the item-pickup blip are Kenney UI clicks, because Minetest has no
+interface audio at all to borrow.
 
 ## Is the 1.24MB bundle a problem
 
@@ -223,11 +274,19 @@ Nothing is. The deployed tree is 917 files:
 | `ui/` | 22 HUD and container sprites |
 | `fonts/` | Monocraft.ttf and its OFL text |
 | `skins/` | one default player skin |
+| `sounds/` | 42 `.ogg`, 441KB, plus `NOTICE.txt` — once the four lines above change |
 | `EvanJolley_Resume.pdf` | 88KB, public on purpose |
 
 The resume is the only file that is personal, and it is the point. There are
-no `.map` files (vite does not emit them here), no `.env`, no dotfiles, and
-the local `sounds/` is stripped by the deploy build for the reasons above.
+no `.map` files (vite does not emit them here) and no `.env`. There is now one
+dotfile: `sounds/.source`, which vite copies out of `public/` and which is the
+thing the deploy checks should be reading.
+
+`deploy/_headers` has no `/sounds/*` rule, so the samples fall through to the
+`must-revalidate` default — 42 conditional requests on the first click of every
+return visit. They belong with `/textures/*` on a day: the filenames come out
+of `public/` verbatim, so `step/grass1.ogg` is a permanent URL whose contents
+change if the sound source ever does.
 
 One loose end worth someone's attention, though it is not a deployment
 problem: `README.md` points at `public/textures/NOTICE.txt` and the CE build
@@ -333,8 +392,8 @@ From a clean `git clone` of `main` into an empty directory, on Node 24:
 - `dist/` — **917 files, 1,928,929 bytes.** All five atlas pages present,
   `fonts/Monocraft.ttf` present, all 22 UI sprites present, no `dist/sounds`
   (the clean checkout has no Minecraft install to extract from).
-- `npm run test` — 97 of 109 pass; the 12 in `test/12-sounds.spec.js` are
-  skipped for the reason above.
+- `npm run test` — the whole suite, `test/12-sounds.spec.js` included. That
+  file could not run at all before the free sound set existed.
 - `wrangler deploy --dry-run` — config parses, asset directory resolves,
   993 entries read, no bindings. Nothing was uploaded and no account was
   authenticated.

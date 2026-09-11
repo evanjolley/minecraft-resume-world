@@ -1,0 +1,133 @@
+Sounds in this directory are redistributable, and this file is the proof.
+
+`npm run sounds` copies them into public/sounds/ under vanilla Minecraft's own
+asset names, and copies this file in alongside them. Everything here is CC0,
+CC BY or CC BY-SA; nothing here is Mojang's. If you add a sample, it does not
+go in until it has a line below with a named author, a licence and a URL --
+"found on the internet, probably fine" is how a public repo ends up
+redistributing something it may not.
+
+Every licence below was checked against the source page rather than taken from
+the upstream project's own summary, on 2026-09-11. Where the two disagree,
+both are recorded.
+
+
+voxelibre/ -- VoxeLibre's mcl_sounds
+------------------------------------
+
+  Source:  https://github.com/VoxeLibre/VoxeLibre
+           mods/CORE/mcl_sounds/sounds/, copied unmodified.
+  Credits: mods/CORE/mcl_sounds/README.txt, kept here as
+           voxelibre/UPSTREAM-README.txt.
+
+VoxeLibre's code is GPL-3.0 and its media is not. LEGAL.md says so explicitly:
+"In the mods you might find in the read-me or license text files a different
+license. This counts as dual-licensing." The per-file licences below are the
+ones that apply, and they are why this project was chosen over Minetest Game,
+which ships nearly the same audio and credits it as "one of these twelve
+people, CC BY-SA 3.0" with no mapping from file to author.
+
+  Mito551 -- CC BY-SA 3.0
+    default_grass_footstep.1-3.ogg
+    default_gravel_footstep.1-4.ogg
+    default_wood_footstep.1-2.ogg
+    default_dug_node.1-2.ogg
+    default_dig_crumbly.ogg
+    No source URL exists upstream. Mito551 is credited by name as a media
+    author under the same licence in Minetest Game's own
+    mods/default/license.txt, which is as far as this one can be traced.
+
+  Erdie -- CC BY ("steps-on-stone01.ogg")
+    https://freesound.org/people/Erdie/sounds/41579/
+    default_hard_footstep.1-3.ogg
+    VoxeLibre's README says CC BY 3.0; the Freesound page reads CC BY 4.0
+    today. Attribution is the only condition under either, and it is given.
+
+  Benboncan -- CC BY ("Pickaxe Striking Rock.wav")
+    https://freesound.org/people/Benboncan/sounds/71823/
+    default_dig_cracky.1-3.ogg
+    Same 3.0-vs-4.0 discrepancy, same answer.
+
+  Sheyvan -- CC0 ("Steps: Sneakers on Stone")
+    https://freesound.org/people/Sheyvan/sounds/476113/
+    default_dig_choppy.1-3.ogg
+
+  lolamadeus -- CC0 ("Gravel Impacts and Falls.wav")
+    https://freesound.org/people/lolamadeus/sounds/179341/
+    default_gravel_dug.1-3.ogg
+    default_gravel_dig.1-2.ogg
+
+  worthahep88 -- CC0 ("Running in place Dirt Tennis Shoes.wav")
+    https://freesound.org/people/worthahep88/sounds/319224/
+    default_sand_footstep.1-3.ogg
+
+  sonictechtonic -- CC BY 3.0 ("Kung Fu Cabbage - 10 Raw Punches.wav")
+    https://freesound.org/people/sonictechtonic/sounds/241872/
+    player_damage.ogg
+
+  Adam_N -- CC0 ("Body fall_04.wav")
+    https://freesound.org/people/Adam_N/sounds/346692/
+    player_falling_damage.ogg
+    The uploader's account now shows as deleted; the page still reads CC0,
+    and a CC0 waiver cannot be withdrawn. Credited under the name VoxeLibre
+    recorded, which is the only one there is.
+
+
+opengameart/ -- the four sounds mcl_sounds has no answer for
+------------------------------------------------------------
+
+A UI click, a pickup blip, a soft landing thump, and snow footsteps. The first
+two do not exist in mcl_sounds at all -- Minetest has no interface audio -- the
+third has no body-impact sample, and the fourth is the interesting one: it DOES
+exist upstream and is credited to "Unknown authors", which is the one
+provenance this repo refuses whatever licence sits next to it.
+
+MODIFIED. Unlike the VoxeLibre files, these four were peak-normalised to
+-1 dBFS and re-encoded to Ogg Vorbis (44.1 kHz, stereo) from WAV and FLAC
+originals. All four licences permit that; the snow pack's own info.txt asks
+for the normalisation, since it was recorded quietly on purpose.
+
+  Kenney Vleugels ("Kenney") -- CC0
+    https://opengameart.org/content/51-ui-sound-effects-buttons-switches-and-clicks
+    kenney_ui_click.ogg     from click2.wav
+    kenney_ui_pickup.ogg    from click3.wav
+    Page notice: 'Credit "Kenney.nl" or "www.kenney.nl", this is not
+    mandatory.' Credited anyway, because "not mandatory" is not a reason.
+    Kept as opengameart/UPSTREAM-kenney-readme.txt.
+
+  Dan Knoflicek (OpenGameArt user "Macro") -- CC0
+    https://opengameart.org/content/jump-landing
+    macro_jump_landing.ogg  from "Jump 1.wav"
+
+  Iwan "qubodup" Gabovitch -- CC0
+    https://opengameart.org/content/4-dry-snow-steps
+    qubodup_snow_step_dry1-4.ogg  from snow_step_dry-01..04.flac
+    Recording notes kept as opengameart/UPSTREAM-qubodup-snow-info.txt.
+
+
+What ShareAlike costs here
+--------------------------
+
+Mito551's footsteps and dug sounds are CC BY-SA 3.0, so those files -- and any
+adaptation of them -- stay CC BY-SA 3.0. Nothing here adapts them; they are
+byte-for-byte copies. That is the same obligation textures-src/ce already
+carries for Pixel Perfection, so it costs this project nothing new. The MIT
+licence on the source code is unaffected: see LICENSE, which separates the two.
+
+
+Rejected sources, and why
+-------------------------
+
+  Minecraft's own audio. What `npm run sounds:vanilla` extracts, and the whole
+  reason this directory exists. Fine on a machine that owns a copy of the
+  game; publishing it from a public domain is redistribution.
+
+  Sonniss GDC bundles. Royalty-free, and explicitly forbid redistributing the
+  sounds as standalone files -- which is exactly what a public repo of .ogg
+  files and a web server handing them to browsers is.
+
+  Curating Freesound directly. Licences there are per-sample and include
+  CC BY-NC. Hours of work to rebuild the mapping VoxeLibre already wrote.
+
+  VoxeLibre's own pedology_snow_soft_footstep.1-4.ogg: "Unknown authors".
+  A licence without an author is a licence nobody granted.

@@ -36,6 +36,24 @@ records that `grass_side.png` is our derivative.
 Passed on ProgrammerArt (CC-BY, but rougher art) and on generating pixel art
 procedurally, which dodges licensing but never looks as good as drawn art.
 
+**VoxeLibre's `mcl_sounds`** for audio, plus four sounds from OpenGameArt,
+committed in `sounds-src/free/` and built by `npm run sounds`. Same constraint
+as the textures and a harder one to satisfy: audio is where open packs run out.
+VoxeLibre won on paperwork rather than on sound -- it maps every single file to
+a named author, a licence and a URL, where Minetest Game ships nearly the same
+audio credited to "one of these twelve people". Every licence is recorded in
+`sounds-src/free/NOTICE.txt`, which the build copies into `public/sounds/`.
+
+Passed on Sonniss's GDC bundles, which are royalty-free but forbid
+redistributing the sounds as standalone files -- exactly what a public repo and
+a web server do.
+
+    npm run sounds           # the committed free set; what CI and the deploy use
+    npm run sounds:vanilla   # your own Minecraft install, better, local-only
+
+`sounds:vanilla` is the higher-fidelity build the same way `textures:vanilla`
+is, and for the same reason it can never be committed or deployed.
+
 ## Minecraft fidelity
 
 Movement uses real Java Edition constants, verified by measuring in-browser

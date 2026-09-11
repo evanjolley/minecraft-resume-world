@@ -36,5 +36,15 @@ their own licenses and are NOT MIT:
   public/fonts/Monocraft.ttf  Monocraft by Idrees Hassan, SIL OFL 1.1.
                               Full license in public/fonts/OFL.txt.
 
+  public/sounds/*    The free sound set: VoxeLibre's mcl_sounds plus four
+                     sounds from OpenGameArt. A mix of CC0, CC BY 3.0/4.0 and
+                     CC BY-SA 3.0, credited file by file in
+                     sounds-src/free/NOTICE.txt -- which `npm run sounds`
+                     copies to public/sounds/NOTICE.txt, so the attribution
+                     travels with the audio into dist/ and onto the site.
+                     `npm run sounds:vanilla` overwrites all of it with
+                     Mojang's audio, which is NOT redistributable; that build
+                     is for local development only and is gitignored.
+
 This project is not affiliated with, endorsed by, or associated with Mojang
 Studios or Microsoft. No Mojang assets are included or redistributed.
