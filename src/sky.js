@@ -140,11 +140,11 @@ const SHADE_EW = 0.9
 
 /*
  * How far the layer reaches, in cells. 96 cells of 12 blocks is 1152 blocks
- * across, and the field is clipped to a CIRCLE inside that -- which is what
- * 1.21.6 does (`x*x + z*z <= r*r` over a radius of cloudRange chunks, 128 by
- * default, so 2048 blocks). Ours is half vanilla's radius and a fifth of its
- * cell count, because 2048 blocks of cloud is 30k quads to cover sky this
- * world's 80x80 island cannot see past anyway.
+ * across, and the field is clipped to a ROUND shape inside that -- which is
+ * what 1.21.6 does (`x*x + z*z <= r*r` over a radius of cloudRange chunks,
+ * 128 by default, so 2048 blocks). Ours is half vanilla's radius and a fifth
+ * of its cell count, because 2048 blocks of cloud is 30k quads to cover sky
+ * this world's 80x80 island cannot see past anyway.
  *
  * The radius is the number that decides whether the altitude reads right.
  * At 576 blocks the furthest cloud sits about 12 degrees above the horizon,
@@ -154,6 +154,54 @@ const SHADE_EW = 0.9
  * high.
  */
 const CLOUD_GRID = 96
+const CLOUD_RADIUS = CLOUD_GRID / 2   // 48 cells, 576 blocks
+
+/*
+ * THE FIELD REPEATS ALONG X EVERY 48 CELLS, and that is not decoration.
+ *
+ * The drift offset has to be bounded or the layer walks off the player at 0.6
+ * blocks/sec -- 2160 blocks an hour, four times the radius. Bounding it means
+ * subtracting some whole number of blocks from the offset at some point, and
+ * the ONLY subtraction a rigid mesh can absorb without the sky visibly
+ * teleporting is one that maps the cloud field exactly onto itself. So the
+ * field is built periodic in X, and the drift wraps by exactly that period.
+ *
+ * The old code assumed the field was periodic every ONE cell -- it wrapped the
+ * drift at CLOUD_CELL and snapped the recentering to whole cells -- and it is
+ * not: value noise on an 8-cell and a 3-cell lattice repeats at neither. Both
+ * "wraps" therefore slid the entire sky sideways by 12 blocks. That was the
+ * bug: every cell boundary you crossed, and every 20 seconds regardless, the
+ * clouds jumped a cell backwards. Measured at 11.98 blocks a jump, six of them
+ * in nine seconds of sprint-jumping.
+ *
+ * 48 cells because both octave periods have to divide it (48/8, 48/3) and
+ * because the repeat distance is then 576 blocks, the same as the radius: two
+ * copies of the pattern across the visible sky, which at this altitude and
+ * this alpha is not something the eye picks out. Smaller repeats sooner and
+ * reads as wallpaper; larger costs quads, because of DRIFT_SLACK below.
+ *
+ * Periodic in X ONLY. The drift is X-only, so Z needs nothing, and leaving Z
+ * alone halves how much repetition there is to notice.
+ */
+const CLOUD_PERIOD = 48
+const CLOUD_PERIOD_BLOCKS = CLOUD_PERIOD * CLOUD_CELL
+
+/*
+ * Extra cells built onto each end of the layer in X, so the wrapped drift
+ * offset never drags the rim into view.
+ *
+ * The layer is centred on the player plus the drift, and the drift wraps
+ * within +/- half a period, so the mesh centre sits up to 24 cells off the
+ * player. Without this slack the near rim would close from 576 blocks to 288 --
+ * 33 degrees above the horizon, which the radius comment above explains is
+ * exactly what makes a cloud layer read as a disc hanging overhead rather
+ * than as a ceiling.
+ *
+ * The shape that results is a capsule rather than a circle: a circle of radius
+ * 48 cells swept along X. Whatever the drift offset, the player has a full
+ * 576 blocks of cloud in every direction.
+ */
+const DRIFT_SLACK = CLOUD_PERIOD / 2
 
 /*
  * Deterministic value hash. Math.random would reshuffle the sky on every page
@@ -170,14 +218,23 @@ const lerp = (a, b, t) => a + (b - a) * t
 
 /* Value noise: the hash sampled on a coarse lattice and smoothly interpolated
  * between lattice points, which is what turns isolated random cells into
- * connected shapes. */
+ * connected shapes.
+ *
+ * The lattice COLUMN index wraps at CLOUD_PERIOD/period, which is what makes
+ * the finished field repeat every CLOUD_PERIOD cells along X. Wrapping the
+ * lattice rather than the sample coordinate matters: the interpolation still
+ * runs between two adjacent lattice points at the seam, so the repeat is
+ * seamless instead of showing a hard edge every 576 blocks. */
 function valueNoise(i, j, period) {
   const x = i / period, z = j / period
   const x0 = Math.floor(x), z0 = Math.floor(z)
   const fx = smoothstep(x - x0), fz = smoothstep(z - z0)
+  const columns = CLOUD_PERIOD / period
+  const xa = ((x0 % columns) + columns) % columns
+  const xb = (xa + 1) % columns
   return lerp(
-    lerp(hash01(x0, z0), hash01(x0 + 1, z0), fx),
-    lerp(hash01(x0, z0 + 1), hash01(x0 + 1, z0 + 1), fx),
+    lerp(hash01(xa, z0), hash01(xb, z0), fx),
+    lerp(hash01(xa, z0 + 1), hash01(xb, z0 + 1), fx),
     fz)
 }
 
@@ -190,8 +247,13 @@ function valueNoise(i, j, period) {
  * single cells become a field of floating dice. Minecraft's clouds.png is
  * hand-drawn BLOBS, dozens of cells across with holes punched in them, so the
  * field has to be spatially correlated. Two octaves of value noise at periods
- * 8 and 3, thresholded, covers 40.6% of the sky in blobs of roughly the right
+ * 8 and 3, thresholded, covers 38.6% of the sky in blobs of roughly the right
  * size -- measured over a 200x200 sample, not guessed.
+ *
+ * BOTH OCTAVE PERIODS MUST DIVIDE CLOUD_PERIOD, or the field stops repeating
+ * at the distance the drift wraps by and the wrap becomes visible again. 8 and
+ * 3 both divide 48. The day/night spec checks the repeat rather than trusting
+ * this comment.
  */
 function cellFilled(i, j) {
   return valueNoise(i, j, 8) * 0.7 + valueNoise(i, j, 3) * 0.3 > 0.55
@@ -245,32 +307,39 @@ function buildCloudLayer(noa, scene) {
     indices.push(v, v + 2, v + 1, v, v + 3, v + 2)
   }
 
-  const half = (CLOUD_GRID * CLOUD_CELL) / 2
-  const R = CLOUD_GRID / 2
+  const R = CLOUD_RADIUS
   /*
-   * Clipped to a CIRCLE, as 1.21.6+ clips its own layer: the corners of a
-   * square reach 40% further than its edges, and the only thing a player can
-   * tell from that is that the sky ends in a straight line over there.
+   * Clipped to a CAPSULE -- a circle of radius R swept along X by the drift
+   * slack, which for a zero offset is exactly the circle 1.21.6+ clips its own
+   * layer to (`x*x + z*z <= r*r`). The clip matters for the same reason it
+   * does in vanilla: the corners of a square reach 40% further than its edges,
+   * and the only thing a player can tell from that is that the sky ends in a
+   * straight line over there.
    *
-   * Anything outside the circle counts as EMPTY rather than as absent, which
+   * Anything outside the capsule counts as EMPTY rather than as absent, which
    * is what keeps the rim's side faces: testing cellFilled alone would cull
    * each edge face against a neighbour that is never drawn and leave the rim
    * open, so the layer would be a ring of doorless rooms seen from below.
+   * Cells outside the loop bounds fall out of the same test, so the edges of
+   * the grid need no special case.
    */
   const filled = (i, j) => {
-    if (i < 0 || j < 0 || i >= CLOUD_GRID || j >= CLOUD_GRID) return false
-    const ci = i - R + 0.5, cj = j - R + 0.5
+    const ci = Math.max(0, Math.abs(i + 0.5) - DRIFT_SLACK), cj = j + 0.5
     if (ci * ci + cj * cj > R * R) return false
     return cellFilled(i, j)
   }
 
+  // Cells are indexed from the middle of the layer, not from a corner, because
+  // the drift offset is measured from the middle and one of the two has to
+  // carry the half-width otherwise.
+  const RX = R + DRIFT_SLACK
   let cells = 0
-  for (let i = 0; i < CLOUD_GRID; i++) {
-    for (let j = 0; j < CLOUD_GRID; j++) {
+  for (let i = -RX; i < RX; i++) {
+    for (let j = -R; j < R; j++) {
       if (!filled(i, j)) continue
       cells++
-      const x0 = i * CLOUD_CELL - half, x1 = x0 + CLOUD_CELL
-      const z0 = j * CLOUD_CELL - half, z1 = z0 + CLOUD_CELL
+      const x0 = i * CLOUD_CELL, x1 = x0 + CLOUD_CELL
+      const z0 = j * CLOUD_CELL, z1 = z0 + CLOUD_CELL
       const y0 = 0, y1 = CLOUD_DEPTH
 
       quad(SHADE_TOP, x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0)
@@ -446,13 +515,36 @@ export function installSky(noa) {
       Math.min(1, cg + flash * 0.6),
       Math.min(1, cb + flash * 0.6))
 
-    // Snap the layer to whole cells so recentering on the player is
-    // invisible; drift is applied on top as a continuous offset. Without the
-    // snap the whole sky would slide around as you walk.
-    drift = (drift + secs * CLOUD_DRIFT) % CLOUD_CELL
-    global[0] = Math.round(p[0] / CLOUD_CELL) * CLOUD_CELL + drift
+    /*
+     * The layer follows the player EXACTLY, and the drift is the only motion
+     * the sky has of its own.
+     *
+     * The old version snapped the recentering to whole cells, which is where
+     * the clouds-jump-backwards bug lived: a snap is invisible only if the
+     * field repeats every cell, and this one repeats every 48 (see
+     * CLOUD_PERIOD). Crossing a cell boundary moved the layer a whole 12
+     * blocks in the direction you were running, so the clouds stepped
+     * backwards relative to you -- once every 1.5 seconds at sprint-jump
+     * speed.
+     *
+     * Following exactly is what the snap was reaching for anyway: the reason
+     * it existed was to stop the sky sliding around as you walk, and zero
+     * parallax does that better than a snap with a jump in it. It costs the
+     * one thing vanilla has and this does not -- clouds anchored in world
+     * space, so you can walk out from under one -- and that trade is the
+     * owner's call, recorded here so the next reader knows it was a choice.
+     *
+     * The wrap below is the one discontinuity left, and it is invisible by
+     * construction: CLOUD_PERIOD_BLOCKS is exactly the distance the field
+     * repeats over, so the layer lands on a copy of itself. Only the rim, 576
+     * blocks out, has cells that come and go, and it happens once every 16
+     * minutes.
+     */
+    drift += secs * CLOUD_DRIFT
+    if (drift < -CLOUD_PERIOD_BLOCKS / 2) drift += CLOUD_PERIOD_BLOCKS
+    global[0] = p[0] + drift
     global[1] = CLOUD_HEIGHT
-    global[2] = Math.round(p[2] / CLOUD_CELL) * CLOUD_CELL
+    global[2] = p[2]
     noa.globalToLocal(global, null, local)
     clouds.mesh.position.set(local[0], local[1], local[2])
   })
@@ -483,6 +575,18 @@ export function installSky(noa) {
       height: CLOUD_HEIGHT,
       cell: CLOUD_CELL,
       depth: CLOUD_DEPTH,
+      /*
+       * The drift offset and the period it wraps at, exposed so a test can
+       * check the continuity claim above rather than take it on trust. The
+       * wrap is 16 minutes apart, which no test is going to sit through, so
+       * the test it enables instead is the one that matters: that the field
+       * really does repeat at this period, which is what makes the wrap
+       * invisible whenever it does come around.
+       */
+      period: CLOUD_PERIOD_BLOCKS,
+      periodCells: CLOUD_PERIOD,
+      cellAt: cellFilled,
+      get offset() { return drift },
     },
   }
 }

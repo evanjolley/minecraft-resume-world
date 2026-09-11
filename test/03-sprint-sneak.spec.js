@@ -78,6 +78,54 @@ test.describe('sprint', () => {
       expect(fov, `FOV was ${fov.toFixed(2)} deg`).toBeCloseTo(BASE_FOV, 1)
     })
 
+  /*
+   * One boost PER HOP. 02-physics measures the speed this produces; this is
+   * the mechanism, and it is the one that regressed.
+   *
+   * The boost used to fire on the rising edge of the jump key, which is the
+   * same thing as "a jump started" only for the first hop of a run. Hold space
+   * -- the way bunny-hopping is actually played -- and noa starts a fresh jump
+   * on every tick you touch the ground, while a rising edge fires once. The
+   * trace below is what tells those two apart: it counts the launches, not the
+   * average speed, so a build that boosts once and coasts fails with a number
+   * rather than sneaking through on a wide tolerance.
+   */
+  test('the sprint-jump boost lands on every hop, not just the first',
+    async ({ page }) => {
+      await teleport(page, -35.5, SURFACE_Y + 1, 0.5)
+      await page.keyboard.down('KeyW')
+      await page.keyboard.down('ControlLeft')
+      await page.keyboard.down('Space')
+      // Long enough that the first hop -- the one the old build got right --
+      // is over before sampling starts.
+      await page.waitForTimeout(1200)
+
+      const r = await page.evaluate(() => new Promise((resolve) => {
+        const noa = window.noa
+        const body = noa.ents.getPhysics(noa.playerEntity).body
+        const speeds = []
+        let left = 90                     // 3 s: four or five hops
+        const fn = () => {
+          speeds.push(Math.hypot(body.velocity[0], body.velocity[2]))
+          if (--left <= 0) { noa.off('tick', fn); resolve(speeds) }
+        }
+        noa.on('tick', fn)
+      }))
+      for (const k of ['Space', 'ControlLeft', 'KeyW']) await page.keyboard.up(k)
+
+      // A launch is a tick that gained most of the 4 b/s impulse. Nothing else
+      // in this engine can add 2 b/s to a sprinting player in 33 ms.
+      const launches = r.filter((v, i) => i > 0 && v - r[i - 1] > 2).length
+      expect(launches, `${launches} launches in 3 s of held-space sprint-jumping`)
+        .toBeGreaterThanOrEqual(3)
+
+      // And the troughs: the slowest tick of the cycle is the landing, which
+      // is where a stray dose of standing friction would show up as a stall.
+      const slowest = Math.min(...r)
+      expect(slowest, `slowest tick in the cycle was ${slowest.toFixed(3)} b/s`)
+        .toBeGreaterThan(SPRINT * 0.95)
+    })
+
   test('sneaking beats sprinting when both are held', async ({ page }) => {
     await page.keyboard.down('KeyW')
     await page.keyboard.down('ControlLeft')

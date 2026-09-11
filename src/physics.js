@@ -282,7 +282,6 @@ export function installSpeedModes(noa, move, survival) {
 
   let sprinting = false
   let lastForwardPress = -Infinity
-  let jumpWasDown = false
 
   /*
    * Sneak camera drop. Minecraft's eye height is 1.62 standing and 1.27
@@ -351,16 +350,32 @@ export function installSpeedModes(noa, move, survival) {
      * Sprint-jumping. Minecraft adds a forward impulse on the tick a sprint
      * jump starts, which is why sprint-jumping covers noticeably more ground
      * than sprinting alone -- and the entire basis of parkour distance.
+     *
+     * THE CONDITION IS "a jump is starting this tick", NOT "space was just
+     * pressed". It used to be the key's rising edge, and that is only the same
+     * thing for the first jump of a run: hold space down -- which is how
+     * everyone actually bunny-hops -- and noa's movement component starts a
+     * fresh jump on every tick you are on the ground, while the rising edge
+     * fires exactly once. So the second hop onwards got no boost and you
+     * settled back to plain sprint speed, which is the "sprint-jumping has
+     * friction" symptom: measured 5.58 b/s with space held against 7.25 b/s
+     * when the boost landed on every jump. Vanilla polls the jump key while
+     * grounded and has no edge in it at all.
+     *
+     * `S.jump && grounded` is the same test noa's movement component makes one
+     * step earlier in this very tick (entity systems run before the tick
+     * event), so the boost lands on exactly the ticks an impulse does -- once
+     * per ground contact, because the next tick is airborne.
      */
-    if (S.jump && !jumpWasDown && sprinting) {
-      const body = noa.ents.getPhysics(noa.playerEntity).body
-      if (body.atRestY() < 0) {
-        const h = move.heading
-        body.velocity[0] += Math.sin(h) * MC.SPRINT_JUMP_BOOST
-        body.velocity[2] += Math.cos(h) * MC.SPRINT_JUMP_BOOST
-      }
+    const body = noa.ents.getPhysics(noa.playerEntity).body
+    // Not while flying: space is climb there, not jump, and a flier can sit
+    // grounded with it held -- which under this condition would hand out a
+    // boost every single tick.
+    if (S.jump && sprinting && !flight.flying && body.atRestY() < 0) {
+      const h = move.heading
+      body.velocity[0] += Math.sin(h) * MC.SPRINT_JUMP_BOOST
+      body.velocity[2] += Math.cos(h) * MC.SPRINT_JUMP_BOOST
     }
-    jumpWasDown = S.jump
 
     if (sneaking) preventWalkingOffEdge(noa)
   })

@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures.js'
 import {
   measureJumpApex, measureSpeed, look, HEADING, armApexSampler, readApex, tapKey,
+  teleport, SURFACE_Y,
 } from './helpers/world.js'
 
 /*
@@ -9,7 +10,12 @@ import {
  * is to say what it SHOULD produce, so any drift shows up as a diff with a
  * number attached rather than as a quietly-updated table.
  */
-const MC = { JUMP_APEX: 1.2522, WALK: 4.317, SPRINT: 5.612, SNEAK: 1.295 }
+const MC = {
+  JUMP_APEX: 1.2522, WALK: 4.317, SPRINT: 5.612, SNEAK: 1.295,
+  // Sprint-jumping is not a constant anywhere in Minecraft; it is what the
+  // 0.2/tick jump impulse averages out to over a hop.
+  SPRINT_JUMP: 7.127,
+}
 
 // 1.5% either way. noa integrates continuously against Minecraft's fixed
 // 20 Hz tick, so exact equality is not reachable; 1.5% is tight enough that
@@ -64,6 +70,39 @@ test.describe('movement physics', () => {
     const v = await measureSpeed(page, ['ControlLeft', 'KeyW'])
     expect(near(v, MC.SPRINT), `sprint ${v.toFixed(3)} b/s vs ${MC.SPRINT}`).toBe(true)
   })
+
+  /*
+   * Sprint-jumping, which in Minecraft is FASTER than sprinting on flat ground
+   * -- roughly 7.13 b/s against 5.61 -- and is the whole reason players do it.
+   * Each jump adds a forward impulse and the one tick of ground contact
+   * between hops costs less than continuous running does.
+   *
+   * SPACE IS HELD, not tapped, because that is how anyone actually bunny-hops
+   * and because holding it is what used to break: the boost hung off the key's
+   * rising edge, so hop two onwards got nothing and a sprint-jump run settled
+   * back to 5.58 b/s -- a hair SLOWER than just sprinting, which is what the
+   * "there is friction on the ground" report was.
+   *
+   * Wider tolerance than the speeds above on purpose. Those are constants the
+   * engine is told; this is an emergent average over a launch-and-decay cycle
+   * that noa integrates continuously against Minecraft's fixed 20 Hz, and the
+   * phase of the sample window inside that cycle moves it around.
+   */
+  test('sprint-jumping is faster than sprinting, the way it is in Minecraft',
+    async ({ page }) => {
+      // West end of the island: 3.4 s at 7.3 b/s is 25 blocks of clear run.
+      await teleport(page, -35.5, SURFACE_Y + 1, 0.5)
+      const sprint = await measureSpeed(page, ['ControlLeft', 'KeyW'], { sampleMs: 2000 })
+
+      await teleport(page, -35.5, SURFACE_Y + 1, 0.5)
+      const jumping = await measureSpeed(page, ['ControlLeft', 'KeyW', 'Space'],
+        { warmupMs: 1400, sampleMs: 2000 })
+
+      const where = `sprint ${sprint.toFixed(3)}, sprint-jump ${jumping.toFixed(3)} b/s`
+      expect(jumping, `${where} -- sprint-jumping is not faster`).toBeGreaterThan(sprint * 1.1)
+      expect(Math.abs(jumping - MC.SPRINT_JUMP) <= MC.SPRINT_JUMP * 0.05,
+        `${where} vs Minecraft's ${MC.SPRINT_JUMP}`).toBe(true)
+    })
 
   test('sneaking settles at Minecraft sneak speed', async ({ page }) => {
     // Sneak is slow enough that the 900 ms warmup is most of a block; the
