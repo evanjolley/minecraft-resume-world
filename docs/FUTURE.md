@@ -419,27 +419,38 @@ maps the wide layout only, and says so.
 
 ## Test coverage the suite does not have
 
-Two shipped features are covered only by throwaway verification scripts that
-predate the browser suite, and one of those scripts no longer tests what its
-header claims.
+Weather and non-cube collision used to live here as the headline gap: both
+shipped with only a hand-run script behind them. Both are specs now —
+`test/16-weather.spec.js` and `test/17-non-cube.spec.js` — and the two scripts
+are gone rather than left behind as copies nobody runs. What is left below is
+the lesson that produced the gap, and the parts of those two features `npm test`
+still does not reach.
 
-- **`scripts/verify-weather.mjs` was installing weather TWICE.** Its header
-  said it was the only place the wiring ran "until main.js picks it up", and
-  main.js picked it up — so the script's own `installWeather` call stood a
-  second rain system, a second thunder clock and a second ambience bed on top
-  of the live one, then pointed `window.game.weather` at its copy while
-  `/weather` went on driving main.js's. Fixed in place; recorded here because
-  the shape of the mistake is the interesting part. A verification script that
-  sets up what it verifies goes stale silently the moment the real wiring
-  lands, and nothing fails.
-- **There is no weather spec and no slab/stair spec.** `verify-weather.mjs` and
-  `verify-non-cube.mjs` are the only coverage either feature has, and neither
-  runs under `npm test` — so a change that breaks rain or stair collision goes
-  green. Both should move into `test/` as real specs against
-  `test/helpers/world.js`, which already has the boot gates, the FPS helper and
-  the screenshot plumbing they hand-roll. That is mostly translation work
-  rather than new assertions: the numbers in both scripts are good, they are
-  just parked outside the harness that would run them.
+- **A verification that sets up what it verifies goes stale silently.**
+  `scripts/verify-weather.mjs` opened by calling `installWeather` itself, from
+  back when main.js did not. main.js picked it up, and that call quietly became
+  a second rain system, a second thunder clock and a second ambience bed beside
+  the live ones, with `window.game.weather` pointed at the copy while
+  `/weather` went on driving main.js's. Every assertion after it read the wrong
+  object, and the script was red for weeks with nobody looking. The spec that
+  replaced it asserts main.js did the wiring and installs nothing. Keep the
+  shape of that mistake in mind for anything else that stands its subject up
+  before measuring it.
+- **Nothing tests weather ARRIVING on its own.** `16-weather.spec.js` forces
+  every transition through `/weather` or `requestWeather`, because vanilla's
+  natural cycle is a 12000–180000 tick countdown and lightning is a 1-in-500
+  roll per tick — ten minutes to three hours of waiting for an event a spec
+  needs in seconds. So `advanceCycle` is exercised only through the
+  `doWeatherCycle` freeze check: the countdown is watched, the flip at the end
+  of it is not. Testing that honestly means a seam for injecting the clock, not
+  a longer timeout.
+- **The cost of non-cube geometry is measured by nothing.**
+  `verify-non-cube.mjs` had a `--fps` mode that carpeted the ground with 1089
+  slabs and stairs and printed frame rates for a human to read. It asserted
+  nothing, so it did not survive the move into `test/`. If the object-mesh
+  instancing ever regresses, the suite will not say so — the numbers to
+  compare against are in that script's history, and `measureFps` in
+  `test/helpers/world.js` is what a real version would be built on.
 
 ## Also worth building
 
