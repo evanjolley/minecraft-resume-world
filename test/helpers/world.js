@@ -385,6 +385,23 @@ export async function readApex(page) {
  * toward maxSpeed with a force, it does not snap), then displacement is
  * divided by the elapsed time READ FROM THE PAGE. Using the test-side clock
  * instead attributes CDP round-trip latency to the player and reads ~5% slow.
+ *
+ * BOTH ENDPOINTS ARE READ INSIDE A TICK, which is the whole trick and was the
+ * bug. noa runs its physics and THEN emits 'tick', so the end position is a
+ * post-tick value. Reading the start position when the handler is armed --
+ * between ticks -- picks up the PREVIOUS tick's position, so the distance
+ * covered up to one extra tick (33 ms) of travel that the elapsed time knew
+ * nothing about. At sampleMs=700 that is up to 4.7% fast, random per run
+ * depending where the arming moment fell in the tick cycle, against a 1.5%
+ * tolerance. Measured: the error tracked (33.3 - phase)/elapsed with
+ * correlation -1.000 across twelve samples, and the same sprint read 5.564 to
+ * 5.820 b/s on one machine from one build. Taking the start on the first tick
+ * makes both ends the same kind of sample and the ratio exact.
+ *
+ * Rejected: deriving `secs` from the tick count times noa's nominal period.
+ * That assumes the engine held its rate, which is precisely the thing
+ * `healthy` below exists to check, so it would launder dropped ticks into a
+ * clean-looking number instead of rejecting them.
  */
 export async function measureSpeed(page, keys, { warmupMs = 900, sampleMs = 700 } = {}) {
   for (const k of keys) await page.keyboard.down(k)
@@ -401,10 +418,17 @@ export async function measureSpeed(page, keys, { warmupMs = 900, sampleMs = 700 
       const r = await page.evaluate((ms) => new Promise((resolve) => {
         const noa = window.noa
         const p = () => noa.ents.getPositionData(noa.playerEntity).position
-        const [x0, , z0] = p()
-        const t0 = performance.now()
-        let ticks = 0
+        let x0 = 0, z0 = 0, t0 = 0
+        // -1 until the window opens. `ticks` then counts the intervals that
+        // actually elapsed inside it -- the opening tick is the fencepost, not
+        // an interval -- which is what `expectedTicks` compares against.
+        let ticks = -1
         const fn = () => {
+          if (ticks < 0) {
+            const [x, , z] = p()
+            x0 = x; z0 = z; t0 = performance.now(); ticks = 0
+            return
+          }
           ticks++
           const dt = performance.now() - t0
           if (dt < ms) return
