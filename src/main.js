@@ -18,6 +18,7 @@ import { createSwing } from './swing.js'
 import { installPerspective } from './perspective.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky } from './sky.js'
+import { installUnderwater } from './underwater.js'
 import { createArmorReduction } from './armor.js'
 import { itemName, itemId, dropFor, rollDrops, unmappedDrops } from './items.js'
 import { itemModelStats } from './itemModel.js'
@@ -235,6 +236,17 @@ const survival = createSurvival(noa, {
 })
 const movement = installSpeedModes(noa, move, survival, fluids)
 installFluids(noa, { blockIds: ids, fluids, survival })
+
+/*
+ * What being under water LOOKS like -- fog and the murk overlay. Installed
+ * here, next to the rest of the fluid wiring, and not later: it sets
+ * `scene.fogMode` once at construction, and it has to do that before noa
+ * meshes its first chunk. noa's terrain materials are frozen the moment they
+ * are built, and a frozen Babylon material never recompiles its shader, so a
+ * fog mode set after the first mesh would never reach the world. See
+ * underwater.js for the whole trap.
+ */
+const underwater = installUnderwater(noa, { fluids })
 
 // One material shared by the third-person model and the first-person arm, so
 // a custom skin later only has to be swapped in one place. Declared before
@@ -574,7 +586,7 @@ window.game = {
   // fluid the player is actually registering as in.
   fluids,
   inventory, survival, move, sky, menu, chat, inputLock, perspective,
-  skinMaterial, sounds, particles, drops, weather,
+  skinMaterial, sounds, particles, drops, weather, underwater,
   /*
    * The viewmodel and the extrusion counters, for the console and the test
    * suite. `held` was not exposed before because nothing outside main.js

@@ -750,12 +750,15 @@ const NON_CUBE = NON_CUBE_FAMILIES.flatMap(
  * the file, so it gets no tint and no alpha, and it stays on the opaque atlas
  * page. That difference is why water is `alpha: true` and lava is not.
  */
-const WATER = [0x3f, 0x76, 0xe4]
+/* Exported because underwater.js reuses it as the FOG colour -- which is
+ * exactly what vanilla does, it reuses the biome water tint for water fog.
+ * Two copies of a hex triple is how they stop agreeing. */
+export const WATER_TINT = [0x3f, 0x76, 0xe4]
 
 const FLUIDS = [
   {
     id: 636, key: 'water', name: 'Water', all: 'water_still',
-    hardness: Infinity, fluid: true, alpha: true, tint: WATER,
+    hardness: Infinity, fluid: true, alpha: true, tint: WATER_TINT,
     // The alpha vanilla bakes into the PNG. Restated here so a source that
     // ships opaque water (Pixel Perfection CE has no water texture at all and
     // is substituted from ice) comes out translucent too.
@@ -927,6 +930,58 @@ for (const def of BLOCK_TYPES) {
   if (def.alphaLevel) (MATERIAL_RECIPES[def.all] ??= {}).alpha = def.alphaLevel
 }
 
+/*
+ * The water surface, seen from underneath.
+ *
+ * noa's greedy mesher draws the top face of a water block once, single-sided,
+ * facing up. Swim under it and there is nothing over your head -- which is the
+ * other half of "go six blocks under the ocean, look up, and see clouds".
+ *
+ * The fix is one flag, and the interesting part is where it can be set.
+ *
+ * WHERE. There is no water material to reach at registration time. noa builds
+ * terrain materials LAZILY, one per texture URL, the first time a chunk
+ * containing that page is meshed -- and it calls `mat.freeze()` immediately
+ * after building each one. So this hooks Babylon's "a material joined the
+ * scene" observable and flips the flag as each one appears, which is before
+ * the freeze because `makeStandardMaterial` adds to the scene in its
+ * constructor.
+ *
+ * (`freeze()` would not actually have stopped this -- backface culling is
+ * engine STATE applied in `_preBind` every draw, not a shader define. But it
+ * costs nothing to be on the right side of the freeze, and the next flag
+ * someone reaches for here might not be so forgiving.)
+ *
+ * WHAT IT COSTS. Materials are one per atlas PAGE, not one per block, so this
+ * is the whole alpha page: water, ice, glass, stained glass, slime and every
+ * leaf. Leaves and glass now draw their far faces too. That is more overdraw
+ * in the transparent pass and it is also, as it happens, what vanilla's fancy
+ * leaves look like from outside a tree. The opaque pages are untouched, which
+ * is where all the terrain actually is.
+ *
+ * REJECTED -- giving water its own atlas page so the flag lands on nothing
+ * else. It is the precise fix and it costs a new page, an edit to
+ * scripts/build-textures.mjs (another agent's file this pass) and one more
+ * sub-mesh per chunk that contains water.
+ *
+ * REJECTED -- a `blockMesh` for water, the way blockMeshes.js does slabs. It
+ * takes water off the terrain mesher entirely: a per-block Babylon mesh for
+ * every voxel of a 27-block-deep ocean, to solve a problem one boolean solves.
+ */
+function installDoubleSidedTranslucents(noa) {
+  const alphaFiles = ATLAS_PAGES.filter(p => p.hasAlpha).map(p => p.file)
+  const scene = noa.rendering.getScene()
+  scene.onNewMaterialAddedObservable.add((mat) => {
+    // `terrain-textured-<blockMatID>`, from noa's terrainMaterials.js. The id
+    // is what turns the name back into a texture URL; nothing else in the
+    // scene uses that prefix.
+    if (!mat.name.startsWith('terrain-textured-')) return
+    const url = noa.registry.getMaterialData(+mat.name.split('-')[2])?.texture
+    if (!url || !alphaFiles.some(f => url.endsWith(f))) return
+    mat.backFaceCulling = false
+  })
+}
+
 export function registerBlocks(noa) {
   const slot = new Map()
   ATLAS_PAGES.forEach((p, pageIndex) => {
@@ -1026,6 +1081,7 @@ export function registerBlocks(noa) {
   noa.blockTargetIdCheck = (id) =>
     !invisible.has(id) && (solidity(id) || shapeById[id] !== undefined)
 
+  installDoubleSidedTranslucents(noa)
   installThinInstanceUploadFix(noa)
   installNonCubeCollision(noa, shapeById)
   installPlacementOrientation(noa, NON_CUBE_VARIANTS)
