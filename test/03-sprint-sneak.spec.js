@@ -166,7 +166,7 @@ test.describe('sneak', () => {
    * open void. The world has no rim any more -- it is a 128x128 cut of real
    * terrain with an invisible wall around it, and you cannot walk off it
    * anywhere. So the test builds the ledge it needs: a stone pad in the air
-   * with a two-hundred-block drop off its east lip.
+   * with a two-hundred-block drop off its far lip.
    *
    * The BEHAVIOUR under test did not move an inch. Sneak still has to stop
    * you at an edge, walking still has to take you over it, and both halves

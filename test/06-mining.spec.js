@@ -106,23 +106,26 @@ test.describe('placing', () => {
    * target whose adjacent face is the empty block between it and the player --
    * legal to build into -- while looking DOWN gives one that is inside the
    * player, which must be refused. Same code path, opposite outcomes.
+   *
+   * It was at x = +2 while the terrain asset was mirrored in X. Mirrored with
+   * everything else, so "two east" is still what it says: east is -X here.
    */
-  const WALL = [2, SURFACE_Y + 1, 0]
+  const WALL = [-2, SURFACE_Y + 1, 0]
 
   test('right-clicking a block face places from the selected hotbar slot',
     async ({ page, terrain }) => {
-      await terrain.keep([1, SURFACE_Y, 0], [2, SURFACE_Y + 1, 0])
+      await terrain.keep([-2, SURFACE_Y, 0], [-1, SURFACE_Y + 1, 0])
       await setBlock(page, ID.planks, ...WALL)
       await page.evaluate(() => window.game.inventory.add(5, 10))
 
-      await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
+      await aim(page, { heading: HEADING.eastMinusX, pitch: 0 })
       expect(await targetedBlock(page)).toMatchObject({ position: WALL })
 
       await page.mouse.down({ button: 'right' })
       await page.mouse.up({ button: 'right' })
       await waitTicks(page, 2)
 
-      expect(await getBlock(page, 1, SURFACE_Y + 1, 0)).toBe(ID.planks)
+      expect(await getBlock(page, -1, SURFACE_Y + 1, 0)).toBe(ID.planks)
       expect(await invCount(page, ID.planks)).toBe(9)
     })
 
@@ -153,15 +156,15 @@ test.describe('placing', () => {
      * handlers fire on one keydown, alt-fire first -- while inv.open is still
      * false, so its guard does not help.
      */
-    await terrain.keep([1, SURFACE_Y, 0], [2, SURFACE_Y + 1, 0])
+    await terrain.keep([-2, SURFACE_Y, 0], [-1, SURFACE_Y + 1, 0])
     await setBlock(page, ID.planks, ...WALL)
     await page.evaluate(() => window.game.inventory.add(5, 10))
-    await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
+    await aim(page, { heading: HEADING.eastMinusX, pitch: 0 })
 
     await page.keyboard.press('KeyE')
     await waitTicks(page, 2)
 
-    expect(await getBlock(page, 1, SURFACE_Y + 1, 0),
+    expect(await getBlock(page, -1, SURFACE_Y + 1, 0),
       'E placed a block on its way to opening the inventory').toBe(ID.air)
     expect(await invCount(page, ID.planks)).toBe(10)
   })

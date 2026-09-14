@@ -342,7 +342,10 @@ installHUD(noa, { inventory, survival })
  * world itself, so it installs after both. Sounds need `npm run sounds` to
  * have been run; without a manifest they stay silent rather than throwing.
  */
-const sounds = installSounds(noa, { interaction, movement, survival })
+// `fluids` joins the list so sounds.js can hear the water. It reads the
+// sensor directly rather than subscribing, because fluids.js emits nothing
+// and giving it events is a change to a file this pass does not own.
+const sounds = installSounds(noa, { interaction, movement, survival, fluids })
 const particles = installParticles(noa, { interaction, movement })
 
 /*
@@ -448,11 +451,35 @@ const commands = installCommands(chat, authority, { noa })
  * The ground is found by scanning rather than hardcoded, because the terrain
  * asset is a real Minecraft chunk import and "the surface is at 135" is a
  * fact about today's asset rather than about the code.
+ *
+ * He was at x = +4.5 until the terrain asset stopped being mirrored in X
+ * (scripts/terrain/extract.mjs, MIRROR_X). Same column of the same Minecraft
+ * world, and still four blocks east -- east is -X in this engine, so the
+ * sentence above did not have to change, only the sign. The scan caught it
+ * the way it was meant to: at +4.5 the ground is now six blocks higher, so
+ * Evan stood at y=142 with his feet in a treetop.
  */
-const EVAN_XZ = [4.5, 0.5]
+const EVAN_XZ = [-4.5, 0.5]
+
+/*
+ * LEAVES ARE NOT A FLOOR, and this is the one thing the scan below has to
+ * know that "the first block that is not air" does not.
+ *
+ * It is the same blind spot `pickSpawn` in scripts/build-terrain.mjs writes up
+ * at length: in a dark forest the first solid block from the top is a leaf, so
+ * the obvious implementation stands its subject twenty blocks up in a canopy.
+ * That function is not imported because it is the wrong side of the build --
+ * it runs in node against `minecraft:` ids and this runs in the browser
+ * against engine ids. Shared intent, not shared code; coupling main.js to a
+ * build script to save four lines is a worse trade than saying it twice.
+ */
+const LEAF_IDS = new Set(
+  Object.entries(ids).filter(([key]) => key.endsWith('_leaves')).map(([, id]) => id))
+
 const evanY = (() => {
   for (let y = SPAWN[1] + 4; y > SPAWN[1] - 8; y--) {
-    if (getVoxelID(Math.floor(EVAN_XZ[0]), y - 1, Math.floor(EVAN_XZ[1]), ids) !== 0) return y
+    const under = getVoxelID(Math.floor(EVAN_XZ[0]), y - 1, Math.floor(EVAN_XZ[1]), ids)
+    if (under !== 0 && !LEAF_IDS.has(under)) return y
   }
   return SPAWN[1]
 })()

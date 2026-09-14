@@ -28,8 +28,10 @@ import {
  * and Minecraft charges you the whole 23rd.
  */
 
-/** Eye level, two and a half blocks east. Same rig as 13-drops. */
-const TARGET = [3, SURFACE_Y + 1, 0]
+/** Eye level, two and a half blocks east. Same rig as 13-drops, and it moved
+ *  with that one when the terrain asset stopped being mirrored in X: east is
+ *  -X in this engine, so the description held and the sign flipped. */
+const TARGET = [-3, SURFACE_Y + 1, 0]
 
 /** Minecraft's break times for stone, in seconds, by tool. */
 const STONE = {
@@ -69,7 +71,7 @@ async function hold(page, key) {
 async function aimAtTarget(page, terrain, id) {
   await terrain.keep(TARGET, TARGET)
   await setBlock(page, id, ...TARGET)
-  await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
+  await aim(page, { heading: HEADING.eastMinusX, pitch: 0 })
   expect(await targetedBlock(page)).toMatchObject({ position: TARGET })
 }
 

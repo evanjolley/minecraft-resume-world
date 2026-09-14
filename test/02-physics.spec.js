@@ -60,7 +60,7 @@ test.describe('movement physics', () => {
      */
     await teleport(page, DROP_X, SURFACE_Y, DROP_Z)
     await settleOnGround(page)
-    await look(page, { heading: HEADING.westPlusX })
+    await look(page, { heading: HEADING.eastMinusX })
   })
 
   test('a jump peaks at Minecraft height, so 1-block steps clear and 2 never do',

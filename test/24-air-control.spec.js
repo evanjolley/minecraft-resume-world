@@ -123,7 +123,7 @@ test.describe('air control', () => {
       expect(bestLen, `largest velocity step was ${bestLen.toFixed(4)} b/s`)
         .toBeGreaterThan(3)
 
-      // Facing is east (+X), so the sideways axis is Z. Resolve against the
+      // Facing is +X, so the sideways axis is Z. Resolve against the
       // camera rather than against the axis names, since a future heading
       // change in the fixture should not quietly turn this into a tautology.
       const h = await page.evaluate(() => window.noa.camera.heading)

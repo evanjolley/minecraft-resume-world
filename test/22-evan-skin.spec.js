@@ -17,9 +17,18 @@ import { shot } from './helpers/shots.js'
  * cape -- exactly as helpers/shots.js says.
  */
 
-/** Evan stands at x 4.5, z 0.5. Four blocks east of him, looking west. */
-const IN_FRONT = [8.5, 0.5]
-const LOOK_WEST = Math.atan2(-1, 0)
+/*
+ * Evan stands at x -4.5, z 0.5. Four blocks WEST of him, looking east.
+ *
+ * Both numbers moved with the terrain, which stopped being mirrored in X
+ * (scripts/terrain/extract.mjs, MIRROR_X): Evan's column negated, and so did
+ * the camera's. The heading is the half worth looking at twice -- it is still
+ * the direction that faces him, and it is still the one this file calls west,
+ * because west is +X in this engine. The constant was named for the mirrored
+ * world and only now means what it says.
+ */
+const IN_FRONT = [-8.5, 0.5]
+const LOOK_WEST = Math.atan2(1, 0)
 
 /** Read an image the page can fetch back out as pixels. */
 const sheetProbe = async (page, url) => page.evaluate(async (src) => {

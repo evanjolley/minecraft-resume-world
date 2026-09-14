@@ -14,8 +14,10 @@ import { shot } from './helpers/shots.js'
  * would be expensive to discover was fake later.
  */
 
-/** Where Evan stands, and a spot inside his greeting radius. */
-const NEAR_EVAN = [3.5, SURFACE_Y, 0.5]
+/** Where Evan stands, and a spot inside his greeting radius. One block west
+ *  of him -- he is at x = -4.5, which moved with the terrain when the asset
+ *  stopped being mirrored in X. Same column, other side of spawn. */
+const NEAR_EVAN = [-3.5, SURFACE_Y, 0.5]
 
 /**
  * Say something in chat the way a player does -- T, type, Enter -- rather
@@ -80,7 +82,8 @@ test('a visitor arrives as Guest, and the name is a roster entry not a string',
 
 test('Evan stands under a plain nameplate and talks with an [Admin] tag',
   async ({ page }) => {
-    const evan = await page.evaluate(() => {
+    const evan = await page.evaluate(async () => {
+      const { BLOCK_BY_ID } = await import('/src/blocks.js')
       const { roster, aiEvan, EVAN_ID, EVAN_POS } = window.game
       return {
         display: roster.displayNameOf(EVAN_ID),
@@ -90,11 +93,39 @@ test('Evan stands under a plain nameplate and talks with an [Admin] tag',
         pos: EVAN_POS,
         // Two meshes, because vanilla draws the tag twice -- see nametag.js.
         meshes: aiEvan.nametag.meshes.length,
+        // What he is actually standing on, read from the generator so it does
+        // not depend on his chunk being resident.
+        solidBelow: window.game.voxelAt(
+          Math.floor(EVAN_POS[0]), EVAN_POS[1] - 1, Math.floor(EVAN_POS[2])) !== 0,
+        airAtFeet: window.game.voxelAt(
+          Math.floor(EVAN_POS[0]), EVAN_POS[1], Math.floor(EVAN_POS[2])) === 0,
+        standingOn: BLOCK_BY_ID.get(window.game.voxelAt(
+          Math.floor(EVAN_POS[0]), EVAN_POS[1] - 1, Math.floor(EVAN_POS[2])))?.key ?? 'air',
       }
     })
     expect(evan.kind).toBe('npc')
     expect(evan.meshes).toBe(2)
-    expect(evan.pos[1]).toBe(SURFACE_Y)
+
+    /*
+     * He stands ON THE GROUND, asserted as that rather than as `SURFACE_Y`.
+     * SURFACE_Y is the height of the SPAWN column and Evan does not stand in
+     * it -- the two matched by coincidence, and the coincidence held until the
+     * terrain asset stopped being mirrored in X and his column moved out from
+     * under him. The old assertion then failed with "expected 136, got 142",
+     * which is a true report of a wrong number and says nothing about the
+     * thing anyone cares about: that he is not hovering, buried, or perched in
+     * a treetop.
+     *
+     * Three claims, because those are three different bugs: something solid
+     * directly beneath his feet, air where his feet are, and the solid thing
+     * is not foliage. Leaves pass "is not air" perfectly happily, and a
+     * character standing on a canopy is exactly the failure the ground scan in
+     * main.js exists to avoid.
+     */
+    expect(evan.solidBelow, 'nothing under Evan -- he is hovering').toBe(true)
+    expect(evan.airAtFeet, 'Evan is standing inside a block').toBe(true)
+    expect(evan.standingOn, `Evan is standing on ${evan.standingOn}`)
+      .not.toMatch(/_leaves$/)
 
     /*
      * The rank is not part of his NAME -- it is a chat format, so the roster

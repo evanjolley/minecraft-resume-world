@@ -39,7 +39,11 @@ const LAUNCH = MC.SPRINT_SPEED + MC.SPRINT_JUMP_BOOST
 
 /**
  * A 3-wide stone staircase climbing +X from PAD_X0, with the player on its
- * flat lead-in facing east. Returns the undo.
+ * flat lead-in facing along it. Returns the undo.
+ *
+ * +X is west in this world -- it was called east until the terrain stopped
+ * being mirrored in X. The rig is in mid-air at PAD_Y, clear of the terrain,
+ * so the direction is arbitrary and always was.
  */
 async function buildStaircase(page) {
   /*
@@ -88,7 +92,7 @@ async function buildStaircase(page) {
 
   await settleOnGround(page)
   await page.evaluate(() => window.game.survival.clearFallTracking())
-  // W walks where the camera looks and the staircase runs east.
+  // W walks where the camera looks and the staircase runs +X.
   await look(page, { heading: HEADING.westPlusX })
 
   return () => page.evaluate((list) => {

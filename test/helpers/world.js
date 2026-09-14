@@ -129,12 +129,19 @@ export async function waitForWorld(page) {
   await page.waitForFunction(() => !!(window.noa && window.game), null,
     { timeout: 30_000, polling: 100 })
 
-  await page.waitForFunction(([y, minX]) => {
+  await page.waitForFunction(([y, maxX]) => {
     const g = window.noa.getBlock.bind(window.noa)
     /*
      * The ground under spawn, a column 20 blocks out on the far diagonal, and
      * the invisible wall 41 blocks west. Three probes rather than one because
      * noa loads chunks in a box and the corners of that box land last.
+     *
+     * The wall probe is MAX_X + 1 rather than MIN_X - 1, which is a change of
+     * sign and not of intent. The patch's long side swapped ends when the
+     * terrain asset stopped being mirrored in X, so MIN_X - 1 is now 88 blocks
+     * out instead of 41 -- and a boot gate that waits on a chunk near the edge
+     * of noa's load range is a boot gate that hangs the day the range changes.
+     * MAX_X + 1 is the same 41 blocks the original probed.
      *
      * The old gate also probed the BEDROCK FLOOR at y=0, which cannot work any
      * more and is worth saying why: the world is 250 blocks tall now, bedrock
@@ -143,8 +150,8 @@ export async function waitForWorld(page) {
      * is permanently out of range. Any test that wants to read bedrock has to
      * go there.
      */
-    return g(0, y, 0) !== 0 && g(-20, y - 2, -20) !== 0 && g(minX - 1, y, 0) !== 0
-  }, [SURFACE_Y - 1, MIN_X], { timeout: 45_000, polling: 100 })
+    return g(0, y, 0) !== 0 && g(-20, y - 2, -20) !== 0 && g(maxX + 1, y, 0) !== 0
+  }, [SURFACE_Y - 1, MAX_X], { timeout: 45_000, polling: 100 })
 
   await page.waitForFunction(() => {
     const noa = window.noa
@@ -736,16 +743,18 @@ export async function doubleTapFly(page) {
  */
 export const PAD_Y = 200
 export const PAD_Z = 0
-/** The pad runs +X from here. Start a walk at PAD_START and head east. */
+/** The pad runs +X from here, which is the direction this world calls west.
+ *  Start a walk at PAD_START and hold W; the camera is aimed for you. */
 export const PAD_X0 = 0
 
-/** The x of the pad's last block -- its east lip, and the ledge you can walk
- *  off. Two blocks of the pad run WEST of PAD_X0 so you can back up. */
+/** The x of the pad's last block -- its far lip, and the ledge you can walk
+ *  off. Two blocks of the pad run back the other way from PAD_X0 so you can
+ *  back up before the run starts. */
 export const padEdgeX = (length) => PAD_X0 + length - 1
 
 /**
  * Build a `length` x 3 stone pad at y = PAD_Y - 1 with clear air over it, and
- * stand the player on its west end.
+ * stand the player on the end it starts from.
  *
  * @returns a restore function that takes it all back to air.
  */
@@ -794,10 +803,16 @@ export async function usePad(page, { length = 44 } = {}) {
   await page.evaluate(() => window.game.survival.clearFallTracking())
 
   /*
-   * Aim east, because the pad runs east and W walks wherever the camera looks.
-   * Without this the default heading of 0 (south, +z) marches the player off
-   * the three-block width inside one block, and the failure reads as a
+   * Aim along the pad, because W walks wherever the camera looks. Without
+   * this the default heading of 0 (south, +z) marches the player off the
+   * three-block width inside one block, and the failure reads as a
    * mysteriously slow walk rather than as a fall.
+   *
+   * The pad runs +X, which this world calls WEST -- it read "east" until the
+   * terrain stopped being mirrored in X and the cardinal names stopped being
+   * mirrored with it. Nothing about the rig moved: it is built in mid-air at
+   * y=200, clear of the terrain entirely, so which way it points was never
+   * load-bearing and is not now.
    */
   await look(page, { heading: HEADING.westPlusX })
 
