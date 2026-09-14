@@ -533,12 +533,38 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
     // Not in a fluid either: space is the swim climb there, and a player
     // standing on a lake bed with it held would collect a boost every tick.
     if (S.jump && sprinting && !flight.flying && swim === null && body.atRestY() < 0) {
-      const h = move.heading
+      /*
+       * ALONG WHERE YOU LOOK, NOT ALONG WHERE YOU ARE STEERING.
+       *
+       * Minecraft's is `-sin(getYRot()) * 0.2, cos(getYRot()) * 0.2` in
+       * LivingEntity.jumpFromGround, and getYRot() is the BODY YAW -- the way
+       * the player faces. The movement input never enters it. Strafing while
+       * you sprint-jump therefore gives you exactly the same forward impulse
+       * as not strafing; the sideways part of the hop has to be earned a tick
+       * at a time out of the 0.02/tick air acceleration.
+       *
+       * This used to read `move.heading`, and noa's receivesInputs builds
+       * that by rotating the camera heading by the movement keys -- 45 degrees
+       * for W+D. So the whole 4 b/s went in diagonally and 2.828 of it was
+       * sideways, IN ONE TICK, against the 0.368 b/s that one tick of vanilla
+       * air-strafing buys. Measured on the flat pad: sprint east at 5.575,
+       * press D and Space together, and the launch tick read
+       * vz = -2.828 with vx only 8.403. Held down, that settles to about
+       * vz = -4.0 for the rest of the flight. That is the "I press jump and a
+       * side button and launch to the side" report, and it is 7.7x vanilla.
+       *
+       * Rejected: blaming airMoveMult, which is the obvious suspect and is
+       * innocent. One tick of air strafe here buys 0.2464 b/s sideways against
+       * 1.2318 on the ground -- a ratio of 0.2000, which is Minecraft's
+       * 0.02/0.1 to four decimals. The steering authority was never wrong;
+       * only the impulse's direction was.
+       */
+      const h = noa.camera.heading
       body.velocity[0] += Math.sin(h) * MC.SPRINT_JUMP_BOOST
       body.velocity[2] += Math.cos(h) * MC.SPRINT_JUMP_BOOST
 
       /*
-       * Scaled, not truncated per axis. The boost goes in along the heading
+       * Scaled, not truncated per axis. The boost goes in along the facing
        * and the velocity being clamped may point somewhere else entirely --
        * strafing, or coming off a wall -- so clamping x and z independently
        * would rotate the player's direction of travel as a side effect. One
