@@ -34,13 +34,30 @@ import { decode } from './terrainFormat.js'
  * interesting spot is the origin, the way spawn was the origin before.
  *
  * Road not taken: leaving patch indices AS world coordinates, so the world
- * ran 0..127 and spawn sat at (40, 56). Honest, and it makes a coordinate in
+ * ran 0..127 and spawn sat at (87, 56). Honest, and it makes a coordinate in
  * the game equal a coordinate in the asset -- genuinely useful when debugging
  * the encoder. It lost because every "look at the block under your feet" test
  * in the suite, and every mental model, is written around the origin, and
  * moving spawn off (0, 0) would have churned all of them for no gameplay gain.
+ *
+ * X USED TO BE 40, AND THE WORLD USED TO BE A MIRROR IMAGE.
+ *
+ * scripts/terrain/extract.mjs now mirrors X while writing the asset, to cancel
+ * Babylon's left-handedness -- the long note is at MIRROR_X there. Spawn is
+ * still the same Minecraft column (world X 152 in seed 12345); it has simply
+ * moved to the other end of the asset, so the origin moves with it:
+ *
+ *     new index = (size - 1) - old index = 127 - 40 = 87
+ *
+ * NOT ASSUMED: this is whatever scripts/terrain/ wrote into terrain.json as
+ * `spawn.x`, and `npm run terrain:verify` fails if the two disagree or if that
+ * column is not the grass block the scan actually chose.
+ *
+ * The happy arithmetic, worth knowing when reading old screenshots: 40 + 87 is
+ * 127, so a world coordinate in the old asset becomes its own NEGATIVE in the
+ * new one. The summit that was at x=63 is at x=-63. Spawn, at 0, does not move.
  */
-const PATCH_ORIGIN_X = 40
+const PATCH_ORIGIN_X = 87
 const PATCH_ORIGIN_Z = 56
 
 /**
@@ -120,7 +137,7 @@ export function terrainInfo() {
 /* ---------------- the edges ---------------- */
 
 /*
- * World bounds, in world coordinates. x runs -40..87, z runs -56..71.
+ * World bounds, in world coordinates. x runs -87..40, z runs -56..71.
  * Exported because the tests and the barrier both need to agree on them, and
  * because "where does the world stop" is the first thing anyone asks.
  */

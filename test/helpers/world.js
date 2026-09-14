@@ -24,8 +24,8 @@ export const SPAWN = [0.5, SURFACE_Y + 2, 0.5]
  * which is itself worth asserting, since a symmetric-island assumption is
  * exactly what these tests used to be full of.
  */
-export const MIN_X = -40
-export const MAX_X = 87
+export const MIN_X = -87
+export const MAX_X = 40
 export const MIN_Z = -56
 export const MAX_Z = 71
 
@@ -37,11 +37,16 @@ export const MAX_Z = 71
  * because the old island had open sky over all of it. Spawn is now under a
  * dark forest canopy -- there are leaves at y=139 and y=140 directly overhead
  * -- and a player dropped from SURFACE_Y + 10 would land on a leaf, or worse
- * materialise inside one. x=4 is the nearest column that is clear all the way
+ * materialise inside one. x=-4 is the nearest column that is clear all the way
  * up, and its ground is at exactly the same height as spawn's, so every
  * `SURFACE_Y + n` distance in those tests still means what it said.
+ *
+ * It was +4 until the terrain asset stopped being mirrored in X. Same column
+ * of the same Minecraft world, reached from the other side: the flip pivots on
+ * spawn, so a world coordinate simply negates. Nothing about the drop tests
+ * changed except which side of spawn they happen on.
  */
-export const DROP_X = 4.5
+export const DROP_X = -4.5
 export const DROP_Z = 0.5
 
 /** Block ids, mirroring blocks.js. Duplicated on purpose: if someone
@@ -63,12 +68,22 @@ export const OP_PASSPHRASE = 'diamond-pickaxe'
 /** Every game rule resetWorld has to put back. Vanilla defaults are all true. */
 const GAMERULES = ['doDaylightCycle', 'fallDamage', 'naturalRegeneration']
 
-/** Heading in noa is measured so that direction = (sin h, cos h). */
+/*
+ * Heading in noa is measured so that direction = (sin h, cos h).
+ *
+ * The cardinal halves of these names USED TO SAY the opposite on X --
+ * `eastPlusX` and `westMinusX` -- which was a leftover from when the terrain
+ * asset was a mirror image of the Minecraft world it came from. It is not any
+ * more (scripts/terrain/extract.mjs, MIRROR_X), and in this engine +X is west:
+ * Babylon's scene is left-handed, so facing +Z puts +X on your RIGHT, and
+ * Minecraft facing south puts west on your right. Measured in
+ * test/25-orientation.spec.js rather than asserted in a comment.
+ */
 export const HEADING = {
   southPlusZ: 0,
-  eastPlusX: Math.PI / 2,
+  westPlusX: Math.PI / 2,
   northMinusZ: Math.PI,
-  westMinusX: -Math.PI / 2,
+  eastMinusX: -Math.PI / 2,
 }
 
 /*
@@ -784,7 +799,7 @@ export async function usePad(page, { length = 44 } = {}) {
    * the three-block width inside one block, and the failure reads as a
    * mysteriously slow walk rather than as a fall.
    */
-  await look(page, { heading: HEADING.eastPlusX })
+  await look(page, { heading: HEADING.westPlusX })
 
   return async () => {
     await page.evaluate(([x0, y, z, len]) => {

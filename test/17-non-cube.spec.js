@@ -136,8 +136,17 @@ test.describe('non-cube blocks', () => {
         // Clicked the top face of the block below: bottom half.
         noa._pickResult.position[1] = y
         noa.targetedBlock = { position: [x, y - 1, z], normal: [0, 1, 0], adjacent: [x, y, z] }
-        for (const [dir, heading] of [['south', 0], ['east', Math.PI / 2],
-          ['north', Math.PI], ['west', 3 * Math.PI / 2]]) {
+        /*
+         * The quarter turns are +Z, +X, -Z, -X. Their names USED TO READ
+         * south/east/north/west, from back when blockMeshes.js called +X east
+         * and mirrored its geometry table to match. Both halves were flipped
+         * together when the terrain stopped being a mirror image, so the boxes
+         * a given heading places are byte for byte what they always were --
+         * only the name on them changed, and now it is Minecraft's. See the
+         * FACINGS note in src/blockMeshes.js.
+         */
+        for (const [dir, heading] of [['south', 0], ['west', Math.PI / 2],
+          ['north', Math.PI], ['east', 3 * Math.PI / 2]]) {
           noa.camera.heading = heading
           noa.setBlock(id('oak_stairs'), x, y, z)
           out[dir] = shape()
@@ -163,7 +172,7 @@ test.describe('non-cube blocks', () => {
       }, ORIENT_AT)
 
       const all = JSON.stringify(orient)
-      for (const dir of ['south', 'east', 'north', 'west']) {
+      for (const dir of ['south', 'west', 'north', 'east']) {
         expect(orient[dir], `facing ${dir} placed ${orient[dir]} -- ${all}`)
           .toBe(`stairs_${dir}_bottom`)
       }
@@ -205,9 +214,17 @@ test.describe('walking on slabs and stairs', () => {
       for (let x = 2; x < 8; x++) for (let z = 2; z < 6; z++) {
         noa.world.setBlockID(id('stone_brick_slab'), bx + x, by + 1, bz + z)
       }
-      // a five-step staircase climbing east, supported like a real build
+      /*
+       * A five-step staircase climbing +X, supported like a real build.
+       *
+       * `oak_stairs_west_bottom`, not `_east_`, and the geometry is identical
+       * to what this line built before: west is +X in this world, so the tall
+       * half still lands on the +X side of each block and the climb still
+       * runs the same way. Only the variant's NAME changed -- see the FACINGS
+       * note in src/blockMeshes.js for why it had to.
+       */
       for (let n = 0; n < 5; n++) for (let z = 2; z < 6; z++) {
-        noa.world.setBlockID(id('oak_stairs_east_bottom'), bx + 8 + n, by + 1 + n, bz + z)
+        noa.world.setBlockID(id('oak_stairs_west_bottom'), bx + 8 + n, by + 1 + n, bz + z)
         for (let f = 0; f < n; f++) noa.world.setBlockID(stone, bx + 8 + n, by + 1 + f, bz + z)
       }
       // a landing, so the climb test has somewhere to stop
@@ -240,7 +257,7 @@ test.describe('walking on slabs and stairs', () => {
 
   /** Hold W east for a real duration -- this is a walk, not a teleport. */
   async function walkEast(page, ms) {
-    await look(page, { heading: HEADING.eastPlusX })
+    await look(page, { heading: HEADING.westPlusX })
     await page.keyboard.down('KeyW')
     await page.waitForTimeout(ms)
     await page.keyboard.up('KeyW')

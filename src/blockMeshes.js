@@ -70,12 +70,34 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture.js'
  * different and much larger problem than these two.
  * ------------------------------------------------------------------ */
 
-/** Unit vectors for the four horizontal facings, in Minecraft's names. */
+/*
+ * Unit vectors for the four horizontal facings, in Minecraft's names.
+ *
+ * EAST IS -X AND WEST IS +X, which looks like a typo and is not. Babylon's
+ * scene is left-handed, so facing +Z (which this world calls south, and which
+ * is noa's heading 0) puts +X on your RIGHT -- measured, in
+ * test/25-orientation.spec.js -- and Minecraft facing south puts WEST on your
+ * right. There is no assignment of the four names to the four axis directions
+ * that both turns clockwise and keeps vanilla's `east = +X`; the long version
+ * of that argument is the compass note in src/debugScreen.js.
+ *
+ * This table used to say `east: [1, 0, 0]` and `headingToFacing` below used to
+ * call +X east to match, which is why stairs still placed correctly: the name
+ * was mirrored and the geometry was mirrored to cancel it. Both were flipped
+ * IN THE SAME COMMIT, which is the only safe way to touch either -- rename one
+ * without the other and stairs place backwards while every test still passes,
+ * because nothing in this repo ever compared a stair's name to Minecraft's.
+ *
+ * What the pairing buys now that it is honest: a stair state imported from a
+ * real Minecraft build says `facing=east`, and east in this world is -X, and
+ * that is where its tall half will be. Before this commit it would have been
+ * built pointing the other way.
+ */
 const FACINGS = {
   north: [0, 0, -1],
   south: [0, 0, 1],
-  west: [-1, 0, 0],
-  east: [1, 0, 0],
+  west: [1, 0, 0],
+  east: [-1, 0, 0],
 }
 
 const slabBoxes = (half) =>
@@ -121,10 +143,20 @@ for (const facing of Object.keys(FACINGS)) {
  * increase along. u runs right and v runs up as seen from OUTSIDE the block,
  * with the top face's v pointing north -- Minecraft's convention. Babylon
  * uploads textures with UNPACK_FLIP_Y, so v = 1 is the top row of the image.
+ *
+ * NOT TOUCHED by the terrain X flip, and worth one line so nobody goes hunting.
+ * These u directions are stated in engine coordinates, and a left-handed render
+ * mirrors them on screen the same way it mirrors everything else -- so every
+ * side face here draws its texture left-right flipped against what vanilla
+ * draws. That was true before the flip and is true after it; the flip moved
+ * BLOCKS, not the UVs inside one. It is invisible on Minecraft's textures,
+ * which have no text and no handed detail, and fixing it means negating the
+ * x component of u on every face and rebaselining every screenshot in the
+ * suite. Not worth it until something in the atlas is actually handed.
  */
 const FACES = [
-  { n: [1, 0, 0], u: [0, 0, -1], v: [0, 1, 0] },   // +x  east
-  { n: [-1, 0, 0], u: [0, 0, 1], v: [0, 1, 0] },   // -x  west
+  { n: [1, 0, 0], u: [0, 0, -1], v: [0, 1, 0] },   // +x  west
+  { n: [-1, 0, 0], u: [0, 0, 1], v: [0, 1, 0] },   // -x  east
   { n: [0, 1, 0], u: [1, 0, 0], v: [0, 0, -1] },   // +y  top
   { n: [0, -1, 0], u: [1, 0, 0], v: [0, 0, 1] },   // -y  bottom
   { n: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] },    // +z  south
@@ -653,11 +685,22 @@ export function installNonCubeCollision(noa, shapeById) {
 
 const TWO_PI = Math.PI * 2
 
-/** Player heading -> cardinal direction. noa's forward is (sin h, 0, cos h). */
+/*
+ * Player heading -> cardinal direction. noa's forward is (sin h, 0, cos h),
+ * so the quarter turns are +Z, +X, -Z, -X and the names are this world's:
+ * south, west, north, east. See the FACINGS table above for why +X is west,
+ * and change the two together or not at all.
+ *
+ * This is the same table as `FACING` in main.js and `FACINGS` in
+ * debugScreen.js. Reported rather than merged: the three answer different
+ * questions (which shape to place, who is facing where in the roster, what to
+ * print on F3) and folding them into one export would couple a rendering
+ * detail to a HUD string. They now at least AGREE, which they did not before.
+ */
 function headingToFacing(heading) {
   const h = ((heading % TWO_PI) + TWO_PI) % TWO_PI
   const octant = Math.round(h / (Math.PI / 2)) % 4
-  return ['south', 'east', 'north', 'west'][octant]
+  return ['south', 'west', 'north', 'east'][octant]
 }
 
 /**

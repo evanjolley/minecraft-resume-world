@@ -158,14 +158,13 @@ const LINE = 9
 /*
  * The compass, and the one thing on this screen that is NOT a copy of vanilla.
  *
- * THIS WORLD IS MIRRORED IN X relative to the Minecraft it was extracted from,
- * and that is not a bug in this file -- it is Babylon's handedness. Minecraft
- * is right-handed (+X east, +Y up, +Z south): stand facing south there and west
- * is on your right. Babylon's scene is LEFT-handed (useRightHandedSystem is
- * false) and the terrain import copies voxel (x, y, z) straight across, so
- * stand facing +Z here and +X is on your right. Measured rather than assumed:
- * at heading 0 the camera's view matrix sends world +X to view-space +x, which
- * is screen right.
+ * Minecraft is right-handed (+X east, +Y up, +Z south): stand facing south
+ * there and west is on your right. Babylon's scene is LEFT-handed
+ * (useRightHandedSystem is false, noa's default), so stand facing +Z here and
+ * +X is on your RIGHT. Measured rather than assumed, and now measured in a
+ * spec rather than in a comment: test/25-orientation.spec.js projects a point
+ * at +X through the scene's full transform at heading 0 and finds it on the
+ * right of the screen.
  *
  * So the axes cannot carry Minecraft's cardinal names AND turn like a compass.
  * Pick one:
@@ -187,16 +186,27 @@ const LINE = 9
  * -- and Minecraft's yaw is 0 at south and 90 at west. Same numbers, no flip.
  * The sign flip that used to sit in mcYaw WAS the bug.
  *
- * KNOWN DIVERGENCE, reported rather than silently deduplicated:
- * blockMeshes.js has its own `headingToFacing` for orienting stairs and it
- * uses the (a) labels -- it calls +X "east". It is not wrong in any way you
- * can see, because its geometry table (blockMeshes.js FACINGS, east = [1,0,0])
- * is mirrored to match, so a stair placed while looking somewhere still points
- * there. What it produces is a variant NAME mirrored relative to the source
- * Minecraft world, which will matter the day a real Minecraft build is
- * imported and its stair states have to line up. NOT merged with this table:
- * the two answer different questions, and renaming one without the other is
- * exactly how stairs start placing backwards.
+ * WHAT THE TERRAIN FLIP CHANGED HERE: nothing in the table below, and that is
+ * the interesting part. When this table was first written the terrain asset
+ * was a MIRROR IMAGE of the Minecraft world it was cut from, and the honest
+ * reading of the note above it was "the labels have been bent to fit a
+ * mirrored world". scripts/terrain/extract.mjs now mirrors X while writing the
+ * asset, so the world is a faithful copy -- and the table did not move,
+ * because the reason for it was never the terrain. It was Babylon.
+ *
+ * The one line that WAS bent has been straightened, in blockMeshes.js: it used
+ * the (a) labels with a geometry table mirrored to cancel them, which placed
+ * stairs correctly under names that were the wrong way round. Both halves were
+ * flipped together and it now agrees with this table. Still not merged with
+ * it: the two answer different questions, and renaming one without the other
+ * is exactly how stairs start placing backwards.
+ *
+ * STILL NOT VANILLA, and cannot be: real Minecraft prints "east (Towards
+ * positive X)". This world prints "east (Towards negative X)", because east
+ * genuinely is -X here. Flipping the terrain's Z instead of its X would have
+ * bought vanilla's X pairing and lost vanilla's Z pairing -- the same sentence
+ * with the axes swapped -- so there is no arrangement that makes both halves
+ * of this line read like the wiki.
  */
 const FACINGS = [
   { name: 'south', towards: 'positive Z' },   // yaw 0,   noa heading 0

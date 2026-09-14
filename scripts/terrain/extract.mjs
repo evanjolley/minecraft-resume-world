@@ -22,6 +22,9 @@
  * 255 (a stone column below a mountain is one run of ~200) and a palette
  * index is almost always one byte, so a fixed-width pair wastes space at both
  * ends.
+ *
+ * X IS MIRRORED ON THE WAY OUT, and that is the one thing in this file that is
+ * not a pure copy. See MIRROR_X below for why.
  */
 import { writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
@@ -29,6 +32,54 @@ import { join, dirname } from 'node:path'
 import { classify } from './mapping.mjs'
 
 export const MAGIC = 'VOX1'
+
+/*
+ * THE X MIRROR.
+ *
+ * Minecraft's world is right-handed: +X east, +Y up, +Z south. Stand facing
+ * south there and west is on your right. Babylon's scene is LEFT-handed
+ * (`useRightHandedSystem` is false, which is noa's default and not ours to
+ * change), and a left-handed render of right-handed data is a mirror image.
+ *
+ * Measured rather than argued, in test/25-orientation.spec.js: at heading 0
+ * the camera faces +Z and a point at +X projects to the RIGHT half of the
+ * screen. So in this engine, facing +Z, +X is on your right -- which is where
+ * Minecraft puts west.
+ *
+ * This extractor used to copy (x, y, z) straight across, so the engine's +X
+ * held Minecraft's east while the player saw it on the side west belongs on.
+ * The whole world shipped as a mirror of seed 12345: the ocean that is west of
+ * the spawn column in the real save appeared east of it here, and every slope
+ * fell away the wrong way.
+ *
+ * Cancelling a mirror takes exactly ONE axis flip. It happens here, in the
+ * data, so that terrain.bin is simply correct and nothing downstream has to
+ * carry a compensating sign.
+ *
+ * X and not Z, because Z is the axis the rest of the world already agrees on:
+ * noa's heading 0 faces +Z and the F3 screen calls that south, which makes
+ * Minecraft's yaw conversion the identity. Flipping Z instead would put a
+ * permanent 180 into every yaw and move spawn's compass reading to north, for
+ * no gain -- either flip un-mirrors the world equally well.
+ *
+ * Rejected:
+ *   - flipping at render or lookup time (island.js reading `width - 1 - px`).
+ *     The asset stays wrong, the compensation is permanent, and anyone who
+ *     reads terrain.bin with a fresh decoder gets a mirrored world.
+ *   - renaming the cardinals and leaving the data alone. That was tried for
+ *     the F3 compass and it is a different problem: names can be moved, but a
+ *     mirrored mountain is still mirrored under any name.
+ *
+ * WHAT THIS DOES NOT FIX, said plainly so nobody goes looking: +X in this
+ * engine is still WEST, and after the flip that is finally TRUE rather than a
+ * label papering over mirrored data. You cannot have +X = east AND a compass
+ * that turns clockwise in a left-handed scene; see the note in debugScreen.js.
+ *
+ * Consequence for anyone reading the asset: column 0 is the EAST edge of the
+ * source patch (world X = x + size - 1) and column size-1 is the west edge.
+ * Z is untouched. The manifest records this as `world.xOrder`.
+ */
+export const mirrorX = (x, size) => size - 1 - x
 
 /** Varint writer over a growable byte array. */
 class Writer {
@@ -53,6 +104,12 @@ class Writer {
  * Read the patch, count every block id, and decide the vertical range.
  * Separated from encoding because the block report wants the counts whether
  * or not an asset is written.
+ *
+ * `x` here is an ASSET column index, and it reads the source at the mirrored
+ * world X -- see MIRROR_X above. Doing it at the read rather than at the
+ * encode means every later stage (the trim, the block report, the encoder)
+ * works on data that is already in the engine's frame, and there is exactly
+ * one line in the pipeline where the two frames meet.
  */
 export function readPatch(world, x0, z0, size, yMin, yMax, { log = console.log } = {}) {
   const counts = new Map()
@@ -61,9 +118,10 @@ export function readPatch(world, x0, z0, size, yMin, yMax, { log = console.log }
 
   for (let z = 0; z < size; z++) {
     for (let x = 0; x < size; x++) {
+      const wx = x0 + mirrorX(x, size)
       const col = new Array(yMax - yMin + 1)
       for (let y = yMin; y <= yMax; y++) {
-        const id = world.block(x0 + x, y, z0 + z) ?? 'minecraft:air'
+        const id = world.block(wx, y, z0 + z) ?? 'minecraft:air'
         counts.set(id, (counts.get(id) ?? 0) + 1)
         col[y - yMin] = id
         if (id !== 'minecraft:air' && id !== 'minecraft:cave_air' && id !== 'minecraft:void_air') {
@@ -141,7 +199,13 @@ export function encode({ cols, size, yMin, yTop, seed, worldX, worldZ, version, 
       seed,
       // Where in the generated world this patch was cut from. Recorded so the
       // exact same blocks can be regenerated from the seed alone.
-      world: { x: worldX, z: worldZ, size, yMin, yMax: yTop },
+      //
+      // `xOrder` is the one field here that is not a coordinate: it says which
+      // way round the X axis runs, because the asset is mirrored in X against
+      // the source (see MIRROR_X). Written down rather than left implicit,
+      // because a mirrored world is the one kind of wrong that looks right,
+      // and a reader with a fresh decoder has no other way to find out.
+      world: { x: worldX, z: worldZ, size, yMin, yMax: yTop, xOrder: 'descending' },
       palette,
       spawn,
     },

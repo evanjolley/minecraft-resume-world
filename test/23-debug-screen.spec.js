@@ -126,19 +126,23 @@ test.describe('F3 debug screen', () => {
    * how the mirrored compass shipped: "north reports north" passes perfectly
    * happily on a compass that runs backwards. The turn is the asymmetric test.
    *
-   * See the compass note in debugScreen.js: this world is mirrored in X by
-   * Babylon's left-handed scene, so +X reads as WEST here, and the "Towards"
-   * axis is the one you can verify by walking rather than the one vanilla
-   * prints.
+   * See the compass note in debugScreen.js: Babylon's scene is left-handed, so
+   * facing +Z puts +X on your right, which is where Minecraft puts west. +X
+   * therefore reads as WEST here, and the "Towards" axis is the one you can
+   * verify by walking rather than the one vanilla prints.
+   *
+   * Unchanged by the terrain X flip, on purpose. The asset used to be a mirror
+   * image of seed 12345 and now is not, but this table never described the
+   * terrain -- it describes the renderer, and the renderer did not move.
    */
   test('the four cardinals, in this world\'s frame', async ({ page }) => {
     await press(page, 'F3')
 
     for (const [heading, name, towards, yaw] of [
       [HEADING.southPlusZ, 'south', 'positive Z', 0],
-      [HEADING.eastPlusX, 'west', 'positive X', 90],
+      [HEADING.westPlusX, 'west', 'positive X', 90],
       [HEADING.northMinusZ, 'north', 'negative Z', 180],
-      [HEADING.westMinusX, 'east', 'negative X', -90],
+      [HEADING.eastMinusX, 'east', 'negative X', -90],
     ]) {
       await look(page, { heading, pitch: 0 })
       await waitTicks(page, 2)

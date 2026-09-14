@@ -24,7 +24,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { existsSync } from 'node:fs'
 import { WORK, MC_VERSION } from './terrain/generate.mjs'
 import { worldFor, survey, bestWindows, PATCH } from './terrain/scan.mjs'
-import { readPatch, encode, emit } from './terrain/extract.mjs'
+import { readPatch, encode, emit, mirrorX } from './terrain/extract.mjs'
 import { classify } from './terrain/mapping.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -157,7 +157,20 @@ export function pickSpawn(world, x0, z0, { log = console.log } = {}) {
       const score = biomes.size * 10 + Math.min(peak - g.y, 80) * 0.5 + centre * 25
       if (!best || score > best.score) {
         best = {
-          score, x: cx, y: g.y + 1, z: cz,
+          /*
+           * `x` is the column in the EMITTED ASSET, which is mirrored in X
+           * against the source (extract.mjs MIRROR_X); `worldX` is the real
+           * Minecraft coordinate and is not. src/island.js sets
+           * PATCH_ORIGIN_X from this field, so getting it wrong moves spawn
+           * to the mirror-image column -- which is grass at some other
+           * height, and looks like a broken asset rather than a broken index.
+           *
+           * The SEARCH above still runs in source coordinates, deliberately.
+           * Mirroring the scan too would change the centre term by one block
+           * and could pick a different column; leaving it means this commit
+           * moves the world and not the spawn.
+           */
+          score, x: mirrorX(cx, PATCH), y: g.y + 1, z: cz,
           worldX: x, worldZ: z,
           standingOn: g.block,
           biomesInSight: [...biomes],
