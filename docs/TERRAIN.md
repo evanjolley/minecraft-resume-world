@@ -125,6 +125,41 @@ when it builds a chunk, so the decode is a walk rather than a gather. Lengths
 and palette indices are varints, because runs are routinely longer than 255
 and palette indices are almost always one byte.
 
+## Which way round it is
+
+Minecraft is right-handed: +X east, +Y up, +Z south. Stand facing south there
+and west is on your right. Babylon's scene is left-handed, and a left-handed
+render of right-handed data is a **mirror image**.
+
+The extractor copied `(x, y, z)` straight across for the first few weeks of
+this world's life, so that is what shipped. The ocean that is west of the
+spawn column in the real save appeared east of it in the browser, and every
+slope fell away the wrong way. Nothing looked broken, because everything
+downstream inherited the mirror and agreed with it -- the F3 compass, the
+stair facings, the test suite. A mirrored world is self-consistent. It is only
+wrong against the outside.
+
+`extract.mjs` now mirrors X while writing, so **asset column 0 is the east
+edge of the source patch** and column 127 is the west edge. Z is untouched.
+The manifest records it as `world.xOrder: "descending"`.
+
+X and not Z because Z is the axis the rest of the world already agrees on:
+noa's heading 0 faces +Z, the F3 screen calls that south, and Minecraft's yaw
+conversion is the identity there. Flipping Z instead would un-mirror the world
+equally well and put a permanent 180 into every yaw.
+
+What it does NOT fix, because nothing can: **+X in this engine is west.** The
+axes cannot carry Minecraft's cardinal names and turn like a compass at the
+same time in a left-handed scene -- that argument is written out in full in
+`src/debugScreen.js`. The flip makes "+X is west" TRUE rather than a label
+bent to fit mirrored data.
+
+The spawn column did not move -- it is the same Minecraft column at world X
+152 -- but its index in the asset did, from 40 to 127 - 40 = 87. That is
+`PATCH_ORIGIN_X` in `src/island.js`, and since 40 + 87 = 127, every world
+coordinate in the game became its own negative: x runs -87..40 now, and a
+screenshot taken at x=63 before the flip is the same place as x=-63 after it.
+
 ## What is dropped
 
 The engine renders full cubes. That one fact decides the whole mapping.
@@ -153,10 +188,33 @@ failure mode of an RLE encoder produces a file that looks fine -- a wrong
 varint continuation, an off-by-one run length, a palette index written before
 the palette was finished all yield a plausible number of plausible bytes, and
 the first sign of trouble is terrain that looks subtly wrong in a browser
-weeks later. The verifier's decoder is written fresh rather than shared with
-the encoder, so it can catch a format that was written down wrong rather than
-only an encoder that disagrees with itself. It currently checks 4,096,000
-voxels against the region files and all of them match.
+weeks later. It currently checks 4,096,000 voxels against the region files
+and all of them match.
+
+The decoder is no longer written fresh -- it is `src/terrainFormat.js`, shared
+with `island.js`, because two readers of one binary format drift. What stands
+guard instead is that the comparison is against the REGION FILES rather than
+against the encoder.
+
+The X mirror made that distinction sharper, because the lazy repair would have
+been to paste the same `size - 1 - x` into both sides, and 4,096,000 green
+voxels would then have proved nothing about orientation. Three things keep it
+a check:
+
+- the mapping is derived the **other way round** in `verify.mjs` -- it walks
+  source X and computes the asset column, and deliberately does not import the
+  encoder's helper, so an off-by-one has to be made twice to hide
+- it counts voxels that differ from **the asset's own X reflection**
+  (1,815,906 of them, 44.3%). Every one is a voxel an unmirrored asset would
+  have failed the first check on, which is a proof that the check
+  discriminates rather than a threshold. A near-symmetric patch is a hard
+  error, because on one the first check would be a sentence with no content
+- it **anchors the manifest's spawn column to a real Minecraft coordinate**,
+  and to `MIN_X` in `island.js`, so the number the whole game's origin is
+  built from is checked rather than trusted
+
+All three were tested by sabotage: with the mirror removed from the extractor,
+`terrain:verify` fails on the first column it looks at.
 
 ### Measured size
 
