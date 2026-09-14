@@ -29,6 +29,9 @@ import { installHighlightStyle } from './highlight.js'
 import { createAuthority } from './authority.js'
 import { installGamemode } from './gamemode.js'
 import { installCommands } from './commands.js'
+import { createRoster, GUEST_NAME } from './identity.js'
+import { installNPC } from './npc.js'
+import { createEvanTools, stubBackend, LINES } from './aiEvan.js'
 
 /*
  * THE BOOT GATE.
@@ -160,10 +163,38 @@ noa.camera.zoomDistance = 0
 /* ---- systems ---- */
 
 /*
- * Identity. Lives here rather than in chat.js because it is exactly what a
- * network layer will want to own, and half the command messages quote it.
+ * WHO IS IN THE WORLD. See identity.js -- a roster, not a name, because there
+ * are already two characters here and one of them is not you.
+ *
+ * You arrive as Guest. That is the visible half of docs/FUTURE.md 1b: a
+ * visitor gets into the world without an account, under a name that is
+ * obviously a placeholder, and the way they stop being a placeholder is by
+ * telling the NPC their name. The login half of that section is still
+ * unbuilt; this is the guest path, and the rename is the nickname path
+ * arriving through a conversation instead of a text box.
+ *
+ * It used to say `const PLAYER_NAME = 'Evan'`, which conflated the visitor
+ * with the person whose resume this is -- a confusion that only became
+ * visible once Evan was standing in the world as someone else.
  */
-const PLAYER_NAME = 'Evan'
+const LOCAL_ID = 'local'
+const EVAN_ID = 'npc:evan'
+
+const roster = createRoster()
+
+roster.add({ id: LOCAL_ID, name: GUEST_NAME, local: true, persist: true })
+
+/*
+ * `[Admin]` is a scoreboard team prefix, which is how a real server puts a tag
+ * in front of a name -- and vanilla applies team formatting to the chat line
+ * AND to the nameplate, so declaring it once here gets both. Dark red is
+ * vanilla's `dark_red` (0xAA0000), the colour an admin team conventionally
+ * gets.
+ */
+roster.add({
+  id: EVAN_ID, name: 'Evan', kind: 'npc',
+  prefix: { text: '[Admin] ', color: 0xaa0000 },
+})
 
 const move = installPhysics(noa)
 
@@ -217,7 +248,7 @@ installHighlightStyle(noa)
 const crack = installCrackOverlay(noa)
 const held = installHeldItem(noa, inventory, skinMaterial, swing)
 
-const perspective = installPerspective(noa, { skinMaterial, inputLock, inventory, swing })
+const perspective = installPerspective(noa, { skinMaterial, inputLock, inventory, swing, roster })
 
 /*
  * Game modes, then the authority, then everything that asks it for permission.
@@ -236,7 +267,12 @@ const gamemode = installGamemode({ flight: movement.flight, perspective, held })
  */
 const authority = createAuthority({
   world: {
-    playerName: PLAYER_NAME,
+    /*
+     * A getter, not a copy. /tp and /give quote your name in their success
+     * message, and yours changes the moment AI Evan calls set_player_name --
+     * a value read here at construction would have been frozen at 'Guest'.
+     */
+    get playerName() { return roster.displayNameOf(LOCAL_ID) },
     applyGamemode: (mode) => gamemode.apply(mode),
     setBlock: (id, x, y, z) => noa.setBlock(id, x, y, z),
     getTime: () => sky.getTime(),
@@ -318,7 +354,22 @@ const menu = installMenu(noa, { inputLock, inventory, inventoryScreen, survival 
  */
 const chat = installChat(noa, {
   inputLock, inventory, menu, survival,
-  name: PLAYER_NAME,
+  // Read at send time, so the echo follows a rename. See chat.js.
+  speaker: () => roster.get(LOCAL_ID),
+  /*
+   * The transport, and the one place a typed line becomes two things.
+   *
+   * It echoes to the log exactly as the default loopback did, then offers the
+   * line to AI Evan -- who takes it only if you are standing near him. So
+   * chat is still chat: nothing is swallowed, nothing is intercepted, and
+   * there is no second input box. When the real transport lands this becomes
+   * `socket.send(text)` and the NPC hand-off moves to the server, which is
+   * where a shared world has to do it anyway.
+   */
+  send: (text) => {
+    chat.addMessage({ text, from: roster.get(LOCAL_ID) })
+    aiEvan.hear(text)
+  },
   // Chat has to give the mouse back so you can see what you type, and take it
   // again on close. requestLockPersistently is menu.js's workaround for the
   // browser cooldown that follows an Escape -- reused rather than reinvented.
@@ -327,11 +378,79 @@ const chat = installChat(noa, {
 
 // The whole command set is one call. /tp <plot> for the resume plots goes in
 // commands.js once the plots exist.
-const commands = installCommands(chat, authority, { noa, playerName: PLAYER_NAME })
+// `playerName` is gone from this call: commands.js never read it, and the
+// roster is now the answer to that question anyway.
+const commands = installCommands(chat, authority, { noa })
+
+/* ------------------------------------------------------------------ *
+ * AI Evan
+ * ------------------------------------------------------------------ */
+
+/*
+ * Where he stands. Four blocks east of spawn, which is the nearest column
+ * with open sky -- spawn itself is under a dark forest canopy, and a
+ * character standing inside a leaf block is not a good first impression.
+ * The ground is found by scanning rather than hardcoded, because the terrain
+ * asset is a real Minecraft chunk import and "the surface is at 135" is a
+ * fact about today's asset rather than about the code.
+ */
+const EVAN_XZ = [4.5, 0.5]
+const evanY = (() => {
+  for (let y = SPAWN[1] + 4; y > SPAWN[1] - 8; y--) {
+    if (getVoxelID(Math.floor(EVAN_XZ[0]), y - 1, Math.floor(EVAN_XZ[1]), ids) !== 0) return y
+  }
+  return SPAWN[1]
+})()
+const EVAN_POS = [EVAN_XZ[0], evanY, EVAN_XZ[1]]
+
+/** Minecraft's compass, from noa's heading (direction = sin h, cos h). */
+const FACING = ['south', 'west', 'north', 'east']
+const facingName = (heading) =>
+  FACING[(Math.round(heading / (Math.PI / 2)) % 4 + 4) % 4]
+
+const aiEvan = installNPC(noa, {
+  roster,
+  id: EVAN_ID,
+  position: EVAN_POS,
+  // The same default skin the player wears, for now. A real Evan skin drops
+  // in here and nowhere else -- npc.js builds its own material precisely so
+  // this is one string rather than a fork of playerModel.js.
+  skin: '/skins/default.png',
+  chat,
+  script: { greet: LINES.greet },
+  agent: {
+    /*
+     * THE SWAP POINT. `stubBackend` is a deterministic state machine with no
+     * model behind it; replacing this one line with a fetch to the Worker is
+     * the whole of "make AI Evan real". See agent.js for the request shape
+     * and for why the API key cannot be on this side of that fetch.
+     */
+    backend: stubBackend,
+    tools: createEvanTools({
+      playerId: () => LOCAL_ID,
+      setName: (id, name) => roster.setName(id, name),
+      nameOf: (id) => roster.displayNameOf(id),
+      playerState: () => {
+        const [x, y, z] = noa.ents.getPosition(noa.playerEntity)
+        const target = noa.targetedBlock
+        return {
+          position: [x, y, z],
+          facing: facingName(noa.camera.heading),
+          lookingAt: target ? itemName(target.blockID) : null,
+          distanceToEvan: Math.hypot(x - EVAN_POS[0], z - EVAN_POS[2]),
+          yourName: roster.displayNameOf(LOCAL_ID),
+        }
+      },
+    }),
+  },
+})
 
 // The join notice, yellow, exactly as a server would announce it. Emitting it
 // locally keeps that path real rather than something to be written later.
-chat.announceJoin(PLAYER_NAME)
+// Evan is announced too, because on a real server he would be a connected
+// client and this is what you would see.
+chat.announceJoin(roster.displayNameOf(EVAN_ID))
+chat.announceJoin(roster.displayNameOf(LOCAL_ID))
 
 // Starter kit. Minecraft survival starts you empty-handed, but this world is
 // meant to be poked at within seconds of arriving, so seed the hotbar.
@@ -413,6 +532,14 @@ window.game = {
    */
   held, itemModelStats,
   authority, gamemode, commands, interaction, flight: movement.flight,
+  /*
+   * Identity and the agent, for the console and for the test suite. `roster`
+   * is the only way to ask who anyone is; `aiEvan.session.transcript` is the
+   * Anthropic message array the loop actually built, which is how a spec
+   * proves the rename went through a TOOL CALL rather than through a regex
+   * in a chat handler.
+   */
+  roster, aiEvan, LOCAL_ID, EVAN_ID, EVAN_POS,
   // Key -> item id, for the console and for the test suite. Item ids above
   // ITEM_BASE are positional, so anything outside this module that wants an
   // iron pickaxe has to ask rather than hardcode 1040-something.

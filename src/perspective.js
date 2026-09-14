@@ -1,4 +1,5 @@
 import { createPlayerModel, poseModel } from './playerModel.js'
+import { createNametag } from './nametag.js'
 import {
   applyItemGeometry, blockTextureUrl, createHeldBlockMesh, createItemMesh, poseItemMesh,
 } from './heldItem.js'
@@ -45,9 +46,33 @@ function angleDelta(a, b) {
   return d
 }
 
-export function installPerspective(noa, { skinMaterial, inputLock, inventory, swing }) {
+export function installPerspective(noa, { skinMaterial, inputLock, inventory, swing, roster = null }) {
   const model = createPlayerModel(noa, skinMaterial)
   const player = noa.playerEntity
+
+  /*
+   * YOUR OWN NAMETAG.
+   *
+   * It lives here rather than in nametag.js's caller because this file is
+   * already the one thing that knows both where the model is THIS FRAME
+   * (interpolated -- see the beforeRender at the bottom) and whether the
+   * model is drawn at all. Both matter: a tag placed on tick judders against
+   * a smoothly-moving body, and a tag left enabled in first person hangs in
+   * front of your face, which is exactly the bug the `model.root.setEnabled`
+   * line below exists to avoid for the body.
+   *
+   * Vanilla does not draw your own name in any perspective. See the
+   * divergence note at the bottom of nametag.js for why this one does.
+   */
+  const localId = roster?.local?.id ?? null
+  const nametag = roster
+    ? createNametag(noa, {
+      text: roster.displayNameOf(localId), height: MC.PLAYER_HEIGHT, name: 'nametag-local',
+    })
+    : null
+  roster?.onChange((changed) => {
+    if (changed.id === localId) nametag?.setText(roster.displayName(changed))
+  })
 
   let mode = 0
   let limbSwing = 0
@@ -191,8 +216,11 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
     const third = mode !== 0
     noa.camera.zoomDistance = third ? THIRD_PERSON_DISTANCE : 0
     // The model is hidden in first person: from inside, you would be looking
-    // at the interior faces of your own head.
+    // at the interior faces of your own head. The nametag goes with it, for
+    // the same reason and more so -- it sits 2.3 blocks up, which in first
+    // person is a dark box directly above your eyeline.
     model.root.setEnabled(third)
+    nametag?.setEnabled(third)
   }
 
   document.addEventListener('keydown', (e) => {
@@ -293,12 +321,16 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
   noa.on('beforeRender', () => {
     const rpos = noa.ents.getPositionData(player)._renderPosition
     model.root.position.set(rpos[0], rpos[1], rpos[2])
+    // Off the same interpolated position as the body, in the same frame, so
+    // the two cannot drift apart by a tick.
+    if (mode !== 0) nametag?.update(rpos)
   })
 
   return {
     get mode() { return MODES[mode] },
     get isFirstPerson() { return mode === 0 },
     model,
+    nametag,
     // Exposed for the test suite, which has to be able to ask which of the two
     // hand meshes is drawn without screenshotting to find out.
     hand: { block: handBlock, item: handItem, get mode() { return handMode } },

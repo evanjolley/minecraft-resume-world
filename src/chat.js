@@ -90,7 +90,19 @@ export function installChat(noa, {
   menu,
   survival,
   requestPointerLock,
-  name = 'Player',
+  /*
+   * WHO YOU ARE, read at send time rather than captured at install time.
+   *
+   * It used to be a `name` string, and that was already the bug: the whole
+   * point of the NPC conversation is that your name CHANGES while the page is
+   * open, and a string closed over here would keep echoing the name you had
+   * when the module loaded. A function, so the roster stays the owner --
+   * chat.js has no business holding a copy (see identity.js).
+   *
+   * Returns a roster entry, not a string, so the team prefix travels with it
+   * and `<[Admin] Evan>` is formatted in one place for every speaker.
+   */
+  speaker = () => ({ name: 'Player' }),
   send = null,
 } = {}) {
 
@@ -129,17 +141,45 @@ export function installChat(noa, {
    * The log
    * ------------------------------------------------------------------ */
 
+  /*
+   * A run of text in its own colour, with Minecraft's derived shadow. Only
+   * needed because a team prefix is a different colour from the message it
+   * sits in front of; everything else inherits from the line.
+   */
+  const styled = (text, color) => {
+    const span = document.createElement('span')
+    span.textContent = text
+    span.style.color = hex(color)
+    span.style.textShadow = `${SCALE}px ${SCALE}px 0 ${shadowOf(color)}`
+    return span
+  }
+
   /**
    * The one way anything gets into chat. A network transport calls this with
    * whatever the server sent; `send` below calls it for local echo.
-   * @param {{ text: string, kind?: 'chat'|'system'|'join'|'error' }} msg
+   *
+   * `from` is a roster entry, and passing one switches the line to vanilla's
+   * player-chat format -- `chat.type.text` is literally `<%s> %s`, where the
+   * first %s is the team-formatted display name. That is why `[Admin]` ends
+   * up INSIDE the angle brackets rather than in front of them: on a real
+   * server the prefix is part of the name, not part of the message.
+   *
+   * @param {{ text: string, kind?: 'chat'|'system'|'join'|'error',
+   *           from?: { name: string, prefix?: { text: string, color: number } } }} msg
    */
-  const addMessage = ({ text, kind = 'chat' }) => {
+  const addMessage = ({ text, kind = 'chat', from = null }) => {
     const color = COLORS[kind] ?? COLORS.chat
     const el = document.createElement('div')
     el.className = 'chat-line'
     el.dataset.kind = kind
-    el.textContent = String(text).slice(0, MAX_LENGTH)
+    const body = String(text).slice(0, MAX_LENGTH)
+    if (from) {
+      el.append('<')
+      if (from.prefix) el.appendChild(styled(from.prefix.text, from.prefix.color))
+      el.append(`${from.name}> ${body}`)
+    } else {
+      el.textContent = body
+    }
     el.style.color = hex(color)
     el.style.textShadow = `${SCALE}px ${SCALE}px 0 ${shadowOf(color)}`
     el.style.lineHeight = px(LINE)
@@ -242,7 +282,7 @@ export function installChat(noa, {
 
   // The default transport. Local only, so your message comes straight back to
   // you; a socket write goes here instead once there is one.
-  const transport = send ?? ((text) => addMessage({ text: `<${name}> ${text}`, kind: 'chat' }))
+  const transport = send ?? ((text) => addMessage({ text, from: speaker(), kind: 'chat' }))
 
   const submit = () => {
     const text = normalize(input.value)
@@ -415,6 +455,8 @@ export function installChat(noa, {
     open: (prefill = '') => setOpen(true, prefill),
     close: () => setOpen(false),
     get isOpen() { return open },
+    /** Who chat thinks you are right now -- the roster entry, live. */
+    get speaker() { return speaker() },
     // multiplayer.player.joined / .left, both yellow in vanilla.
     announceJoin: (who) => addMessage({ text: `${who} joined the game`, kind: 'join' }),
     announceLeave: (who) => addMessage({ text: `${who} left the game`, kind: 'join' }),
