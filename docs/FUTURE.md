@@ -16,7 +16,7 @@ rain and thunder, Fancy 3D clouds, extruded item models so tools are visible
 in hand, shift-click, game modes behind an OP-gated authority, crafting (2x2
 and 3x3), armor and an offhand, a 355-block cube palette on a paged texture
 atlas plus 280 slabs and stairs for 28 material families with real sub-voxel
-collision, and a **215-test browser suite** across 20 spec files.
+collision, and a **238-test browser suite** across 21 spec files.
 
 Four things landed since this file was last honest, and they are the reason
 several sections below now read differently:
@@ -310,6 +310,34 @@ additional screen. The real cost is recording and editing the clips.
 
 ## 1b. Identity: login, guests and nicknames
 
+**PARTLY BUILT.** The guest half of this section landed with AI Evan below.
+What exists today:
+
+- `src/identity.js` is a **roster**, not a name. Entries are `{ id, name,
+  kind, prefix, local }`, and everything that displays a name -- the nametag,
+  the chat line, the authority's `/tp` and `/give` messages -- asks the roster
+  for it. `main.js` used to hold `const PLAYER_NAME = 'Evan'`, which was wrong
+  twice over: it conflated the visitor with the person whose resume this is,
+  and it hardcoded "the player" in a world that now has two named characters
+  and will later have several.
+- **A visitor arrives as `Guest`** and is renamed by telling AI Evan their
+  name. So the nickname flow exists, and it arrives through a conversation
+  instead of a text box -- which is a better version of the same idea, because
+  it is the thing you were going to do anyway rather than a form standing
+  between you and the world.
+- The name persists in `localStorage` under a versioned key, so a returning
+  visitor is not asked twice.
+- Names are checked against vanilla's own rule -- 1-16 characters of
+  `[A-Za-z0-9_]`. That is a SYNTAX check and `identity.js` says so at length:
+  it is not moderation, and the wordlist half cannot live in the client that
+  is being filtered.
+
+Still unbuilt: login, the fast path straight to the resume, and the `/op`
+versus `/login` split below. `identity.js`'s header documents exactly what
+moves when a server takes the roster over -- `setName` becomes a request that
+waits for an echo, `add`/`remove` start being driven by the socket, and
+localStorage demotes from the store to a hint the server may refuse.
+
 Evan's sketch, and the shape the rest should assume:
 
 A visitor arrives and either logs in, or continues as a guest with a
@@ -403,6 +431,66 @@ A character standing in the world that visitors can talk to — answering
 questions about Evan's work, and **booking time with him**. Not a chatbot
 beside the game: a thing you walk up to.
 
+### FIRST SLICE BUILT: the agent seam, with no agent behind it
+
+Evan is standing four blocks east of spawn under an `[Admin] Evan` nameplate.
+Walk within three and a half blocks and he greets you and asks your name; tell
+him in chat and **you are renamed**, nameplate and chat line both.
+
+The point of building this first is that **the rename is a tool call**, not a
+special case:
+
+- `src/agent.js` is a real Anthropic tool-use loop. `tools` is a list of
+  `{ name, description, input_schema }` ready to serialise into a
+  `/v1/messages` request; `messages` is the genuine conversation array
+  including `tool_result` blocks; all results for one assistant turn go back
+  in a single user message, which the API requires.
+- `src/aiEvan.js` holds two tools and a deterministic stub brain.
+  `set_player_name` writes world state; `get_player_state` reads it. Two,
+  deliberately — an interface derived from one example bakes that example's
+  assumptions in, and the read tool takes no arguments and returns no success
+  flag, neither of which the write tool would have forced.
+- The stub is a **pure function of `messages`**. It never peeks at the roster,
+  because a stub that reads world state a real model cannot see would quietly
+  stop working the day it was replaced.
+
+**Making it real is one line.** `main.js` passes `backend: stubBackend`; the
+real version is a `fetch` to the Worker with the same request body. Nothing in
+`npc.js`, `chat.js`, `identity.js` or `nametag.js` changes.
+
+`test/21-ai-evan.spec.js` asserts the transcript, not just the outcome: a
+`tool_use` block naming `set_player_name`, carrying the parsed name as its
+argument, with a `tool_result` referencing its id.
+
+### Where the API key has to live
+
+Not in the bundle. Not in `import.meta.env` — `vite build` inlines those as
+literals and this whole site is static files handed to strangers. Anthropic's
+API also refuses browser origins by default, for exactly this reason.
+
+It lives as a Cloudflare Worker secret (`wrangler secret put
+ANTHROPIC_API_KEY`), read as `env.ANTHROPIC_API_KEY` inside the fetch handler
+and never serialised into a response. **This is what makes the Worker in
+`docs/DEPLOYMENT.md` load-bearing rather than theoretical**: today's deploy is
+`wrangler deploy` of a purely static bundle, and it has to become a real
+Worker with a route because of this one secret.
+
+A second thing follows from the key being server-side: **so is the loop**.
+`runAgent` touches no browser API and takes its registry as an argument
+precisely so it can move. Every iteration is a billable call, and the client
+is the wrong place to decide how many of them happen — see "Cost per visitor"
+below.
+
+### The next tool is booking, and it is the one that matters
+
+Nothing about meetings is built. `set_player_name` and `get_player_state`
+exist to prove the seam; `check_availability` and `book_meeting` are what make
+AI Evan worth talking to, and they are the reason the tool layer was built
+before the model rather than after. Cal.com remains the backend of choice for
+the reasons below. The registry already returns `is_error` with a message on a
+bad call and lets the model retry, which is most of what a booking tool needs
+when someone asks for a slot that just went.
+
 ### Why this displaced multiplayer
 
 Multiplayer has an empty-room problem no engineering fixes. Traffic here is a
@@ -419,7 +507,9 @@ actually engage with. People who would never open a CV will ask a question.
 
 No pathfinding, no navigation, no autonomy. A character standing in one place,
 proximity to start a conversation, chat wired to a model call through the
-Worker. A Minecraft Evan standing at his own resume plot is a stronger image
+Worker. All of that except the model call is now built, and `src/npc.js` has
+no noa entity and no physics body on purpose — giving it one would be the
+first step toward needing pathfinding. A Minecraft Evan standing at his own resume plot is a stronger image
 than one wandering around, and it skips the single hardest piece (A* over a
 voxel grid with jump and fall costs).
 
