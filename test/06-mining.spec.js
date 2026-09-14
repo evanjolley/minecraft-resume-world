@@ -115,7 +115,7 @@ test.describe('placing', () => {
       await setBlock(page, ID.planks, ...WALL)
       await page.evaluate(() => window.game.inventory.add(5, 10))
 
-      await aim(page, { heading: HEADING.eastPlusX, pitch: 0 })
+      await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
       expect(await targetedBlock(page)).toMatchObject({ position: WALL })
 
       await page.mouse.down({ button: 'right' })
@@ -156,7 +156,7 @@ test.describe('placing', () => {
     await terrain.keep([1, SURFACE_Y, 0], [2, SURFACE_Y + 1, 0])
     await setBlock(page, ID.planks, ...WALL)
     await page.evaluate(() => window.game.inventory.add(5, 10))
-    await aim(page, { heading: HEADING.eastPlusX, pitch: 0 })
+    await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
 
     await page.keyboard.press('KeyE')
     await waitTicks(page, 2)

@@ -53,7 +53,7 @@ test.describe('adventure, the default', () => {
       await setBlock(page, ID.planks, ...WALL)
       await page.evaluate(() => window.game.inventory.add(5, 10))
 
-      await aim(page, { heading: HEADING.eastPlusX, pitch: 0 })
+      await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
       expect(await targetedBlock(page)).toMatchObject({ position: WALL })
 
       await page.mouse.down({ button: 'right' })
@@ -98,7 +98,7 @@ test.describe('creative', () => {
     await setBlock(page, ID.planks, ...WALL)
     await page.evaluate(() => window.game.inventory.add(5, 10))
 
-    await aim(page, { heading: HEADING.eastPlusX, pitch: 0 })
+    await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
     await page.mouse.down({ button: 'right' })
     await page.mouse.up({ button: 'right' })
     await waitTicks(page, 3)

@@ -69,7 +69,7 @@ async function hold(page, key) {
 async function aimAtTarget(page, terrain, id) {
   await terrain.keep(TARGET, TARGET)
   await setBlock(page, id, ...TARGET)
-  await aim(page, { heading: HEADING.eastPlusX, pitch: 0 })
+  await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
   expect(await targetedBlock(page)).toMatchObject({ position: TARGET })
 }
 

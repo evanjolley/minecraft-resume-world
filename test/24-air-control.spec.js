@@ -64,7 +64,7 @@ test.describe('air control', () => {
     // runs out mid-measurement. Three wide is enough: every strafe below is
     // over in under ten ticks, well short of the lip.
     await flatGround.build({ length: 120 })
-    await look(page, { heading: HEADING.eastPlusX })
+    await look(page, { heading: HEADING.westPlusX })
   })
 
   test('a sprint jump goes where you LOOK, not where you are strafing', async ({ page }) => {

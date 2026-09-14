@@ -89,7 +89,7 @@ async function buildStaircase(page) {
   await settleOnGround(page)
   await page.evaluate(() => window.game.survival.clearFallTracking())
   // W walks where the camera looks and the staircase runs east.
-  await look(page, { heading: HEADING.eastPlusX })
+  await look(page, { heading: HEADING.westPlusX })
 
   return () => page.evaluate((list) => {
     for (const [x, y, z] of list) window.noa.setBlock(0, x, y, z)

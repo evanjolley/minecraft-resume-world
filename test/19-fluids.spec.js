@@ -209,7 +209,7 @@ test.describe('swimming', () => {
     // second while swimming, so the depth is what keeps them in it.
     await pool(page, terrain, 'water', [-12, 205, -1], [12, 209, 1])
     await teleport(page, -11.5, 207, 0.5)
-    await look(page, { heading: HEADING.eastPlusX })
+    await look(page, { heading: HEADING.westPlusX })
 
     const v = await measureSpeed(page, ['KeyW'], { warmupMs: 1200, sampleMs: 1000 })
     expect(await page.evaluate(() => window.game.fluids.feet)).toBe('water')

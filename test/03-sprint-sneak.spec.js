@@ -19,7 +19,7 @@ const EASE_MS = 1000
 
 test.describe('sprint', () => {
   test.beforeEach(async ({ page }) => {
-    await look(page, { heading: HEADING.eastPlusX })
+    await look(page, { heading: HEADING.westPlusX })
   })
 
   test('holding ctrl while moving forward engages sprint and kicks FOV to 77',
@@ -182,7 +182,7 @@ test.describe('sneak', () => {
       await flatGround.build({ length: PAD_LEN })
       await teleport(page, ...RIM_START())
       await settleOnGround(page)
-      await look(page, { heading: HEADING.eastPlusX })
+      await look(page, { heading: HEADING.westPlusX })
 
       await page.keyboard.down('ShiftLeft')
       await page.keyboard.down('KeyW')
@@ -211,7 +211,7 @@ test.describe('sneak', () => {
       await flatGround.build({ length: PAD_LEN })
       await teleport(page, ...RIM_START())
       await settleOnGround(page)
-      await look(page, { heading: HEADING.eastPlusX })
+      await look(page, { heading: HEADING.westPlusX })
 
       await page.keyboard.down('KeyW')
       await page.waitForTimeout(1500)

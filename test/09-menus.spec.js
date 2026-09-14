@@ -25,7 +25,7 @@ const drift = async (page, keyMs = 800) => {
 
 test.describe('menus', () => {
   test.beforeEach(async ({ page }) => {
-    await look(page, { heading: HEADING.eastPlusX })
+    await look(page, { heading: HEADING.westPlusX })
   })
 
   test('the pause menu stops the player moving', async ({ page }) => {

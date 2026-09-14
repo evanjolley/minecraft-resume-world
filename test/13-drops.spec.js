@@ -68,7 +68,7 @@ async function mineUntilGone(page, pos) {
 async function aimAtTarget(page, terrain, id = ID.dirt) {
   await terrain.keep(TARGET, TARGET)
   await setBlock(page, id, ...TARGET)
-  await aim(page, { heading: HEADING.eastPlusX, pitch: 0 })
+  await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
   expect(await targetedBlock(page)).toMatchObject({ position: TARGET })
 }
 
@@ -354,7 +354,7 @@ test.describe('dropped items', () => {
      * Nothing is broken to produce these -- a block left standing in front of
      * the camera fills the frame and hides the thing being photographed.
      */
-    await aim(page, { heading: HEADING.eastPlusX, pitch: 0.25 })
+    await aim(page, { heading: HEADING.westPlusX, pitch: 0.25 })
     await page.evaluate(([y]) => {
       const d = window.game.drops
       d.spawn(1, 1, [3.4, y + 1.4, -0.4], [0, 0, 0])

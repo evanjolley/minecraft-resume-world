@@ -121,7 +121,7 @@ test.describe('cloud layer', () => {
       // boundaries. Real terrain has no 60-block run, so build one -- the
       // claim under test is about the cloud layer, not about the ground.
       await flatGround.build({ length: 64 })
-      await look(page, { heading: HEADING.eastPlusX })
+      await look(page, { heading: HEADING.westPlusX })
       await page.keyboard.down('KeyW')
       await page.keyboard.down('ControlLeft')
       await page.keyboard.down('Space')
