@@ -93,6 +93,16 @@ export async function build({ seed, x, z, out = OUT, log = console.log }) {
  */
 const TREE_PART = n => n.includes('_leaves') || n.includes('_log') || n.includes('_wood')
 
+/*
+ * Keep the spawn this far from every edge. The patch is walled with barrier
+ * blocks, and spawning a player facing one at arm's length is the fastest
+ * possible way to communicate "this is a diorama, not a world". The first
+ * pass allowed 24 and picked it, because four biomes in sight outscored
+ * being anywhere in particular; the centre term now carries enough weight to
+ * matter against that.
+ */
+const MARGIN = 40
+
 export function pickSpawn(world, x0, z0, { log = console.log } = {}) {
   const ground = (x, z) => {
     for (let y = 250; y > BEDROCK; y--) {
@@ -120,8 +130,8 @@ export function pickSpawn(world, x0, z0, { log = console.log } = {}) {
   }
 
   let best = null
-  for (let cz = 24; cz < PATCH - 24; cz += 4) {
-    for (let cx = 24; cx < PATCH - 24; cx += 4) {
+  for (let cz = MARGIN; cz < PATCH - MARGIN; cz += 4) {
+    for (let cx = MARGIN; cx < PATCH - MARGIN; cx += 4) {
       const x = x0 + cx
       const z = z0 + cz
       const g = at(x, z)
@@ -144,7 +154,7 @@ export function pickSpawn(world, x0, z0, { log = console.log } = {}) {
         }
       }
       const centre = 1 - (Math.abs(cx - PATCH / 2) + Math.abs(cz - PATCH / 2)) / PATCH
-      const score = biomes.size * 10 + Math.min(peak - g.y, 80) * 0.5 + centre * 10
+      const score = biomes.size * 10 + Math.min(peak - g.y, 80) * 0.5 + centre * 25
       if (!best || score > best.score) {
         best = {
           score, x: cx, y: g.y + 1, z: cz,

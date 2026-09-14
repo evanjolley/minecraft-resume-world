@@ -146,6 +146,17 @@ appearing twice does not.
     npm run terrain:scan     score every window, print the table
     npm run terrain          extract the chosen patch into public/terrain/
     npm run terrain:blocks   print the block mapping report
+    npm run terrain:verify   decode the asset and check every voxel
+
+`terrain:verify` is worth running after any change to the encoder. Every
+failure mode of an RLE encoder produces a file that looks fine -- a wrong
+varint continuation, an off-by-one run length, a palette index written before
+the palette was finished all yield a plausible number of plausible bytes, and
+the first sign of trouble is terrain that looks subtly wrong in a browser
+weeks later. The verifier's decoder is written fresh rather than shared with
+the encoder, so it can catch a format that was written down wrong rather than
+only an encoder that disagrees with itself. It currently checks 4,096,000
+voxels against the region files and all of them match.
 
 ### Measured size
 
