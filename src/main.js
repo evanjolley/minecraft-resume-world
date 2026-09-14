@@ -19,7 +19,7 @@ import { installPerspective } from './perspective.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky } from './sky.js'
 import { createArmorReduction } from './armor.js'
-import { itemName, itemId } from './items.js'
+import { itemName, itemId, dropFor, rollDrops, unmappedDrops } from './items.js'
 import { itemModelStats } from './itemModel.js'
 import { installSounds } from './sounds.js'
 import { installParticles } from './particles.js'
@@ -544,6 +544,15 @@ window.game = {
   // ITEM_BASE are positional, so anything outside this module that wants an
   // iron pickaxe has to ask rather than hardcode 1040-something.
   itemId,
+  /*
+   * The drop tables, for the console and for the test suite. `dropFor` is pure
+   * and returns a distribution, so a spec can assert "lapis ore drops 4 to 9
+   * lapis" outright instead of breaking ten thousand blocks and squinting at a
+   * histogram; `roll` takes its generator, so a scripted one makes a 10% flint
+   * deterministic. `unmapped` is every block no drop rule claims, which should
+   * always be empty.
+   */
+  loot: { dropFor, roll: rollDrops, unmapped: unmappedDrops },
   // What actually loaded: size, palette, origin, and any palette key with no
   // block in blocks.js (which should always be empty).
   terrain: terrainInfo(),

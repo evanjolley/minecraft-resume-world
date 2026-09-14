@@ -368,3 +368,172 @@ test.describe('dropped items', () => {
     await shotRegion(page, 'drops-ground', 'centre')
   })
 })
+
+/*
+ * The drop TABLES, as opposed to the item entities above.
+ *
+ * These break nothing. `dropFor` is pure -- it answers with a distribution,
+ * not with a rolled result -- so "lapis ore drops four to nine lapis" is an
+ * assertion rather than ten thousand breaks and a histogram, and it is exact
+ * rather than statistical. That purity is the entire reason the randomness
+ * lives in `rollDrops`, which takes its generator as an argument; the last
+ * test here hands it a scripted one and pins a 10% flint to a single value.
+ *
+ * Item ids above ITEM_BASE are positional, and so are most block ids, so
+ * everything here asks `itemId` by key. A block's item shares its block's id
+ * (see the header of items.js), which is why the same call answers for both.
+ */
+
+/** The loot table for breaking `blockKey` while holding `heldKey`. */
+const dropTable = (page, blockKey, heldKey = null) =>
+  page.evaluate(([b, h]) => window.game.loot.dropFor(
+    window.game.itemId(b), h ? window.game.itemId(h) : 0), [blockKey, heldKey])
+
+/** One alternative, spelled the way items.js spells it. */
+const entry = async (page, key, min = 1, max = min, chance = 1) =>
+  ({ id: await idOf(page, key), min, max, chance })
+
+const idOf = (page, key) => page.evaluate((k) => window.game.itemId(k), key)
+
+test.describe('block drop tables', () => {
+  test('every block in the palette has a deliberate drop decision',
+    async ({ page }) => {
+      /*
+       * The same guard 12-sounds puts on the sound families, and it is here
+       * for the same reason: the drop rules used to be nine rows and a
+       * "drops itself" default, so 629 blocks had silk-touch behaviour and
+       * nobody could see it. A block no rule in items.js claims is a name in
+       * this list, not a block that quietly hands you a copy of itself.
+       */
+      expect(await page.evaluate(() => window.game.loot.unmapped())).toEqual([])
+    })
+
+  test('ores drop their mineral, not the ore block', async ({ page }) => {
+    // The owner's second complaint: breaking coal ore gave you coal ore.
+    expect(await dropTable(page, 'coal_ore', 'iron_pickaxe'))
+      .toEqual([[await entry(page, 'coal')]])
+    expect(await dropTable(page, 'iron_ore', 'stone_pickaxe'))
+      .toEqual([[await entry(page, 'raw_iron')]])
+    expect(await dropTable(page, 'nether_quartz_ore', 'wooden_pickaxe'))
+      .toEqual([[await entry(page, 'quartz')]])
+  })
+
+  test('the ores that come in handfuls use Minecraft\'s ranges',
+    async ({ page }) => {
+      // Straight off the wiki's drop column, and the four that are not 1:1.
+      expect(await dropTable(page, 'copper_ore', 'stone_pickaxe'))
+        .toEqual([[await entry(page, 'raw_copper', 2, 5)]])
+      expect(await dropTable(page, 'redstone_ore', 'iron_pickaxe'))
+        .toEqual([[await entry(page, 'redstone', 4, 5)]])
+      expect(await dropTable(page, 'lapis_ore', 'stone_pickaxe'))
+        .toEqual([[await entry(page, 'lapis_lazuli', 4, 9)]])
+      expect(await dropTable(page, 'nether_gold_ore', 'iron_pickaxe'))
+        .toEqual([[await entry(page, 'gold_nugget', 2, 6)]])
+    })
+
+  test('a deepslate ore drops exactly what its stone counterpart does',
+    async ({ page }) => {
+      /*
+       * A rule, not two rows: the deepslate variant is matched by stripping
+       * the prefix. Asserted as an equality between the two tables rather than
+       * against a literal, so it stays true if a mineral ever changes.
+       */
+      for (const ore of ['coal_ore', 'lapis_ore', 'diamond_ore', 'copper_ore']) {
+        expect(await dropTable(page, `deepslate_${ore}`, 'diamond_pickaxe'),
+          `deepslate_${ore}`).toEqual(await dropTable(page, ore, 'diamond_pickaxe'))
+      }
+    })
+
+  test('gravel is one roll with two outcomes, not two rolls', async ({ page }) => {
+    /*
+     * The shape that forced the pool list. "10% flint, OTHERWISE gravel" is a
+     * single pool with two alternatives -- a flat list of `{flint: 10%,
+     * gravel: 90%}` rolled independently would sometimes give both and
+     * sometimes neither.
+     */
+    expect(await dropTable(page, 'gravel', 'iron_shovel')).toEqual([[
+      await entry(page, 'flint', 1, 1, 0.1),
+      await entry(page, 'gravel'),
+    ]])
+  })
+
+  test('clay gives four balls and a bookshelf gives three books',
+    async ({ page }) => {
+      expect(await dropTable(page, 'clay', 'iron_shovel'))
+        .toEqual([[await entry(page, 'clay_ball', 4)]])
+      expect(await dropTable(page, 'bookshelf', 'iron_axe'))
+        .toEqual([[await entry(page, 'book', 3)]])
+    })
+
+  test('the silk-touch-only blocks drop nothing at all', async ({ page }) => {
+    /*
+     * There is no silk touch in this world, so this is the whole rule rather
+     * than half of one -- see the note in items.js for what the enchantment
+     * would change if it ever lands.
+     */
+    for (const key of ['glass', 'blue_stained_glass', 'ice', 'packed_ice',
+      'sculk', 'bee_nest', 'budding_amethyst']) {
+      expect(await dropTable(page, key, 'diamond_pickaxe'), key).toEqual([])
+    }
+    // Vanilla's one exception, and it is genuinely an exception: tinted glass
+    // is the only glass that survives being broken.
+    expect(await dropTable(page, 'tinted_glass', 'iron_pickaxe'))
+      .toEqual([[await entry(page, 'tinted_glass')]])
+  })
+
+  test('leaves need shears, and give sticks to anything else', async ({ page }) => {
+    // The owner's first complaint. Shears is the implementable half of
+    // vanilla's "shears or silk touch" rule.
+    expect(await dropTable(page, 'oak_leaves', 'shears'))
+      .toEqual([[await entry(page, 'oak_leaves')]])
+    expect(await dropTable(page, 'jungle_leaves', 'shears'))
+      .toEqual([[await entry(page, 'jungle_leaves')]])
+
+    /*
+     * Without them: 2% for one or two sticks, and nothing else. Vanilla also
+     * rolls a sapling and (on oak and dark oak) an apple, and neither item
+     * exists in this palette -- which is why the table is one pool rather than
+     * three, and why this asserts the whole table instead of just the sticks.
+     */
+    const sticks = [[await entry(page, 'stick', 1, 2, 0.02)]]
+    for (const leaf of ['oak_leaves', 'dark_oak_leaves', 'cherry_leaves']) {
+      expect(await dropTable(page, leaf, 'iron_axe'), leaf).toEqual(sticks)
+      expect(await dropTable(page, leaf, null), `${leaf} by hand`).toEqual(sticks)
+    }
+  })
+
+  test('a scripted random makes a 10% flint exact', async ({ page }) => {
+    /*
+     * The payoff for keeping Math.random out of the table. `roll` takes its
+     * generator, so these are not samples -- they are the two branches of
+     * gravel and the two ends of lapis, pinned.
+     *
+     * A draw is only taken where there is a real decision (a chance below 1,
+     * or a range wider than one), so the numbers below line up with the table
+     * read from items.js rather than with a count of wasted calls.
+     */
+    const roll = (blockKey, heldKey, seq) => page.evaluate(([b, h, s]) => {
+      let i = 0
+      const g = window.game
+      return g.loot.roll(g.loot.dropFor(g.itemId(b), g.itemId(h)),
+        () => s[i++ % s.length])
+    }, [blockKey, heldKey, seq])
+
+    expect(await roll('gravel', 'iron_shovel', [0.05]))
+      .toEqual([{ id: await idOf(page, 'flint'), count: 1 }])
+    // 0.1 is the first value that FAILS a 10% chance -- the comparison is
+    // `random() >= chance`, which is what makes a chance of 0 impossible.
+    expect(await roll('gravel', 'iron_shovel', [0.1]))
+      .toEqual([{ id: await idOf(page, 'gravel'), count: 1 }])
+
+    const lapis = await idOf(page, 'lapis_lazuli')
+    expect(await roll('lapis_ore', 'iron_pickaxe', [0])).toEqual([{ id: lapis, count: 4 }])
+    expect(await roll('lapis_ore', 'iron_pickaxe', [0.999])).toEqual([{ id: lapis, count: 9 }])
+
+    // A 2% stick that did not come up leaves an empty floor, which is the
+    // common case for leaves and not a failure.
+    expect(await roll('oak_leaves', 'iron_axe', [0.5])).toEqual([])
+    expect(await roll('oak_leaves', 'iron_axe', [0.01, 0.99]))
+      .toEqual([{ id: await idOf(page, 'stick'), count: 2 }])
+  })
+})

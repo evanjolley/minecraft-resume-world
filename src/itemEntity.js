@@ -13,7 +13,7 @@ import { BLOCK_BY_ID } from './blocks.js'
 import { MC } from './physics.js'
 import { shapeBoxesFor } from './blockMeshes.js'
 import { createHeldBlockMesh, blockTextureUrl } from './heldItem.js'
-import { item, isBlockItem, stackMax, dropFor } from './items.js'
+import { item, isBlockItem, stackMax, dropFor, rollDrops } from './items.js'
 
 /*
  * Dropped item entities: the little spinning cube a broken block leaves behind.
@@ -376,11 +376,20 @@ export function installItemEntities(noa, deps = {}) {
     if (authority.caps().infiniteResources) return res
 
     const held = inventory.selectedStack()
-    const drop = dropFor(was, held ? held.id : 0)
-    // 0 means the tier was too low. Vanilla drops NOTHING for stone punched by
-    // hand or diamond ore hit with a wooden pickaxe, and that is a rule, not a
-    // failure -- the block is still gone.
-    if (drop) popResource(drop, 1, [x, y, z])
+    /*
+     * dropFor answers with a LOOT TABLE -- pools of `{ id, min, max, chance }`
+     * -- and rolling it is this side's job, because that is the only place a
+     * random number belongs. items.js stays pure and therefore assertable; see
+     * the header above its drop rules.
+     *
+     * An empty table is a real answer and a common one: the tier was too low
+     * (stone punched by hand, diamond ore hit with wood), or the block is
+     * glass, or the 90% of gravel that is not flint. The block is still gone
+     * either way.
+     */
+    for (const { id, count } of rollDrops(dropFor(was, held ? held.id : 0))) {
+      popResource(id, count, [x, y, z])
+    }
     return res
   }
 

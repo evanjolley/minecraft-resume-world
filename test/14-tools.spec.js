@@ -221,7 +221,15 @@ test.describe('tools and what a block drops', () => {
       'a wooden pickaxe got diamond ore out of the ground').toEqual([])
   })
 
-  test('an iron pickaxe on diamond ore yields the ore', async ({ page, terrain }) => {
+  test('an iron pickaxe on diamond ore yields a DIAMOND', async ({ page, terrain }) => {
+    /*
+     * This expectation changed, and the old one was the bug. It read
+     * `toEqual([DIAMOND_ORE])` -- the ore BLOCK -- because dropFor returned
+     * the block id for everything blocks.js had no `drops` field for, which
+     * was 629 of 638 blocks. That is silk touch behaviour in a world with no
+     * silk touch. The drop tables in items.js are what fixed it; the table
+     * itself is asserted in 13-drops.
+     */
     const DIAMOND_ORE = 16
     await hold(page, 'iron_pickaxe')
     await aimAtTarget(page, terrain, DIAMOND_ORE)
@@ -229,6 +237,46 @@ test.describe('tools and what a block drops', () => {
     // 3 * 30 / 6 = 15 ticks.
     await holdMouse(page, 1000)
     expect(await getBlock(page, ...TARGET)).toBe(ID.air)
-    expect(await floorIds(page)).toEqual([DIAMOND_ORE])
+    expect(await floorIds(page)).toEqual([await idOf(page, 'diamond')])
+  })
+
+  test('coal ore drops coal', async ({ page, terrain }) => {
+    // The owner's report, end to end rather than through the table: what is on
+    // the floor after the swing, not what items.js says should be.
+    await hold(page, 'stone_pickaxe')
+    await aimAtTarget(page, terrain, await idOf(page, 'coal_ore'))
+    await holdMouse(page, 3000)
+
+    expect(await getBlock(page, ...TARGET)).toBe(ID.air)
+    expect(await floorIds(page)).toEqual([await idOf(page, 'coal')])
+  })
+
+  test('shears take leaves whole', async ({ page, terrain }) => {
+    // Vanilla's rule is "shears OR silk touch"; shears is the half that can
+    // exist here, and toolForBlock already knew the word.
+    const LEAVES = await idOf(page, 'oak_leaves')
+    await hold(page, 'shears')
+    await aimAtTarget(page, terrain, LEAVES)
+    await holdMouse(page, 2000)
+
+    expect(await getBlock(page, ...TARGET)).toBe(ID.air)
+    expect(await floorIds(page)).toEqual([LEAVES])
+  })
+
+  test('an axe on leaves does not give leaves back', async ({ page, terrain }) => {
+    /*
+     * The owner's first complaint, and deliberately NOT asserted as an empty
+     * floor: vanilla rolls a 2% stick off every leaf block, so an empty floor
+     * is merely the usual outcome and pinning it would flake one run in fifty.
+     * The rule under test -- the leaves do not come back -- is exact. The 2%
+     * itself is pinned with a scripted random in 13-drops.
+     */
+    const LEAVES = await idOf(page, 'oak_leaves')
+    await hold(page, 'iron_axe')
+    await aimAtTarget(page, terrain, LEAVES)
+    await holdMouse(page, 2000)
+
+    expect(await getBlock(page, ...TARGET)).toBe(ID.air)
+    expect(await floorIds(page)).not.toContain(LEAVES)
   })
 })

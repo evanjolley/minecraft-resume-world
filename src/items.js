@@ -476,20 +476,284 @@ export function miningSeconds(blockId, heldItemId = 0) {
   return Math.max(1, Math.ceil(ticks)) / MC.TICKS_PER_SECOND
 }
 
+/* ------------------------------------------------------------------ *
+ * Drops: what a broken block leaves on the floor.
+ *
+ * Until this table existed every block dropped ITSELF unless blocks.js
+ * happened to carry a `drops` field, and nine of 638 did. That is silk touch
+ * behaviour in a world with no silk touch: coal ore handed you a coal ore
+ * block, leaves handed you leaves, and gravel never once gave up a flint.
+ *
+ * THE RETURN SHAPE, which is the part worth arguing about.
+ *
+ * `dropFor` returns a LOOT TABLE, not an item: an array of POOLS, each pool an
+ * array of ALTERNATIVES, each alternative `{ id, min, max, chance }`. A pool
+ * yields AT MOST ONE stack -- the first alternative whose chance passes -- and
+ * pools are independent of one another.
+ *
+ * Both levels are load-bearing, and both are Minecraft's own loot-table shape:
+ *   - SEVERAL POOLS, because one block can roll several unrelated things.
+ *     Vanilla leaves roll a sapling, an apple AND sticks off one break.
+ *   - SEVERAL ALTERNATIVES, because gravel is "flint at 10%, OTHERWISE
+ *     gravel". That is one roll with two outcomes, not two independent rolls
+ *     at 10% and 90% -- a flat list of chances would sometimes hand you both
+ *     and sometimes neither.
+ *
+ * REJECTED: `{ id, count }`, with the range and the coin flip rolled inside
+ * this file. It is shorter at the call site and it makes the table
+ * untestable. A function that returns a random result can only be SAMPLED --
+ * "lapis ore drops 4 to 9" becomes a thousand breaks and a histogram -- where
+ * a function that returns the distribution can be asserted outright. So the
+ * randomness lives in `rollDrops` below, which takes its generator as an
+ * argument, and everything that knows a Minecraft number stays pure. Same
+ * reason island.js is pure.
+ *
+ * ALSO REJECTED: a bare id plus a count. It cannot say "10% flint", and the
+ * first block that wanted one would have forced this rewrite anyway.
+ *
+ * COVERAGE, not a list. The rules below are matched in order and there is NO
+ * catch-all: a block no rule claims comes out of `unmappedDrops()` and fails
+ * test/13-drops.spec.js. That is the lesson of the sound mapping, which had
+ * four entries and a stone default and so quietly gave 600 blocks the wrong
+ * voice for months -- see the note above GROUP_RULES in sounds.js. Families
+ * are matched by rule (every `_ore$`, every `_leaves$`, every slab and stair)
+ * rather than row by row, so a new wood set or a new ore inherits a decision
+ * or gets reported, and never silently drops itself.
+ *
+ * ENCHANTMENTS DO NOT EXIST IN THIS WORLD, and they own half of vanilla's drop
+ * rules. Written down so the next person does not have to re-derive it:
+ *   - SILK TOUCH makes almost everything here drop ITSELF: glass, ice, leaves,
+ *     sculk, gravel as gravel, an ore as its ore block. It is one branch at
+ *     the top of `dropFor` returning `self(def)`, plus the short list it does
+ *     NOT rescue -- budding amethyst and reinforced deepslate drop nothing
+ *     even with it, and a bee nest keeps its bees either way.
+ *   - FORTUNE multiplies the ore pools (coal, diamond, emerald, quartz, lapis,
+ *     redstone, and since 1.17 the raw metals too) and raises every `chance`
+ *     below, including the leaves. It is a multiplier on `max` and on
+ *     `chance`, not a new table.
+ * SHEARS is the half that IS implementable -- `toolForBlock` already answers
+ * 'shears' for wool -- and leaves are where it shows.
+ * ------------------------------------------------------------------ */
+
+/** One alternative: `chance` of between `min` and `max` of the item `key`. */
+const one = (key, min = 1, max = min, chance = 1) => ({ id: itemId(key), min, max, chance })
+
 /**
- * The item a broken block leaves on the floor, or 0 for nothing.
+ * The block itself. Honours blocks.js's `drops`, which is how grass gives
+ * dirt, stone gives cobblestone and every slab gives the family's own slab.
+ */
+const self = (def) => [[{ id: def.drops ?? def.id, min: 1, max: 1, chance: 1 }]]
+
+/** Nothing at all, and a real answer: vanilla glass leaves you nothing. */
+const NOTHING = []
+
+/*
+ * The ores, from the wiki's drop column, checked one at a time. Deepslate
+ * variants are not listed because they are the same row -- the rule strips the
+ * prefix -- and that is vanilla's rule too, not a convenience.
  *
- * blocks.js already knows that grass gives dirt and stone gives cobblestone.
- * What this adds is the tool gate in front of it: the block still breaks when
- * your tier is too low, it just leaves nothing behind.
+ * The four that are NOT 1:1 are the interesting ones and the ones a player
+ * notices immediately: copper 2-5, redstone 4-5, lapis 4-9, nether gold 2-6
+ * nuggets. Ancient debris is absent on purpose: it drops ITSELF, which is why
+ * it is in the self-drop rules further down rather than here.
+ */
+const ORE_DROPS = {
+  coal_ore: [one('coal')],
+  iron_ore: [one('raw_iron')],
+  copper_ore: [one('raw_copper', 2, 5)],
+  gold_ore: [one('raw_gold')],
+  redstone_ore: [one('redstone', 4, 5)],
+  lapis_ore: [one('lapis_lazuli', 4, 9)],
+  diamond_ore: [one('diamond')],
+  emerald_ore: [one('emerald')],
+  nether_gold_ore: [one('gold_nugget', 2, 6)],
+  nether_quartz_ore: [one('quartz')],
+}
+
+/*
+ * Built from the table's own keys rather than written as `/_ore$/`, so an ore
+ * this palette grows that nobody wrote a row for does not match, and comes out
+ * of unmappedDrops() as a name instead of quietly dropping itself.
+ */
+const ORE_PATTERN = new RegExp(`^(deepslate_)?(${Object.keys(ORE_DROPS).join('|')})$`)
+
+/*
+ * Leaves, and the owner's first complaint: breaking them gave you leaves.
  *
- * Ores drop THEMSELVES rather than coal, diamonds and lapis. That is silk
- * touch behaviour, it is what this world already did, and changing it means
- * an ore -> item table in a file this change does not own.
+ * Vanilla rolls three pools -- a sapling (5%, or 2.5% on jungle), an apple
+ * (0.5%, oak and dark oak only) and 1-2 sticks (2%). Two of those three cannot
+ * be expressed here: there is no sapling item and no apple item in this
+ * palette, and inventing one would mean an item with no texture, no recipe and
+ * nothing to plant. So the sticks pool is the whole implementable table, and
+ * the day saplings land this becomes two more pools rather than a redesign --
+ * which is exactly what the pool list is for.
+ */
+const LEAF_DROPS = [[one('stick', 1, 2, 0.02)]]
+
+/** Is this the item that takes leaves and wool intact? */
+const isShears = (heldItemId) => ITEM_BY_ID.get(heldItemId)?.key === 'shears'
+
+/*
+ * Every rule, in order, as [pattern, drops, why]. `drops` is a loot table or a
+ * function of (block def, held item id) returning one. `why` is the citation,
+ * the same way sounds.js names the SoundType each rule is quoting.
+ */
+const DROP_RULES = [
+  /* ---- never broken by a player at all ---- */
+  [/^(water|lava|barrier|bedrock)$/, NOTHING,
+    'a fluid has no item (see BLOCK_ITEMS above), and neither the barrier nor bedrock is ever broken -- miningSeconds answers Infinity for bedrock'],
+
+  /* ---- ores ---- */
+  [ORE_PATTERN, (def) => [ORE_DROPS[def.key.replace(/^deepslate_/, '')]],
+    'an ore drops its mineral, not the ore block'],
+
+  /* ---- leaves ---- */
+  [/_leaves$/, (def, held) => (isShears(held) ? self(def) : LEAF_DROPS),
+    'shears take the leaf block; a hand or an axe gets 2% sticks'],
+
+  /* ---- blocks that turn into something else ---- */
+  [/^gravel$/, [[one('flint', 1, 1, 0.1), one('gravel')]],
+    '10% flint, OTHERWISE the gravel back -- one roll, two outcomes'],
+  [/^clay$/, [[one('clay_ball', 4)]], 'four clay balls'],
+  [/^bookshelf$/, [[one('book', 3)]], 'three books; the six planks are lost'],
+
+  /* ---- silk touch only, so nothing here ---- */
+  [/^(glass|\w+_stained_glass)$/, NOTHING, 'glass shatters -- tinted glass is the exception, below'],
+  [/^(ice|packed_ice|blue_ice)$/, NOTHING, 'ice melts to water without silk touch, and this world has no flowing source to leave'],
+  [/^(sculk|sculk_catalyst)$/, NOTHING, 'sculk drops experience, not a block'],
+  [/^bee_nest$/, NOTHING, 'the nest is destroyed and the bees come out angry'],
+  [/^(brown|red)_mushroom_block$/, NOTHING,
+    '0-2 mushrooms in vanilla (78% of the time zero), and there is no mushroom item here'],
+  [/^mushroom_stem$/, NOTHING, 'the stem drops nothing even in vanilla'],
+
+  /* ---- nothing, but for the harder reason: the item does not exist here ---- */
+  [/^snow_block$/, NOTHING, 'four snowballs in vanilla; no snowball item in this palette'],
+  [/^glowstone$/, NOTHING, '2-4 glowstone dust in vanilla; no dust item'],
+  [/^sea_lantern$/, NOTHING, '2-3 prismarine crystals in vanilla; no crystal item'],
+  [/^melon$/, NOTHING, '3-7 melon slices in vanilla; no slice item'],
+
+  /* ---- never obtainable, with or without silk touch ---- */
+  [/^budding_amethyst$/, NOTHING, 'vanilla destroys it rather than let you move it'],
+  [/^reinforced_deepslate$/, NOTHING, 'creative only in vanilla; it drops nothing to anything'],
+
+  /*
+   * ---- and everything else drops itself ----
+   *
+   * Enumerated by family rather than left as a trailing `[/./, self]`, for the
+   * one reason this whole table exists: a catch-all cannot be wrong, and so it
+   * cannot be noticed being wrong. Anything that falls off the end here is a
+   * name in unmappedDrops(), which the test suite asserts is empty.
+   */
+  [/_(slab|slab_top|stairs)$|_stairs_(north|south|east|west)_(top|bottom)$/, self,
+    'every non-cube variant drops the family block blocks.js already points it at'],
+  [/^tinted_glass$/, self, 'the one glass that survives being broken -- vanilla exception, not an oversight'],
+  [/^planks$|_planks$|_log$|_wood$|_stem$|_hyphae$|^bamboo_(planks|mosaic|block)$|^stripped_bamboo_block$/, self,
+    'every wood: logs, planks, stems, hyphae and the bamboo set'],
+  [/_wool$|_concrete$|_concrete_powder$|terracotta$/, self,
+    'the dyed families -- wool, concrete, concrete powder, terracotta and glazed'],
+  [/^(grass|dirt|coarse_dirt|rooted_dirt|podzol|mycelium|mud|sand|red_sand|soul_sand|soul_soil)$/, self,
+    'soil and sediment -- grass, podzol and mycelium give dirt through their own `drops`'],
+  /*
+   * The stone families, enumerated the way sounds.js enumerates its stone rule
+   * and for the same reason: `stone|cobble|brick` is broad enough to survive a
+   * new variant, narrow enough that a block from a family nobody has thought
+   * about still falls through to the report.
+   */
+  [/stone|cobble|deepslate|^bricks$|_bricks?$|sandstone|andesite|diorite|granite|tuff|calcite|dripstone|basalt|netherrack|obsidian|magma_block|quartz|purpur|prismarine|_nylium$|bone_block|resin_block|packed_mud|amethyst_block|_froglight$/,
+    self, 'the stone families: broken with a pickaxe, dropped whole'],
+  [/^(coal|iron|gold|diamond|emerald|lapis|redstone|netherite)_block$|^raw_(iron|copper|gold)_block$|copper/,
+    self, 'the mineral blocks, including all eleven copper states -- storage, so they drop whole'],
+  [/^(moss_block|hay_block|dried_kelp_block|honeycomb_block|slime_block|sponge|wet_sponge|shroomlight|nether_wart_block|warped_wart_block|pumpkin|carved_pumpkin|jack_o_lantern|beehive)$/,
+    self, 'the organic blocks -- a crafted beehive drops, unlike the wild nest above'],
+  [/^(crafting_table|furnace|blast_furnace|smoker|chiseled_bookshelf|tnt|note_block|jukebox|redstone_lamp|target|observer|piston|sticky_piston|dispenser|dropper|barrel|loom|cartography_table|fletching_table|smithing_table|lodestone|respawn_anchor)$/,
+    self, 'the crafted utility blocks -- you made it, you get it back'],
+  /*
+   * Ancient debris by name, and deliberately NOT `/_ore$/` as a catch-all for
+   * the ore family. An ore with no row in ORE_DROPS has to fall off the end of
+   * this list and into unmappedDrops(), or the next ore someone adds quietly
+   * drops its own block -- which is the exact bug this table was written to
+   * fix. Debris is the one "ore" that really does drop itself: you smelt it.
+   */
+  [/^ancient_debris$/, self, 'ancient debris is smelted, not refined by mining'],
+]
+
+/** The rule that claims a block key, as { drops, why }, or null if none does. */
+function dropRuleFor(key) {
+  for (const [pattern, drops, why] of DROP_RULES) {
+    if (pattern.test(key)) return { drops, why }
+  }
+  return null
+}
+
+/*
+ * Resolved once at load for the whole palette, the same way sounds.js resolves
+ * its families: a few hundred regex walks at import, none during a mining
+ * burst.
+ */
+const DROP_RULE_BY_KEY = new Map(BLOCK_TYPES.map(b => [b.key, dropRuleFor(b.key)]))
+
+/** Which rule claimed a block key, as { why }, or null. For the console. */
+export const dropRuleForKey = (key) => DROP_RULE_BY_KEY.get(key) ?? null
+
+/**
+ * Every registered block no drop rule claims.
+ *
+ * The whole point of enumerating the self-drops instead of defaulting to them:
+ * a block nobody has made a decision about is a NAME, IN A LIST, in the test
+ * suite -- not a block that silently hands you a copy of itself because that
+ * is what the old one-liner did to all 638.
+ */
+export const unmappedDrops = () =>
+  BLOCK_TYPES.filter(b => !DROP_RULE_BY_KEY.get(b.key)).map(b => b.key)
+
+/**
+ * The loot table for breaking this block with this item: an array of pools,
+ * possibly empty. See the header for the shape, and `rollDrops` to turn it
+ * into actual items.
+ *
+ * Pure, and deliberately so -- this is the half that knows Minecraft's numbers
+ * and it is the half worth asserting on.
  */
 export function dropFor(blockId, heldItemId = 0) {
-  if (!canHarvest(blockId, heldItemId)) return 0
+  // False is a real answer, not an error: stone punched by hand, or diamond
+  // ore hit with stone. The block still breaks, it just leaves nothing.
+  if (!canHarvest(blockId, heldItemId)) return NOTHING
   const def = BLOCK_BY_ID.get(blockId)
-  if (!def) return 0
-  return def.drops ?? blockId
+  if (!def) return NOTHING
+  const rule = DROP_RULE_BY_KEY.get(def.key)
+  /*
+   * An unclaimed block drops itself, exactly the way an unclaimed block sounds
+   * like stone in sounds.js, and for the same reason: a wrong drop is a better
+   * failure than a world that refuses to boot because someone added a block
+   * and did not get to this file. unmappedDrops() is what stops that being
+   * permanent -- the test fails, the block gets a decision.
+   */
+  if (!rule) return self(def)
+  return typeof rule.drops === 'function' ? rule.drops(def, heldItemId) : rule.drops
+}
+
+/**
+ * Roll a loot table into `{ id, count }` stacks. The impure half, and the only
+ * impure thing in this file.
+ *
+ * `random` is an argument so a test can hand it a scripted sequence instead of
+ * sampling a coin flip ten thousand times. A DRAW IS ONLY TAKEN WHERE THERE IS
+ * A REAL DECISION -- a chance below 1, or a range wider than one -- so the
+ * numbers a test feeds in line up with the table you can read, rather than
+ * with an invisible count of wasted calls.
+ */
+export function rollDrops(pools, random = Math.random) {
+  const out = []
+  for (const alternatives of pools) {
+    for (const entry of alternatives) {
+      // The first alternative whose chance passes wins the pool, and the rest
+      // never roll. That is what makes gravel "flint OR gravel".
+      if (entry.chance < 1 && random() >= entry.chance) continue
+      const spread = entry.max - entry.min
+      const count = entry.min + (spread > 0 ? Math.floor(random() * (spread + 1)) : 0)
+      out.push({ id: entry.id, count })
+      break
+    }
+  }
+  return out
 }
