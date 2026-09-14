@@ -497,3 +497,46 @@ both read `vanilla`. Anything in step 3 or step 5 that runs a build script must
 not switch them. `npm run textures` and `npm run sounds` with no `--source`
 rebuild whatever is already installed, which is what you want; `textures:ce` and
 `sounds:free` are not.
+
+---
+
+## What shipped
+
+Steps 1-3. Steps 4 (bubbles) and 5 (animated textures) are still open, and
+this document's own judgement stands: fog is the part you notice while
+playing, and it is in.
+
+* **Step 1.** `src/underwater.js`, wired from `src/main.js`. EXP2 fog in
+  `#3F76E4`, thick on entry and thinning to steady over thirty seconds on the
+  wiki's 25%/60%/100% blend, plus a camera-parented overlay at
+  `renderingGroupId = 2` (above heldItem.js's group 1) carrying a generated
+  murk tile that scrolls with yaw and pitch.
+* **The freeze trap is real and it bit.** `scene.fogMode` is set once at
+  install and never changed; `fogDensity` is the switch, and density 0 is
+  exactly no fog. Flipping the MODE off on exit is a second trap this document
+  does not name: Babylon only binds the fog uniforms while
+  `fogMode !== NONE`, so the shader would keep the last density it was handed.
+  `test/28-underwater.spec.js` asserts `#define FOG` on every terrain
+  material, and reintroducing the bug leaves the flag, the density AND the
+  pixel check all passing -- it is the only assertion that catches it.
+* **`_camScreen` was not borrowed**, for the reasons in section 6 plus one
+  more: `checkCameraEffect` re-gates on the LIVE voxel id every render, so it
+  blinks off whenever a chunk has not finished loading. `fluids.eyes` is
+  already the correct signal.
+* **The overlay texture is generated, not extracted.** `misc/underwater.png`
+  would have meant editing `build-textures.mjs`, and Pixel Perfection CE has
+  no such file anyway -- a generated tile is the only version of this that
+  survives `build:deploy`.
+* **Step 2** is `backFaceCulling = false` on the alpha atlas page, set from
+  Babylon's `onNewMaterialAddedObservable` because noa builds terrain
+  materials lazily and freezes each one on the spot. It is the whole page, so
+  leaves and glass draw their far faces too.
+* **Step 3** added ten `SETS` rows and the wiring. The free/CE bed is
+  synthesised -- white noise through a 260 Hz lowpass -- rather than shipping
+  an unattributed sample; the one-shots are simply absent there.
+* **The entry fog is not the wiki's literal 0.01 blocks.** That is total
+  blindness for the first seconds of every dive. The shape is reproduced, the
+  extreme is not.
+
+`test/12-sounds.spec.js:79` asserts the manifest carries exactly five sets and
+now sees fifteen. Left red on purpose -- it is not this change's spec to edit.
