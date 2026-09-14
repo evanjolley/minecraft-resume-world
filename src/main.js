@@ -32,6 +32,7 @@ import { installCommands } from './commands.js'
 import { createRoster, GUEST_NAME } from './identity.js'
 import { installNPC } from './npc.js'
 import { installDebugScreen } from './debugScreen.js'
+import { installTabList } from './tabList.js'
 import { createEvanTools, stubBackend, LINES } from './aiEvan.js'
 
 /*
@@ -372,6 +373,22 @@ const debug = installDebugScreen(noa, {
   blockName: (id) => itemName(id),
 })
 
+/*
+ * Tab. Like F3 it is an OVERLAY and reads `inputLock` rather than taking it --
+ * you can walk while the player list is up, which is the whole point of it
+ * being drawn in the HUD pass.
+ *
+ * `skinOf` and `pingOf` are passed in rather than looked up inside tabList.js,
+ * because both are facts about THIS world that the widget has no business
+ * knowing. Today skinOf answers with the same two files installNPC and
+ * createSkinMaterial already use, and pingOf is the honest zero of a game with
+ * no transport -- see the note on it in tabList.js for what replaces it.
+ */
+const tabList = installTabList(noa, {
+  roster, inputLock,
+  skinOf: (entry) => (entry.id === EVAN_ID ? '/skins/evan.png' : '/skins/default.png'),
+})
+
 const menu = installMenu(noa, { inputLock, inventory, inventoryScreen, survival })
 
 /*
@@ -571,7 +588,7 @@ window.game = {
    * the numbers BEFORE they are formatted, which is how a spec asserts that
    * the position is live rather than that a div exists.
    */
-  debug,
+  debug, tabList,
   authority, gamemode, commands, interaction, flight: movement.flight,
   /*
    * Identity and the agent, for the console and for the test suite. `roster`

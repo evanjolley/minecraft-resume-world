@@ -246,6 +246,32 @@
     body.inv-open #chat, body.menu-open #chat,
     body.inv-open #chat-bar, body.menu-open #chat-bar { display: none; }
 
+    /* ---------------- tab player list ----------------
+       OWNED BY src/tabList.js. Every size and offset is computed there, in
+       Minecraft GUI pixels against hud.js's SCALE, because the panel's width
+       is derived from the longest name and cannot be a constant. What lives
+       here is only what is the same for every row.
+
+       The two alphas are Minecraft's own and are NOT chat's or the debug
+       screen's: PlayerTabOverlay fills the panel with Integer.MIN_VALUE
+       (0x80000000 -- black, alpha 128) and each row with 553648127
+       (0x20FFFFFF -- WHITE, alpha 32). The row plate lightening the panel
+       rather than darkening it is what gives the list its banded look.
+
+       z-index 11 puts it over chat (6/7) and over the F3 overlay (10), and
+       under the screens (20+). That is vanilla's own order: the player list is
+       the LAST thing Gui.render draws in the HUD pass, after both of them. */
+    #tab-list { position: absolute; inset: 0; pointer-events: none; z-index: 11; }
+    #tab-panel { position: absolute; left: 50%; transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.502); }
+    .tab-row { position: absolute; background: rgba(255, 255, 255, 0.125); }
+    .tab-head, .tab-name, .tab-ping { position: absolute; top: 0; }
+    .tab-head, .tab-ping { background-size: 100% 100%; image-rendering: pixelated; }
+    /* white-space: pre so a name can never wrap out of its 8px-tall row. */
+    .tab-name { color: #fff; text-shadow: 2px 2px 0 #3f3f3f; white-space: pre; }
+    /* Vanilla hides the player list behind a screen, like chat and unlike F3. */
+    body.inv-open #tab-list, body.menu-open #tab-list { display: none; }
+
     /* ---------------- death ---------------- */
     #death { position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
       gap: 14px; background: rgba(120, 0, 0, 0.45); z-index: 25; }
