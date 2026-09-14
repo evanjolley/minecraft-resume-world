@@ -60,7 +60,27 @@ export function installNPC(noa, {
    */
   const material = createSkinMaterial(noa, skin, `skin-${id}`)
   const model = createPlayerModel(noa, material)
-  model.root.position.set(position[0], position[1], position[2])
+
+  /*
+   * WORLD COORDINATES ARE NOT SCENE COORDINATES.
+   *
+   * noa REBASES the Babylon scene origin as you travel, so that vertex
+   * positions stay small and float precision stays honest -- at spawn the
+   * offset is already [0, 138, 0], because the island's surface is 136 blocks
+   * up. Placing this model at its world position once, at construction, put
+   * it 138 blocks in the air above the island, where it was perfectly
+   * invisible and perfectly correct according to every assertion that did not
+   * involve a camera. (The nametag caught it: 138 blocks is past the 64-block
+   * cull, so it switched itself off.)
+   *
+   * So the conversion runs EVERY FRAME rather than once. The offset changes
+   * at runtime, and a character that was placed correctly at spawn would
+   * otherwise drift away from its own feet the first time the player walked
+   * far enough to trigger a rebase. perspective.js never had to think about
+   * this because _renderPosition is already local.
+   */
+  const local = [0, 0, 0]
+  const toLocal = () => noa.globalToLocal(position, null, local)
 
   const nametag = createNametag(noa, {
     text: roster.displayName(entry), height: MC.PLAYER_HEIGHT, name: `nametag-${id}`,
@@ -169,9 +189,16 @@ export function installNPC(noa, {
     model.root.rotation.y = bodyYaw
   })
 
-  // On render, not tick -- he does not move, but the CAMERA does, and the
-  // nametag's orientation is a function of the camera. See nametag.js.
-  noa.on('beforeRender', () => nametag.update(position))
+  /*
+   * On render, not tick -- he does not move, but the CAMERA does, and both
+   * the nametag's orientation and the scene origin are functions of where the
+   * camera is. Doing this on tick would leave him a frame behind a rebase.
+   */
+  noa.on('beforeRender', () => {
+    toLocal()
+    model.root.position.set(local[0], local[1], local[2])
+    nametag.update(local)
+  })
 
   return {
     id, entry, model, nametag, hear,

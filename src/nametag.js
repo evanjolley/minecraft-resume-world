@@ -121,12 +121,41 @@ export function createNametag(noa, { text = '', height = 1.8, name = 'nametag' }
     const texture = new DynamicTexture(`${name}-tex-${i}`,
       { width: 8, height: 8 }, scene, false, Texture.NEAREST_SAMPLINGMODE)
     texture.hasAlpha = true
+    /*
+     * Flip V. A DynamicTexture's canvas is Y-DOWN and Babylon samples the
+     * plane's UVs Y-UP, so the glyphs come out upside down -- which is the
+     * kind of bug that no assertion in the spec file can see and one
+     * screenshot makes obvious.
+     *
+     * Worth noting this is NOT vanilla's `scale(-0.025F, -0.025F, 0.025F)`.
+     * That negation is the font's own Y-down frame being turned into the
+     * camera-oriented one, and it is already accounted for: the canvas is
+     * drawn in font space, top-down, exactly as the font renderer emits it.
+     * This is Babylon's UV convention on top of that, and conflating the two
+     * is how you end up flipping twice and back.
+     */
+    texture.vScale = -1
+    texture.vOffset = 1
 
     const material = noa.rendering.makeStandardMaterial(`${name}-mat-${i}`)
-    material.diffuseTexture = texture
+    /*
+     * emissive for colour, opacity for alpha, and NO diffuseTexture -- which
+     * is the whole trick and took a screenshot to find.
+     *
+     * StandardMaterial.needAlphaTesting() is true whenever the DIFFUSE
+     * texture has alpha, and alpha testing discards anything below a 0.4
+     * cutoff. Both of the things that make a nametag a nametag are below it:
+     * the background box is 63/255 and the see-through text is 32/255. With
+     * the texture wired to diffuse, every translucent pixel was thrown away
+     * and what survived was a crisp white name floating on nothing -- which
+     * looks deliberate, passes every assertion in the spec, and is wrong.
+     *
+     * An opacityTexture forces real alpha BLENDING instead, which is what
+     * vanilla's TRANSLUCENT_TRANSPARENCY does. Text is unlit: Minecraft's
+     * nametags are lightmap-modulated and these are not, see the divergence
+     * note at the bottom of this file.
+     */
     material.opacityTexture = texture
-    // Text is not lit. Minecraft's nametags are lightmap-modulated and this
-    // one is not -- see the divergence note at the bottom of this file.
     material.emissiveTexture = texture
     material.emissiveColor = new Color3(1, 1, 1)
     material.diffuseColor = new Color3(0, 0, 0)
@@ -149,9 +178,6 @@ export function createNametag(noa, { text = '', height = 1.8, name = 'nametag' }
     mesh.material = material
     mesh.isPickable = false
     mesh.alphaIndex = layer.alphaIndex
-    // Planes face -Z by default and the camera-orientation quaternion below
-    // assumes the tag's front is +Z, the same convention playerModel.js uses.
-    mesh.rotation.y = Math.PI
     noa.rendering.addMeshToScene(mesh)
     return { texture, material, mesh, ...layer }
   })
