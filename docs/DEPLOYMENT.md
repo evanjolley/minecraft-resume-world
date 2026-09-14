@@ -5,13 +5,15 @@ GitHub Pages. Reasoning below, because the obvious reason is not the real one.
 
 ## The static hosting is not the deciding factor
 
-The built site, measured from a clean checkout rather than estimated, is 917
-files and 1.84MB: a 1.24MB bundle (310KB gzipped) and about 690KB of
-everything else. An earlier draft of this file said ~4.5MB of assets, which
-came from `du` reporting allocated blocks; most of these files are 200-byte
-PNGs and `du` rounds every one of them up to 4KB. Either way every candidate
-serves it for free without noticing. If static hosting were all this needed,
-GitHub Pages would do and the question would be boring.
+The built site is a bundle of 1.27MB (313KB gzipped) plus roughly a thousand
+small files -- textures, UI sprites, fonts, 42 sound samples. The 917-file /
+1.84MB figure this file used to quote predates both the committed sound set
+and the terrain asset and is no longer the number; re-measure with
+`npm run build:deploy` before quoting one. An earlier draft said ~4.5MB of
+assets, which came from `du` reporting allocated blocks; most of these files
+are 200-byte PNGs and `du` rounds every one of them up to 4KB. Either way
+every candidate serves it for free without noticing. If static hosting were
+all this needed, GitHub Pages would do and the question would be boring.
 
 The deciding factor is **multiplayer**, which is on the roadmap and which this
 codebase has already been shaped around — `src/authority.js` exists precisely so
@@ -167,32 +169,21 @@ alongside GPL 2.0/3.0 and one whose licence field reads CC0 while its own
 comment thread argues it was GPL. Neither is a licence you want to be wrong
 about on a public domain.
 
-### What is left, and it is four lines in three files this change does not own
+### What was left, and is not left any more
 
-The deployed site is still silent, because every lock built for Mojang's audio
-is still closed and none of them can tell the two sources apart. All four now
-have a cheap test available to them: `dist/sounds/.source` reads `free` or
-`vanilla`, and vite copies it into `dist/` along with `NOTICE.txt`.
+This section used to list four lines in three files that still had to change
+before a deploy could carry audio. All four have. `build:deploy` now pins
+`npm run sounds:free` and no longer deletes `dist/sounds`;
+`deploy/.assetsignore` no longer blanket-refuses a `sounds/` directory; the
+workflow's verify step defers to `scripts/check-deploy-assets.mjs`, which
+asserts `dist/sounds/.source` reads `free`; and the `--grep-invert 12-sounds`
+exclusion is gone, so CI runs the sound spec like any other.
 
-1. **`package.json`, `build:deploy`.** It ends with `rm -rf dist/sounds`. The
-   fix is the same shape as the line beside it: `build:deploy` already runs
-   `npm run textures:ce` to force the redistributable texture source, so it
-   should run `npm run sounds:free` to force the redistributable sound source,
-   and drop the delete.
-2. **`deploy/.assetsignore`.** Its last line is `sounds/`. It has to go, and
-   the belt-and-braces it provided has to come back somewhere that can tell
-   `free` from `vanilla` -- which an assetsignore file cannot.
-3. **`.github/workflows/deploy.yml`, the verify step.** `test ! -d dist/sounds`
-   should invert into an assertion that `dist/sounds/manifest.json` exists and
-   `dist/sounds/.source` reads `free`. That is strictly stronger than the
-   delete it replaces: it fails on a Mojang build AND on a silent one, where
-   deleting could only ever produce silence quietly.
-4. **`.github/workflows/deploy.yml`, the test step.** `--grep-invert
-   12-sounds` can go.
-
-Until (1) and (2) happen the site stays silent, and that is now a bug rather
-than a policy. `src/sounds.js` still treats a missing manifest as "stay quiet",
-so nothing breaks in the meantime.
+The lock moved rather than disappearing, and it is stronger where it landed.
+Refusing a directory passed quietly both for a Mojang-sourced build and for a
+silent one. Asserting the marker fails on either. `src/sounds.js` still treats
+a missing manifest as "stay quiet", so a partial build degrades rather than
+breaking.
 
 ### Coverage, honestly
 
@@ -258,10 +249,10 @@ purpose -- `public/` is a working directory and is allowed to be vanilla,
 
 No, and code splitting would make it worse.
 
-310KB gzipped is roughly one large photograph. The site is a game: it cannot
+313KB gzipped is roughly one large photograph. The site is a game: it cannot
 show anything until Babylon, noa, the whole block table and the meshing code
-are all present, and then it spends longer generating and meshing an 80x80x64
-island than it ever spent downloading. Splitting that into chunks would add
+are all present, and then it spends longer decoding and meshing the terrain
+patch than it ever spent downloading the code. Splitting that into chunks would add
 round trips to arrive at the same total, later. The only genuinely deferrable
 thing is the inventory and crafting UI, which is DOM and small; the 1.2MB is
 the engine, and the engine is not optional.
@@ -300,17 +291,19 @@ every hashed bundle: caching it is caching the whole deploy.
 
 ## What is in `public/`, and whether any of it is a surprise
 
-Nothing is. The deployed tree is 917 files:
+Nothing is. The file counts below were taken before the sound set and the
+terrain asset existed and are indicative rather than current; the shape is
+what matters:
 
 | | |
 |---|---|
-| `index.html` | 13.8KB, carries the CC-BY-SA attribution the licence requires |
-| `assets/index-*.js` | 1.24MB, the bundle |
+| `index.html` | ~16KB. It does NOT carry the CC-BY-SA attribution, contrary to what this table used to say |
+| `assets/index-*.js` | 1.27MB, the bundle |
 | `textures/` | 437 PNGs, 5 atlas pages, 355 held-item strips, 96 item sprites |
 | `ui/` | 22 HUD and container sprites |
 | `fonts/` | Monocraft.ttf and its OFL text |
 | `skins/` | one default player skin |
-| `sounds/` | 42 `.ogg`, 441KB, plus `NOTICE.txt` — once the four lines above change |
+| `sounds/` | 42 `.ogg`, 441KB, plus `NOTICE.txt` |
 | `EvanJolley_Resume.pdf` | 88KB, public on purpose |
 
 The resume is the only file that is personal, and it is the point. There are
@@ -324,11 +317,19 @@ return visit. They belong with `/textures/*` on a day: the filenames come out
 of `public/` verbatim, so `step/grass1.ogg` is a permanent URL whose contents
 change if the sound source ever does.
 
-One loose end worth someone's attention, though it is not a deployment
-problem: `README.md` points at `public/textures/NOTICE.txt` and the CE build
-does not actually emit it. The licence is still satisfied, because the
-attribution is on the entry overlay in `index.html`, which is where a visitor
-sees it — but the file the README names is not in `dist/`.
+That loose end is closed, and the paragraph here that used to claim otherwise
+was wrong twice over. `build-textures.mjs` does emit `NOTICE.txt` on a CE
+build (`fromCE()` copies it out of `textures-src/ce/`), and `build:deploy`
+pins CE, so the file the README names IS in `dist/`. A `--source=vanilla`
+build does not emit it, which is why a developer's `public/textures/` may not
+have one; that is correct, since there is nothing to attribute.
+
+What is NOT true, and this file asserted it: there is no attribution on an
+entry overlay in `index.html`. Checked -- the only mention of a licence in
+that file is a CSS comment about Monocraft, which no visitor sees. The NOTICE
+files ship and nothing points at them, so the credits surface in
+`docs/FUTURE.md` is a genuine prerequisite for going live rather than a
+nicety.
 
 ## Going live
 
@@ -423,13 +424,15 @@ From a clean `git clone` of `main` into an empty directory, on Node 24:
   is not something the workflow arranges; it is already true.
 - `npm run textures` — 428 textures decoded, 95 substituted, 5 biome-tinted,
   0.9s.
-- `vite build` — 380 modules, 343ms, `dist/assets/index-*.js` at 1,238,259
-  bytes (310KB gzipped).
-- `dist/` — **917 files, 1,928,929 bytes.** All five atlas pages present,
-  `fonts/Monocraft.ttf` present, all 22 UI sprites present, no `dist/sounds`
-  (the clean checkout has no Minecraft install to extract from).
+- `vite build` — `dist/assets/index-*.js` at 1,274,145 bytes (313KB gzipped),
+  measured at `dfee897`. The 1,238,259 / 310KB this used to quote was taken
+  before water, lava and the terrain decoder landed.
+- `dist/` — all five atlas pages present, `fonts/Monocraft.ttf` present, all
+  22 UI sprites present. The 917-file, 1,928,929-byte figure predates both
+  `dist/sounds/` and the terrain work; re-measure rather than quote it.
 - `npm run test` — the whole suite, `test/12-sounds.spec.js` included. That
-  file could not run at all before the free sound set existed.
+  file could not run at all before the free sound set existed. 208 tests
+  across 19 spec files at `dfee897`.
 - `wrangler deploy --dry-run` — config parses, asset directory resolves,
   993 entries read, no bindings. Nothing was uploaded and no account was
   authenticated.
@@ -439,9 +442,13 @@ Still true: nothing is live, and going live is Evan's call.
 
 ## Sound: resolved
 
-The deployed site is no longer silent. `npm run sounds` defaults to a committed
-CC0 / CC BY / CC BY-SA set (`sounds-src/free`, 402KB), with the Minecraft
-extraction still available locally as `npm run sounds:vanilla`.
+The deployed site is no longer silent. `npm run sounds:free` builds a
+committed CC0 / CC BY / CC BY-SA set (`sounds-src/free`, 402KB), it is what
+`build:deploy` pins, and the Minecraft extraction is still available locally
+as `npm run sounds:vanilla`. Plain `npm run sounds` names no source and
+rebuilds whatever is installed, which is the rule described two sections
+above -- an earlier version of this paragraph said it "defaults to" the free
+set, and that would have been the exact footgun that rule exists to prevent.
 
 The lock against publishing Mojang's audio **moved rather than disappeared**,
 and is now stronger. It used to be "refuse to upload a sounds directory", which
@@ -516,9 +523,11 @@ careful before acting on it:
 ### What the honest positions are
 
 - **Conservative**, and the current default: treat generated terrain like the
-  textures. Keep it local, keep it out of the deploy, and either ship the
-  hand-generated island publicly or write an original generator for the
-  public build. Costs the realism that motivated the whole exercise.
+  textures. Keep it local, keep it out of the deploy, and give the public
+  build a world of its own -- either by restoring the hand-generated island,
+  which now exists only in git history since `src/island.js` was rewritten as
+  a lookup, or by writing an original generator. Costs the realism that
+  motivated the whole exercise, and costs real work rather than a flag.
 - **Permissive**: publish it, on the compiler-output reasoning, and accept
   that the reasoning is untested. Cheap and probably fine and definitely not
   verified.
@@ -537,6 +546,16 @@ serving a 128x128 region of generated blocks, no Mojang textures, no Mojang
 code. That is a decision with a named owner, and it is Evan's, not this
 build's.
 
-Until then the gate is: **`dist/` must not contain `terrain/`.** Worth adding
-to `scripts/check-deploy-assets.mjs` as a hard assertion the way
-`dist/sounds/.source` is checked, so the default cannot be lost by accident.
+Until then the gate is: **`dist/` must not contain `terrain/`**, and it is
+enforced rather than intended. `scripts/check-deploy-assets.mjs` fails the
+build if `dist/terrain/` exists, alongside the two `.source` marker checks;
+`build:deploy` deletes it; `deploy/.assetsignore` refuses to upload it; and
+`public/terrain/` is gitignored. Four locks, because vite copies `public/`
+into `dist/` wholesale and this data reached the deploy artifact once already
+without ever being committed.
+
+The practical consequence, which belongs here rather than in `FUTURE.md`:
+until this resolves, a deployed build has no terrain to load, and
+`src/island.js` throws rather than serving an empty world. So this question
+does not merely delay a nicety -- it is the reason there is nothing to
+deploy.
