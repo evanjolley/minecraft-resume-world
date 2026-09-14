@@ -412,10 +412,19 @@ const aiEvan = installNPC(noa, {
   roster,
   id: EVAN_ID,
   position: EVAN_POS,
-  // The same default skin the player wears, for now. A real Evan skin drops
-  // in here and nowhere else -- npc.js builds its own material precisely so
-  // this is one string rather than a fork of playerModel.js.
-  skin: '/skins/default.png',
+  /*
+   * Evan's real appearance, converted from his account's pre-1.8 64x32 sheet
+   * by scripts/build-textures.mjs. Only HE wears it -- the player above
+   * keeps /skins/default.png -- because this is one person's face, not the
+   * skin of whoever happens to be standing here.
+   *
+   * The cape is a separate file for a licensing reason, not a technical one:
+   * it is Mojang art granted to an account, a deploy may have to ship
+   * without it, and `--no-cape` builds exactly that. A missing cape image is
+   * handled at runtime rather than being an error (playerModel.js).
+   */
+  skin: '/skins/evan.png',
+  cape: '/skins/evan-cape.png',
   chat,
   script: { greet: LINES.greet },
   agent: {

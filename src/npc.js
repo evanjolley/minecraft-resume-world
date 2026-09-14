@@ -1,4 +1,4 @@
-import { createPlayerModel, createSkinMaterial, poseModel } from './playerModel.js'
+import { attachCape, createPlayerModel, createSkinMaterial, poseModel } from './playerModel.js'
 import { createNametag } from './nametag.js'
 import { createAgentSession, createToolRegistry } from './agent.js'
 import { MC } from './physics.js'
@@ -42,12 +42,13 @@ function angleDelta(a, b) {
  * @param {string} opts.id            roster id for this character
  * @param {[number,number,number]} opts.position  FEET, world coordinates
  * @param {string} opts.skin          skin png url
+ * @param {string} [opts.cape]        cape png url -- omit for no cape
  * @param {object} opts.chat          chat.js api
  * @param {object} [opts.agent]       { backend, tools } -- omit for a mute NPC
  * @param {object} [opts.script]      { greet }  what to say on approach
  */
 export function installNPC(noa, {
-  roster, id, position, skin, chat, agent = null, script = {},
+  roster, id, position, skin, cape = null, chat, agent = null, script = {},
 }) {
   const entry = roster.get(id)
   if (!entry) throw new Error(`installNPC: no roster entry ${id}`)
@@ -60,6 +61,10 @@ export function installNPC(noa, {
    */
   const material = createSkinMaterial(noa, skin, `skin-${id}`)
   const model = createPlayerModel(noa, material)
+  // Optional, and optional at the DEPLOY level too -- a build that ships no
+  // cape image leaves this attached but textureless, so attachCape removes
+  // itself when the image 404s. See playerModel.js.
+  if (cape) attachCape(noa, model, cape, `cape-${id}`)
 
   /*
    * WORLD COORDINATES ARE NOT SCENE COORDINATES.

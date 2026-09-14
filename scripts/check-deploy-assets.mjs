@@ -45,9 +45,35 @@ const FORBIDDEN = [
   ['terrain', 'generated Minecraft terrain, licence unresolved -- see docs/DEPLOYMENT.md'],
 ]
 
+/*
+ * Single files under the same rule. Evan's CAPE is Mojang art granted to his
+ * account rather than anything he drew, so serving it is redistribution --
+ * the same open question as the terrain (docs/DEPLOYMENT.md). His SKIN is
+ * not in here and is deliberately allowed.
+ *
+ * A file rather than a .source marker, unlike the textures above, because
+ * the two questions are different shapes. "Which pack built this atlas" is
+ * invisible in the output and needs a marker to answer. "Is the cape here"
+ * is answered by its path, and checking the artifact beats trusting a note
+ * the build left about itself.
+ *
+ * `npm run build:deploy` passes --no-cape, so the normal path never trips
+ * this. It exists for the abnormal one: public/skins/ is a developer's
+ * working state, it is allowed to hold the cape, and vite copies public/
+ * into dist/ WHOLESALE. Gitignoring a file has never once kept it out of a
+ * deploy in this repo.
+ */
+const FORBIDDEN_FILES = [
+  ['skins/evan-cape.png', "Evan's Mojang cape, licence unresolved -- see docs/DEPLOYMENT.md."
+    + ' Build with `npm run build:deploy`, which passes --no-cape'],
+]
+
 const problems = []
 for (const [dir, why] of FORBIDDEN) {
   if (existsSync(join(DIST, dir))) problems.push(`dist/${dir}/ exists: ${why}`)
+}
+for (const [file, why] of FORBIDDEN_FILES) {
+  if (existsSync(join(DIST, file))) problems.push(`dist/${file} exists: ${why}`)
 }
 
 for (const [dir, allowed, otherwise] of REQUIRED) {
@@ -70,4 +96,4 @@ if (problems.length) {
   process.exit(1)
 }
 
-console.log('deploy assets: textures=ce, sounds=free, no terrain -- redistributable')
+console.log('deploy assets: textures=ce, sounds=free, no terrain, no cape -- redistributable')

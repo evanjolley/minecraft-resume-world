@@ -55,11 +55,17 @@ const MODEL_SCALE = 0.9375 / 16
  * out the right way round.
  */
 const SKIN = 64
-const uv = (x, y, w, h) =>
-  new Vector4(x / SKIN, 1 - (y + h) / SKIN, (x + w) / SKIN, 1 - y / SKIN)
+/*
+ * Sheet HEIGHT is a parameter because a cape sheet is 64x32 while a skin is
+ * 64x64. Width is 64 for both. Getting this wrong is silent: every V lands at
+ * half its intended height and the cape samples the blank lower half.
+ */
+const uvOn = (sheetH) => (x, y, w, h) =>
+  new Vector4(x / SKIN, 1 - (y + h) / sheetH, (x + w) / SKIN, 1 - y / sheetH)
+const uv = uvOn(SKIN)
 
-const faces = ({ front, back, left, right, top, bottom }) => [
-  uv(...front), uv(...back), uv(...right), uv(...left), uv(...top), uv(...bottom),
+const faces = ({ front, back, left, right, top, bottom }, u = uv) => [
+  u(...front), u(...back), u(...right), u(...left), u(...top), u(...bottom),
 ]
 
 /* Minecraft's HumanoidModel, in model units. */
@@ -101,13 +107,107 @@ const PARTS = {
   },
 }
 
-export function createSkinMaterial(noa, url, name = 'skin') {
+/*
+ * THE CAPE, from Minecraft's PlayerModel `cloak` part and CapeLayer.
+ *
+ *   PlayerModel: texOffs(0, 0).addBox(-5, 0, -1, 10, 16, 1), PartPose.ZERO
+ *   CapeLayer:   translate(0, 0, 0.125)          -- 2 model units BACK
+ *                rotate X by 6 + f2/2 + f1       -- 6 is the resting angle
+ *                rotate Y by 180 - f3/2
+ *
+ * Read off vanilla rather than eyeballed, because every one of those numbers
+ * is visible: the cape is 10 wide (narrower than the 8-wide torso plus its
+ * arms), hangs from the NECK line and not the shoulders, stops 8 units above
+ * the feet, and sits 2 units behind the torso's back face so it does not
+ * z-fight with it.
+ *
+ * In this file's frame (x_here = -x_mc, y_here = 24 - y_mc, z_here = -z_mc)
+ * that is a pivot at the neck, 2 back, with the box hanging beneath it.
+ *
+ * THE 180-DEGREE Y ROTATION IS BAKED INTO THE UVs, not applied as a
+ * transform. Vanilla defines the cloak cube facing FORWARD and then spins it
+ * around, which is why the rect at (1,1) -- the printed outer face -- is laid
+ * out as the cube's front. The box is symmetric in x, so spinning it is
+ * identical to handing that rect to the back face here and the lining at
+ * (12,1) to the front. Rejected: a real rotation, which would mean a second
+ * transform node whose only job is to undo itself.
+ *
+ * (The one thing the bake does not reproduce is the top and bottom faces
+ * being turned 180 degrees in plane. They are 10x1 strips of hem seen edge
+ * on. Not worth a node.)
+ */
+const CAPE = {
+  size: [10, 16, 1], pivot: [0, 24, -2], offset: [0, -8, -0.5],
+  uv: { top: [1, 0, 10, 1], bottom: [11, 0, 10, 1], right: [11, 1, 1, 16],
+        front: [12, 1, 10, 16], left: [0, 1, 1, 16], back: [1, 1, 10, 16] },
+}
+const capeUv = uvOn(32)
+
+/** CapeLayer's resting X rotation. Positive tips the hem away from the legs. */
+const CAPE_REST = (6 * Math.PI) / 180
+/** ...and what crouching adds to it, so the cape clears the bent back. */
+const CAPE_CROUCH = (25 * Math.PI) / 180
+
+/**
+ * Hangs a cape on an existing model. Separate from createPlayerModel on
+ * purpose: a cape is OPTIONAL art with its own licence question
+ * (docs/DEPLOYMENT.md), and in multiplayer most players will not have one,
+ * so "no cape" is the common case and has to be the cheap one.
+ *
+ * If the image does not load -- a build made with `--no-cape`, or a player
+ * the skin server has no cape for -- this removes itself and the model is a
+ * correct capeless one. That is a RUNTIME check rather than a build-time
+ * manifest because the multiplayer case cannot be known at build time, and
+ * one mechanism that covers both beats two that each cover half.
+ *
+ * @returns the part, or null once it has removed itself.
+ */
+export function attachCape(noa, model, url, name = 'cape') {
+  const scene = noa.rendering.getScene()
+  let part = null
+
+  const material = createSkinMaterial(noa, url, name, () => {
+    if (!part) return
+    part.box.dispose()
+    part.pivot.dispose()
+    material.dispose(true, true)
+    delete model.parts.cape
+    part = null
+  })
+
+  const pivot = new TransformNode(`${name}-pivot`, scene)
+  pivot.position.set(CAPE.pivot[0], CAPE.pivot[1], CAPE.pivot[2])
+  pivot.rotation.x = CAPE_REST
+  const box = CreateBox(name, {
+    width: CAPE.size[0], height: CAPE.size[1], depth: CAPE.size[2],
+    faceUV: faces(CAPE.uv, capeUv), wrap: true,
+  }, scene)
+  box.position.set(CAPE.offset[0], CAPE.offset[1], CAPE.offset[2])
+  box.material = material
+  box.parent = pivot
+  box.isPickable = false
+  pivot.parent = model.root
+  noa.rendering.addMeshToScene(box)
+
+  part = { pivot, box }
+  model.parts.cape = part
+  return part
+}
+
+/**
+ * @param {function} [onError] called if the image never loads. A 404 here is
+ *   NOT exceptional -- it is how a capeless build, and later a multiplayer
+ *   player with no cape, announces itself -- so the caller gets to decide
+ *   (attachCape deletes itself) rather than the model rendering untextured.
+ */
+export function createSkinMaterial(noa, url, name = 'skin', onError = null) {
   const scene = noa.rendering.getScene()
   // invertY MUST be true here. The uv() helper below computes V as
   // 1 - y/64, i.e. it assumes Babylon's flipped orientation. Built with
   // invertY false, every face samples the skin upside down and you get the
   // trouser texture on the head.
-  const tex = new Texture(url, scene, true, true, Texture.NEAREST_SAMPLINGMODE)
+  const tex = new Texture(
+    url, scene, true, true, Texture.NEAREST_SAMPLINGMODE, null, onError)
   tex.hasAlpha = true
   const mat = noa.rendering.makeStandardMaterial(name)
   mat.diffuseTexture = tex
@@ -177,7 +277,27 @@ export function createFirstPersonArm(noa, material) {
  * sprint or stop.
  */
 export function poseModel(parts, { limbSwing, limbSwingAmount, crouching, headPitch, headYaw, attack = 1 }) {
-  const { head, body, armRight, armLeft, legRight, legLeft } = parts
+  const { head, body, armRight, armLeft, legRight, legLeft, cape } = parts
+
+  /*
+   * The cape, and what it does NOT do.
+   *
+   * Vanilla swings it off the gap between where the player IS and where the
+   * cloak's own lagged position is (xCloak/yCloak/zCloak): moving away from
+   * it flares the cape up to 75 degrees, falling lifts it, and a sideways
+   * component rolls it on Z and Y. None of that is here. Nothing that wears
+   * a cape in this world MOVES -- the NPC stands still and the player has no
+   * cape -- so implementing a motion model with no motion to drive it would
+   * be untestable code that looks finished. The resting pose is exact; the
+   * swing is a stub with a name (docs/FUTURE.md's remote players is what
+   * makes it worth writing, because then capes move).
+   *
+   * Crouching gets vanilla's +25 degrees, which is reachable the moment the
+   * player is given a cape. Vanilla ALSO translates the cape ~0.142 blocks
+   * up while sneaking; that number is not verified here and nothing can
+   * currently see it, so it is deliberately left out rather than guessed.
+   */
+  if (cape) cape.pivot.rotation.x = CAPE_REST + (crouching ? CAPE_CROUCH : 0)
 
   // Set first: the punch below reads head pitch, because Minecraft aims the
   // swing at whatever you are looking at.

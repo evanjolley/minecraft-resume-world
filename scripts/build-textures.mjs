@@ -827,6 +827,111 @@ async function fromVanilla() {
   console.log('  gitignored so this stays hard to do by accident.\n')
 }
 
+
+/* ------------------------------------------------------------------ *
+ * EVAN'S SKIN, and the cape question.
+ *
+ * Source: skins-src/jollyboys/, committed, with provenance in its
+ * SOURCE.txt. Emitted from BOTH sources above rather than from either one,
+ * because it has nothing to do with where the block textures came from --
+ * it is Evan's own account art, not Mojang's palette.
+ *
+ * THE CAPE IS SEPARABLE ON PURPOSE. The skin is Evan's appearance; the cape
+ * is a Mojang asset granted to an account, and whether it may be SERVED is
+ * an open question (docs/DEPLOYMENT.md). So `--no-cape` produces a build
+ * with a correct, capeless Evan in it, and build:deploy passes it. Rejected:
+ * deciding the question here, and rejected: shipping the cape and relying on
+ * .assetsignore -- vite copies public/ into dist/ wholesale, so "gitignored"
+ * and "not deployed" are different facts and this repo has confused them
+ * twice already.
+ */
+const wantsCape = !process.argv.includes('--no-cape')
+const EVAN_SRC = join(ROOT, 'skins-src', 'jollyboys')
+
+/*
+ * LEGACY 64x32 -> 64x64, transcribed from Mojang's own conversion
+ * (SkinTextureDownloader.processLegacySkin).
+ *
+ * A pre-1.8 sheet carries ONE arm and ONE leg; the game drew the other side
+ * by mirroring at render time. The 64x64 layout gives every limb its own
+ * region, so the mirroring has to happen once, here, in the pixels.
+ *
+ * Each row is [srcX, srcY, dx, dy, w, h]: copy that rect to (srcX+dx,
+ * srcY+dy), flipped horizontally. The offsets look arbitrary and are not --
+ * a mirrored limb also SWAPS its left and right side faces, which is why
+ * e.g. the right leg's right face (0,20) lands on the left leg's left face
+ * (24,52) rather than straight across.
+ *
+ * Getting this wrong is not subtle once you look: the classic failure is a
+ * left arm whose shading runs the wrong way, or a seam down the front.
+ * Verified by screenshot from the front, not by reading these numbers.
+ */
+const LEGACY_LIMB_COPIES = [
+  // right leg -> left leg
+  [4, 16, 16, 32, 4, 4], [8, 16, 16, 32, 4, 4],
+  [0, 20, 24, 32, 4, 12], [4, 20, 16, 32, 4, 12],
+  [8, 20, 8, 32, 4, 12], [12, 20, 16, 32, 4, 12],
+  // right arm -> left arm
+  [44, 16, -8, 32, 4, 4], [48, 16, -8, 32, 4, 4],
+  [40, 20, 0, 32, 4, 12], [44, 20, -8, 32, 4, 12],
+  [48, 20, -16, 32, 4, 12], [52, 20, -8, 32, 4, 12],
+]
+
+/*
+ * The base (non-overlay) regions, which vanilla forces opaque after the
+ * conversion. Old skin editors left stray alpha-0 pixels in them, and the
+ * model has no second layer behind the base, so a transparent pixel there is
+ * a HOLE you can see the sky through. JollyBoys' sheet has transparent
+ * pixels inside this box; whether any of them land on a sampled face was not
+ * worth establishing when vanilla's answer is "force them all opaque".
+ */
+const BASE_LAYER_REGIONS = [
+  [0, 0, 32, 16],   // head
+  [0, 16, 64, 16],  // body, right arm, right leg
+  [16, 48, 16, 16], // left leg, after conversion
+  [32, 48, 16, 16], // left arm, after conversion
+]
+
+async function emitEvanSkin() {
+  const src = join(EVAN_SRC, 'skin.png')
+  const meta = await sharp(src).metadata()
+  const legacy = meta.height === 32
+  if (meta.width !== 64 || (meta.height !== 32 && meta.height !== 64)) {
+    throw new Error(`skins-src/jollyboys/skin.png is ${meta.width}x${meta.height}, not a skin`)
+  }
+
+  // Top half in place, bottom half transparent -- exactly what vanilla's
+  // `new NativeImage(64, 64)` + copyFrom + fillRect(0,32,64,32,0) leaves.
+  const px = Buffer.alloc(64 * 64 * 4)
+  const { data } = await sharp(src).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  data.copy(px, 0, 0, Math.min(data.length, 64 * 64 * 4))
+
+  const at = (x, y) => (y * 64 + x) * 4
+  if (legacy) {
+    for (const [sx, sy, dx, dy, w, h] of LEGACY_LIMB_COPIES) {
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          // flipX: the destination's left edge is the source's right edge.
+          px.copy(px, at(sx + dx + x, sy + dy + y),
+            at(sx + w - 1 - x, sy + y), at(sx + w - 1 - x, sy + y) + 4)
+        }
+      }
+    }
+  }
+  for (const [x0, y0, w, h] of BASE_LAYER_REGIONS) {
+    for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) px[at(x, y) + 3] = 255
+  }
+  /*
+   * NOT implemented: vanilla's doNotchTransparencyHack, which blanks the hat
+   * layer when a pre-alpha skin filled it with opaque colour. playerModel.js
+   * draws no overlay layer at all, so it would be dead code -- and this
+   * particular sheet's hat region already has transparency, so the hack
+   * would decline to fire anyway.
+   */
+  await toPng(px, 64, 64).toFile(join(SKINS, 'evan.png'))
+  return legacy
+}
+
 const started = Date.now()
 rmSync(STAGE, { recursive: true, force: true })
 mkdirSync(OUT, { recursive: true })
@@ -834,6 +939,19 @@ if (source === 'vanilla') await fromVanilla()
 else await fromCE()
 
 writeFileSync(join(OUT, '.source'), source)
+
+/*
+ * Evan last, so it runs whichever source built the blocks. Inside the
+ * staging dir like everything else, so a rebuild never leaves public/skins/
+ * holding a converted skin and no cape (or the reverse) for a second and a
+ * half while a dev server is reading it.
+ */
+const wasLegacy = await emitEvanSkin()
+if (wantsCape) {
+  await sharp(join(EVAN_SRC, 'cape.png')).ensureAlpha().png().toFile(join(SKINS, 'evan-cape.png'))
+}
+console.log(`  evan skin: ${wasLegacy ? '64x32 legacy, converted to 64x64' : '64x64'}`
+  + `, cape ${wantsCape ? 'included (LOCAL ONLY -- see docs/DEPLOYMENT.md)' : 'excluded'}`)
 
 // Swap the staged build in. Renames are near-instant, so a dev server sees at
 // most a flicker rather than seconds of missing textures.

@@ -1,0 +1,20 @@
+Fetched from Mojang's session server for the account JollyBoys
+(uuid 8a881c1f1cff4388afec8841480c378d), at Evan's request -- it is his account
+and his in-game appearance.
+
+  skin  http://textures.minecraft.net/texture/e981d0a6bb1c5f8ad47fc91ca8acbcac1ed2893203dc75a85903a589f22ce112
+  cape  http://textures.minecraft.net/texture/153b1a0dfcbae953cdeb6f2c2bf6bf79943239b1372780da44bcbb29273131da
+
+skin.png is 64x32: the LEGACY pre-1.8 layout. The model in playerModel.js is
+built for 64x64, so this needs converting, not just loading. Legacy has one arm
+and one leg which the renderer mirrors, and no second layer below the head.
+
+cape.png is 64x32, which is the normal cape size. The cape itself is the
+10x16 region at (1,1); the rest of the sheet is the underside and the edges.
+
+LICENSING, unresolved and deliberately not decided here: the CAPE is a Mojang
+asset granted to an account, not something Evan drew. Serving it from a public
+site is redistribution of Mojang artwork, which is the same question the
+textures and audio already answer conservatively. Treated as local-only until
+Evan rules otherwise -- see DECISIONS.md and docs/DEPLOYMENT.md. The skin's
+provenance is Evan's to confirm.

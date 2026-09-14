@@ -572,3 +572,35 @@ until this resolves, a deployed build has no terrain to load, and
 `src/island.js` throws rather than serving an empty world. So this question
 does not merely delay a nicety -- it is the reason there is nothing to
 deploy.
+
+## Open: may Evan's cape be served? (does not block deployment)
+
+**Unresolved.** The NPC wears Evan's real Minecraft appearance, fetched from
+Mojang's session server for his own account and committed under
+`skins-src/jollyboys/` with its provenance. Two files, two different
+questions:
+
+- **`skin.png`** is his, in the ordinary sense that a player's skin is the
+  player's. It ships.
+- **`cape.png`** is not. A cape is Mojang artwork *granted* to an account —
+  MineCon, a migration, a partner drop. Owning the right to wear it in the
+  game is not the right to serve the PNG off a website. That is the textures
+  question again, and this repo answers that one conservatively.
+
+Nobody has ruled on it, and this file is not ruling on it either. What has
+been done instead is to make the answer cheap in both directions:
+
+`scripts/build-textures.mjs --no-cape` emits the skin and no cape image, and
+`build:deploy` passes it. A build made that way is not a degraded one — the
+cape is optional art in `playerModel.js`, and when its image does not load
+`attachCape` removes itself and leaves a correct, capeless Evan. That path
+is exercised by `test/22-evan-skin.spec.js`, not merely available.
+
+The gate is: **`dist/skins/evan-cape.png` must not exist**, enforced in
+`scripts/check-deploy-assets.mjs` for the same reason the terrain gate is
+enforced rather than intended — `public/skins/` is a developer's working
+state, it is allowed to hold the cape, and vite copies `public/` into `dist/`
+wholesale.
+
+If Evan decides it may ship, the change is one flag in one npm script and one
+line in the checker. If he decides it may not, nothing changes.
