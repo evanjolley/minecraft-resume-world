@@ -116,10 +116,11 @@ test.describe('cloud layer', () => {
   }), ticks)
 
   test('the layer never steps backwards, however many cell boundaries you cross',
-    async ({ page }) => {
-      // West end of the island, sprint-jumping east: 8 s at ~7.3 b/s is nearly
-      // 60 blocks, five 12-block cell boundaries, and stops short of the rim.
-      await teleport(page, -35.5, SURFACE_Y + 1, 0.5)
+    async ({ page, flatGround }) => {
+      // 8 s of sprint-jumping is nearly 60 blocks and five 12-block cell
+      // boundaries. Real terrain has no 60-block run, so build one -- the
+      // claim under test is about the cloud layer, not about the ground.
+      await flatGround.build({ length: 64 })
       await look(page, { heading: HEADING.eastPlusX })
       await page.keyboard.down('KeyW')
       await page.keyboard.down('ControlLeft')

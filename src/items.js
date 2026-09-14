@@ -232,7 +232,9 @@ function titleCase(key) {
  * that place a fluid by hand, make `/give water` work, and give the held-item
  * renderer a cube of water to draw in your fist.
  */
-const BLOCK_ITEMS = BLOCK_TYPES.filter(b => !b.fluid).map(b => ({
+// `invisible` joins `fluid` here for the same reason: a barrier has no
+// texture to draw as an icon and nothing should ever be holding one.
+const BLOCK_ITEMS = BLOCK_TYPES.filter(b => !b.fluid && !b.invisible).map(b => ({
   id: b.id, key: b.key, name: b.name, places: b.id, block: b,
 }))
 

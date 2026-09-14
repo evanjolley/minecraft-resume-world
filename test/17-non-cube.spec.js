@@ -41,7 +41,17 @@ import {
  */
 const IDS_AT = { x: 8, y: 72, z: 0, wide: 20, deep: 14 }   // 280 ids, 20 a row
 const ORIENT_AT = { x: -10, y: 76, z: 0 }
-const RIG = { x: 20, y: 70, z: 20 }
+/*
+ * The slab/stair rig, built in mid-air well clear of the terrain.
+ *
+ * y was 70, which was open sky over the old 80x80 island. The imported world
+ * is 250 blocks tall and its highest peak is at y=177, so 70 is now deep
+ * underground -- the rig would have been built inside solid stone and every
+ * "fall onto a slab" would have landed on rock first. 200 is 23 above the
+ * highest block in the patch and still inside noa's vertical load range from
+ * spawn, which is what lets the beforeAll build it at all.
+ */
+const RIG = { x: 20, y: 200, z: 20 }
 
 /** Vanilla's stone. Duplicated from blocks.js on purpose, like helpers/world's ID. */
 const STONE = 3

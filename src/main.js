@@ -1,7 +1,7 @@
 import { Engine } from 'noa-engine'
 
 import { registerBlocks } from './blocks.js'
-import { getVoxelID, SPAWN } from './island.js'
+import { getVoxelID, loadTerrain, terrainInfo, SPAWN } from './island.js'
 import { installPhysics, installSpeedModes, MC } from './physics.js'
 import { createSurvival } from './survival.js'
 import { createFluids, installFluids } from './fluids.js'
@@ -29,6 +29,43 @@ import { installHighlightStyle } from './highlight.js'
 import { createAuthority } from './authority.js'
 import { installGamemode } from './gamemode.js'
 import { installCommands } from './commands.js'
+
+/*
+ * THE BOOT GATE.
+ *
+ * island.js is a lookup into a 981KB asset that arrives over the network, and
+ * getVoxelID is synchronous -- noa asks for chunks within a tick of the Engine
+ * existing and expects an answer on the spot. So the fetch has to finish
+ * first, and this is a top-level await: nothing below runs until the terrain
+ * is resident. The loading card in index.html is the page's initial state and
+ * is torn down at the bottom of this file, so the gap is covered rather than
+ * blank.
+ *
+ * REJECTED -- answer air, then invalidate and re-mesh once the data lands.
+ * This is the tempting one and it is the wrong one, twice over. noa CACHES the
+ * chunk you hand it; a chunk answered "all air" is, as far as the engine is
+ * concerned, correct, and getting it back means walking every loaded chunk
+ * through invalidateVoxelsInAABB and paying for the mesh a second time. Worse,
+ * it costs the property the whole design rests on: getVoxelID would answer air
+ * for (0, 135, 0) at t=0 and grass at t=1. Purity is not a nicety here -- it
+ * is why the future persistence layer can be a diff against generation, and
+ * why noa may ask for a chunk twice in any order. A generator that changes its
+ * mind is not a generator.
+ *
+ * REJECTED -- a synchronous XHR. It would preserve purity, and it freezes the
+ * main thread for the length of a network round trip on a file this size,
+ * which is the one thing a browser is entitled to shout at you about.
+ *
+ * REJECTED -- inlining the asset into the bundle as base64. No fetch, no gate,
+ * no loading screen. It also adds ~1.3MB to a 1.27MB bundle, moves the cost
+ * from a cacheable asset to a parse, and puts Mojang generator output straight
+ * into dist/ -- which is precisely what .gitignore and the deploy check are
+ * currently keeping it out of while the licence question is open.
+ */
+const terrainT0 = performance.now()
+await loadTerrain()
+console.log(`terrain: ${JSON.stringify(terrainInfo())} in `
+  + `${Math.round(performance.now() - terrainT0)}ms`)
 
 const noa = new Engine({
   // Without this noa builds its own fixed-position container and appends it
@@ -345,6 +382,20 @@ noa.container.on('lostPointerLock', () => {
   menu.open()
 })
 
+/*
+ * Take the loading card down.
+ *
+ * On the first RENDER, not here and not on a timer: the systems above are all
+ * constructed by now, but noa has not yet meshed a single chunk, so removing
+ * the card synchronously hands you a blue void for the half second it takes to
+ * build the first terrain meshes. One frame of rendering is the cheapest
+ * signal that there is something behind the card.
+ */
+noa.on('beforeRender', function dropLoadingCard() {
+  noa.off('beforeRender', dropLoadingCard)
+  document.getElementById('loading')?.classList.add('hidden')
+})
+
 window.noa = noa
 window.game = {
   // `fluids` is exposed for the same reason `move` is: the test suite asserts
@@ -366,4 +417,16 @@ window.game = {
   // ITEM_BASE are positional, so anything outside this module that wants an
   // iron pickaxe has to ask rather than hardcode 1040-something.
   itemId,
+  // What actually loaded: size, palette, origin, and any palette key with no
+  // block in blocks.js (which should always be empty).
+  terrain: terrainInfo(),
+  /*
+   * The generator itself, for the console and the test suite.
+   *
+   * Deliberately NOT the same question as noa.getBlock: that reads the live
+   * voxel array and answers 0 for any chunk that is not currently loaded,
+   * which in a world 250 blocks tall is most of it. This answers what the
+   * world IS at a coordinate, resident or not, mined or not.
+   */
+  voxelAt: (x, y, z) => getVoxelID(x, y, z, ids),
 }

@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.js'
 import {
   measureJumpApex, measureSpeed, look, HEADING, armApexSampler, readApex, tapKey,
-  teleport, SURFACE_Y,
+  teleport, settleOnGround, SURFACE_Y, PAD_X0, PAD_Y, PAD_Z, DROP_X, DROP_Z,
 } from './helpers/world.js'
 
 /*
@@ -95,12 +95,22 @@ test.describe('movement physics', () => {
       .toBeLessThanOrEqual(single + 0.05)
   })
 
-  test('walking settles at Minecraft walk speed', async ({ page }) => {
+  /*
+   * EVERY GROUND-SPEED TEST NOW BUILDS ITS OWN FLOOR, and the constants below
+   * are untouched. The world became a 128x128 cut of real Minecraft terrain,
+   * which has no flat run anywhere in it -- it steps, slopes and has trees in
+   * it. Measuring 5.612 b/s on a staircase measures the staircase. So
+   * `flatGround.build()` lays a stone pad and stands the player on it, which
+   * is the same flat grass the old island handed these tests for free.
+   */
+  test('walking settles at Minecraft walk speed', async ({ page, flatGround }) => {
+    await flatGround.build()
     const v = await measureSpeed(page, ['KeyW'])
     expect(near(v, MC.WALK), `walk ${v.toFixed(3)} b/s vs ${MC.WALK}`).toBe(true)
   })
 
-  test('sprinting settles at Minecraft sprint speed', async ({ page }) => {
+  test('sprinting settles at Minecraft sprint speed', async ({ page, flatGround }) => {
+    await flatGround.build()
     const v = await measureSpeed(page, ['ControlLeft', 'KeyW'])
     expect(near(v, MC.SPRINT), `sprint ${v.toFixed(3)} b/s vs ${MC.SPRINT}`).toBe(true)
   })
@@ -123,12 +133,12 @@ test.describe('movement physics', () => {
    * phase of the sample window inside that cycle moves it around.
    */
   test('sprint-jumping is faster than sprinting, the way it is in Minecraft',
-    async ({ page }) => {
-      // West end of the island: 3.4 s at 7.3 b/s is 25 blocks of clear run.
-      await teleport(page, -35.5, SURFACE_Y + 1, 0.5)
+    async ({ page, flatGround }) => {
+      // 3.4 s at 7.3 b/s is 25 blocks of clear run, twice, from the same end.
+      await flatGround.build({ length: 34 })
       const sprint = await measureSpeed(page, ['ControlLeft', 'KeyW'], { sampleMs: 2000 })
 
-      await teleport(page, -35.5, SURFACE_Y + 1, 0.5)
+      await teleport(page, PAD_X0 + 0.5, PAD_Y, PAD_Z + 0.5)
       const jumping = await measureSpeed(page, ['ControlLeft', 'KeyW', 'Space'],
         { warmupMs: 1400, sampleMs: 2000 })
 
@@ -138,7 +148,8 @@ test.describe('movement physics', () => {
         `${where} vs Minecraft's ${MC.SPRINT_JUMP}`).toBe(true)
     })
 
-  test('sneaking settles at Minecraft sneak speed', async ({ page }) => {
+  test('sneaking settles at Minecraft sneak speed', async ({ page, flatGround }) => {
+    await flatGround.build()
     // Sneak is slow enough that the 900 ms warmup is most of a block; the
     // sample window is stretched so the displacement is comfortably above
     // per-tick noise.

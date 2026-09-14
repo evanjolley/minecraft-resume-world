@@ -530,7 +530,10 @@ async function writeTextures(raw) {
 
 async function buildHeldAtlases(raw) {
   mkdirSync(join(OUT, 'held'), { recursive: true })
-  await pooled(BLOCK_TYPES, 16, async (def) => {
+  // Invisible blocks (the world-edge barrier) have no face textures to strip,
+  // and nothing can hold one anyway.
+  const held = BLOCK_TYPES.filter(def => !def.invisible)
+  await pooled(held, 16, async (def) => {
     // One 48x16 strip of [side | top | bottom]; heldItem.js maps the box's
     // six faces onto the right third with Babylon faceUV. Built by copying
     // scanlines rather than with three sharp composites, because at 355
@@ -545,7 +548,7 @@ async function buildHeldAtlases(raw) {
     }
     await toPng(strip, 48, TILE).toFile(join(OUT, 'held', `${def.key}.png`))
   })
-  console.log(`  ${BLOCK_TYPES.length} held-item atlases`)
+  console.log(`  ${held.length} held-item atlases`)
 }
 
 /*

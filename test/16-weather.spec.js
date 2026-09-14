@@ -240,8 +240,34 @@ test.describe('rain', () => {
   })
 
   test('the volume is one mesh drawing from a pool that recycles',
-    async ({ page }) => {
+    async ({ page, flatGround }) => {
+      /*
+       * Out in the open, which this world does not have on the ground.
+       *
+       * The `open === columns` assertion below means "every column of the rain
+       * footprint has clear sky". Spawn is under a dark forest canopy and 370
+       * of 441 columns are sheltered by leaves -- which is the shelter code
+       * working, not failing. A scan of the whole patch found no 21x21 patch
+       * of GROUND with open sky over it anywhere: it is a forest against a
+       * mountain. So the test builds the clearing it is talking about, which
+       * is the same flat open surface the old island handed it for free.
+       */
+      await flatGround.build()
       await stormArrives(page, 'rain')
+
+      /*
+       * Give the footprint its documented catch-up frames.
+       *
+       * particles.js rebuilds all 441 columns only when the player crosses a
+       * block boundary HORIZONTALLY, and sweeps an eighth of them per frame
+       * otherwise -- moving straight up onto the pad is a purely vertical move,
+       * so the grid still describes the same columns and only the scan window
+       * changed. That is the intended design (441 column scans a frame is the
+       * thing it is avoiding), not a bug, and eight frames is what it costs.
+       * Without this the test reads the footprint mid-sweep and sees the forest
+       * canopy it left behind two hundred blocks below.
+       */
+      await waitFrames(page, 16)
       const r = await page.evaluate(() => {
         const rain = window.game.weather.rain
         const scene = window.noa.rendering.getScene()
@@ -254,6 +280,9 @@ test.describe('rain', () => {
           recycled: rain.recycled,
           open: rain.openColumns,
           columns: rain.columns,
+          // In the failure message, because "some columns are sheltered" is
+          // almost always "the player is not where the test thinks".
+          at: [...window.noa.ents.getPositionData(window.noa.playerEntity).position],
         }
       })
       expect(r.meshes, `${r.meshes} meshes named 'rain'`).toBe(1)
@@ -269,7 +298,8 @@ test.describe('rain', () => {
       expect(r.verts, `buffer is ${r.verts} verts for a ${r.capacity} pool`)
         .toBe(r.capacity * 4)
       // Out in the open, every column of the footprint should be raining in.
-      expect(r.open, `${r.open} of ${r.columns} columns unsheltered under open sky`)
+      expect(r.open, `${r.open} of ${r.columns} columns unsheltered under open sky,`
+        + ` standing at ${r.at.map(v => v.toFixed(1)).join(', ')}`)
         .toBe(r.columns)
 
       await look(page, { heading: 0.8, pitch: -0.05 })

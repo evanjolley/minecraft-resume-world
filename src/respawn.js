@@ -3,9 +3,19 @@ import { SPAWN, VOID_Y } from './island.js'
 /*
  * Void death, input freeze, and respawn.
  *
- * With open void on all sides, falling off is the first thing every visitor
- * does, deliberately. In Minecraft that kills you rather than teleporting
- * you home, so it routes through survival state and the death screen.
+ * WHAT CHANGED WITH THE IMPORTED WORLD. This used to be the FIRST thing every
+ * visitor did: the island floated in open void and walking off the rim was
+ * the intended introduction. The world is now a 128x128 cut of real Minecraft
+ * terrain with barrier walls on all four sides and unbreakable bedrock under
+ * it, so there is nowhere left to fall off. Void death is still real, still
+ * below the world floor at y=-64 (island.js: VOID_Y = -70), and still routes
+ * through survival state and the death screen -- but it is now reachable only
+ * by /tp, exactly as it is in Minecraft.
+ *
+ * The code below is unchanged and deliberately so. Falling is still how you
+ * die from a height, the corpse freeze still matters (see the long note
+ * under it), and a world that gains a hole in its floor tomorrow -- a
+ * creative-mode dig, a portal, a build -- finds this already working.
  */
 export function installRespawn(noa, survival, inputLock) {
   const player = noa.playerEntity
@@ -25,8 +35,8 @@ export function installRespawn(noa, survival, inputLock) {
    * and re-mesh.
    *
    * Note the shape of it: dying is NOT what unloads the world. Death happens
-   * at y = -60, which is chunk -2 against the island's chunk 2 -- four apart,
-   * well inside the remove distance of 5. Nothing is evicted at that point.
+   * a couple of blocks below wherever you entered the void, which is well
+   * inside the remove distance of 5 chunks. Nothing is evicted at that point.
    * It is the seconds you then spend reading "You Died!" that do it, which is
    * why the bug looked like it had nothing to do with how long you waited.
    *

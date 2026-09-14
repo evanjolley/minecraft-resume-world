@@ -8,15 +8,48 @@
  * software-GL frame stretches the measurement window instead of corrupting it.
  */
 
-/** Grass surface. island.js puts grass at SURFACE_Y - 1, feet rest at 64. */
-export const SURFACE_Y = 64
-export const ISLAND_HALF = 40
+/**
+ * Grass under the spawn column. island.js still puts grass at SURFACE_Y - 1
+ * and rests your feet at SURFACE_Y -- the relationship is unchanged, the
+ * number moved, because the world is now a 128x128 patch of real Minecraft
+ * terrain and its dark-forest floor at the spawn column sits at y=135 rather
+ * than at sea level.
+ */
+export const SURFACE_Y = 136
 export const SPAWN = [0.5, SURFACE_Y + 2, 0.5]
+
+/**
+ * World bounds, in world coordinates, mirroring island.js. The patch is
+ * 128x128 with the spawn column at the origin, so it is NOT symmetric --
+ * which is itself worth asserting, since a symmetric-island assumption is
+ * exactly what these tests used to be full of.
+ */
+export const MIN_X = -40
+export const MAX_X = 87
+export const MIN_Z = -56
+export const MAX_Z = 71
+
+/*
+ * A column with grass at SURFACE_Y - 1 and NOTHING above it, four blocks east
+ * of spawn.
+ *
+ * Every "teleport up and fall" test used to drop down the spawn column,
+ * because the old island had open sky over all of it. Spawn is now under a
+ * dark forest canopy -- there are leaves at y=139 and y=140 directly overhead
+ * -- and a player dropped from SURFACE_Y + 10 would land on a leaf, or worse
+ * materialise inside one. x=4 is the nearest column that is clear all the way
+ * up, and its ground is at exactly the same height as spawn's, so every
+ * `SURFACE_Y + n` distance in those tests still means what it said.
+ */
+export const DROP_X = 4.5
+export const DROP_Z = 0.5
 
 /** Block ids, mirroring blocks.js. Duplicated on purpose: if someone
  *  renumbers the table, these tests should fail rather than follow along. */
 export const ID = {
   air: 0, grass: 1, dirt: 2, stone: 3, cobblestone: 4, planks: 5, bedrock: 6,
+  // The invisible wall around the patch. Last id in the table.
+  barrier: 638,
 }
 
 /**
@@ -59,9 +92,11 @@ const ALL_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'Control
  * Boot a page to a genuinely playable world.
  *
  * Three gates, in order, because each can pass while the next is still false:
- *   1. window.noa / window.game exist  (the module graph evaluated)
- *   2. the island's far rim is meshed  (chunks generated; getBlock lies with
- *      0 for an unloaded chunk, so "is x=39 solid" is also the load check)
+ *   1. window.noa / window.game exist  (the module graph evaluated -- which
+ *      now also means the terrain asset has been fetched and decoded, because
+ *      main.js awaits that before it constructs the Engine)
+ *   2. chunks around spawn are meshed  (getBlock lies with 0 for an unloaded
+ *      chunk, so "is this voxel solid" is also the load check)
  *   3. the player body is at rest      (it spawns 2 blocks up and falls)
  */
 export async function bootWorld(page) {
@@ -79,12 +114,22 @@ export async function waitForWorld(page) {
   await page.waitForFunction(() => !!(window.noa && window.game), null,
     { timeout: 30_000, polling: 100 })
 
-  await page.waitForFunction(([half, y]) => {
+  await page.waitForFunction(([y, minX]) => {
     const g = window.noa.getBlock.bind(window.noa)
-    // Rim on both axes plus the bedrock floor: the vertical chunk column has
-    // to be resident too, or the y=0 assertions read air from thin air.
-    return g(half - 1, y, 0) !== 0 && g(0, y, half - 1) !== 0 && g(0, 0, 0) !== 0
-  }, [ISLAND_HALF, SURFACE_Y - 1], { timeout: 45_000, polling: 100 })
+    /*
+     * The ground under spawn, a column 20 blocks out on the far diagonal, and
+     * the invisible wall 41 blocks west. Three probes rather than one because
+     * noa loads chunks in a box and the corners of that box land last.
+     *
+     * The old gate also probed the BEDROCK FLOOR at y=0, which cannot work any
+     * more and is worth saying why: the world is 250 blocks tall now, bedrock
+     * is at y=-64, and noa's chunkAddDistance is [4, 3] -- three chunks of 32
+     * is 96 blocks, so standing at y=136 the floor is not merely unmeshed, it
+     * is permanently out of range. Any test that wants to read bedrock has to
+     * go there.
+     */
+    return g(0, y, 0) !== 0 && g(-20, y - 2, -20) !== 0 && g(minX - 1, y, 0) !== 0
+  }, [SURFACE_Y - 1, MIN_X], { timeout: 45_000, polling: 100 })
 
   await page.waitForFunction(() => {
     const noa = window.noa
@@ -619,4 +664,157 @@ export async function doubleTapFly(page) {
   await page.waitForTimeout(40)
   await tapKey(page, 'Space', 60)
   await waitTicks(page, 2)
+}
+
+/* ---------------- test ground ---------------- */
+
+/*
+ * A flat pad, built in mid-air, for the tests that measure walking.
+ *
+ * WHY THIS EXISTS. The world used to be a hand-built island with a perfectly
+ * level grass top, so "measure sprint speed over 1.6 seconds" could just be
+ * done wherever the player happened to be standing. Real Minecraft terrain has
+ * no such place: a scan of the whole 128x128 patch found exactly one flat
+ * three-wide corridor longer than ten blocks, and it is made of packed ice at
+ * the far edge of the map. Everything else steps, slopes, or has a tree in it.
+ *
+ * That is a fact about the world, not about the code under test. Sprint speed
+ * is 5.612 b/s on flat ground in Minecraft and it must still be 5.612 b/s
+ * here; what changed is that the suite now has to PROVIDE the flat ground
+ * instead of assuming it. So these tests build their own, exactly as the
+ * brief's "give the test the ground it needs rather than relax the assertion"
+ * asks.
+ *
+ * WHY IN MID-AIR, at y=200, rather than levelling a patch of forest:
+ *   - nothing is destroyed, so the restore is "set it all back to air" and
+ *     cannot leave a scar if a test dies halfway
+ *   - the terrain has trees in it; clearing a 40-block corridor through a dark
+ *     forest is several hundred more setBlock calls and several more remeshes
+ *   - the pad's own edge is a genuine ledge with a 200-block drop under it,
+ *     which is what the sneak tests need now that the world has no rim
+ *
+ * y=200 is 23 above the highest terrain in the patch (y=177) and 64 above
+ * spawn -- close enough that noa never evicts the spawn chunks while a test is
+ * up there, which would cost a full re-mesh on the way back.
+ */
+export const PAD_Y = 200
+export const PAD_Z = 0
+/** The pad runs +X from here. Start a walk at PAD_START and head east. */
+export const PAD_X0 = 0
+
+/** The x of the pad's last block -- its east lip, and the ledge you can walk
+ *  off. Two blocks of the pad run WEST of PAD_X0 so you can back up. */
+export const padEdgeX = (length) => PAD_X0 + length - 1
+
+/**
+ * Build a `length` x 3 stone pad at y = PAD_Y - 1 with clear air over it, and
+ * stand the player on its west end.
+ *
+ * @returns a restore function that takes it all back to air.
+ */
+export async function usePad(page, { length = 44 } = {}) {
+  await page.evaluate(([x0, y, z, len, stone]) => {
+    const noa = window.noa
+    const body = noa.ents.getPhysics(noa.playerEntity).body
+
+    /*
+     * Order matters and this is the subtle part. noa.setBlock is a no-op on a
+     * chunk that is not loaded, and chunks only load around the player -- so
+     * the player has to be up here BEFORE the pad exists. Which means a moment
+     * of standing on nothing, hence the gravity freeze (the same trick
+     * respawn.js uses on a corpse, and for the same reason).
+     */
+    noa.ents.setPosition(noa.playerEntity, [x0 + 0.5, y, z + 0.5])
+    body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
+    window.__padGravity = body.gravityMultiplier
+    body.gravityMultiplier = 0
+  }, [PAD_X0, PAD_Y, PAD_Z, length, ID.stone])
+
+  /*
+   * Poll until a write STICKS. There is no public "is this chunk loaded" on
+   * noa that is worth trusting here, and the thing we actually care about is
+   * precisely whether setBlock takes -- so probe with the write itself.
+   */
+  await page.waitForFunction(([x0, y, z, stone]) => {
+    window.noa.setBlock(stone, x0, y - 1, z)
+    return window.noa.getBlock(x0, y - 1, z) === stone
+  }, [PAD_X0, PAD_Y, PAD_Z, ID.stone], { timeout: 15_000, polling: 100 })
+
+  await page.evaluate(([x0, y, z, len, stone]) => {
+    const noa = window.noa
+    for (let i = -2; i < len; i++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        noa.setBlock(stone, x0 + i, y - 1, z + dz)
+        for (let dy = 0; dy < 4; dy++) noa.setBlock(0, x0 + i, y + dy, z + dz)
+      }
+    }
+    const body = noa.ents.getPhysics(noa.playerEntity).body
+    body.gravityMultiplier = window.__padGravity ?? 1
+    delete window.__padGravity
+  }, [PAD_X0, PAD_Y, PAD_Z, length, ID.stone])
+
+  await settleOnGround(page)
+  await page.evaluate(() => window.game.survival.clearFallTracking())
+
+  /*
+   * Aim east, because the pad runs east and W walks wherever the camera looks.
+   * Without this the default heading of 0 (south, +z) marches the player off
+   * the three-block width inside one block, and the failure reads as a
+   * mysteriously slow walk rather than as a fall.
+   */
+  await look(page, { heading: HEADING.eastPlusX })
+
+  return async () => {
+    await page.evaluate(([x0, y, z, len]) => {
+      const noa = window.noa
+      for (let i = -2; i < len; i++) {
+        for (let dz = -1; dz <= 1; dz++) noa.setBlock(0, x0 + i, y - 1, z + dz)
+      }
+    }, [PAD_X0, PAD_Y, PAD_Z, length])
+  }
+}
+
+/*
+ * Stand the player in a carved pocket on the world floor, on bedrock.
+ *
+ * Two specs want to punch bedrock, and until now both did it at y=0 -- the old
+ * island's floor, which sat comfortably inside the chunks around spawn. The
+ * imported world's floor is at y=-64, two hundred blocks down and permanently
+ * outside noa's vertical chunkAddDistance of 96, so BOTH halves of the old
+ * trick break: getBlock answers 0 (which the terrain fixture would then
+ * faithfully "restore") and setBlock is a silent no-op. The player has to
+ * actually go there first.
+ *
+ * Bedrock at the spawn column runs y=-64..-61, so carving -63..-60 leaves a
+ * four-block pocket with bedrock directly underfoot.
+ *
+ * @param terrain the fixture, so the pocket is filled back in afterwards.
+ */
+export async function standOnBedrock(page, terrain) {
+  await page.evaluate(() => {
+    const noa = window.noa
+    noa.ents.setPosition(noa.playerEntity, [0.5, -55, 0.5])
+    const body = noa.ents.getPhysics(noa.playerEntity).body
+    body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
+    // Embedded in solid rock for a moment. Gravity off so the body is not
+    // fighting its way out of the stone while the chunks stream in.
+    body.gravityMultiplier = 0
+    window.game.survival.clearFallTracking()
+  })
+
+  await page.waitForFunction(() => window.noa.getBlock(0, -64, 0) !== 0,
+    null, { timeout: 45_000, polling: 100 })
+
+  await terrain.keep([0, -63, 0], [0, -60, 0])
+  for (let y = -63; y <= -60; y++) await setBlock(page, ID.air, 0, y, 0)
+
+  await page.evaluate(() => {
+    const noa = window.noa
+    noa.ents.setPosition(noa.playerEntity, [0.5, -63, 0.5])
+    const body = noa.ents.getPhysics(noa.playerEntity).body
+    body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
+    body.gravityMultiplier = 1
+    window.game.survival.clearFallTracking()
+  })
+  await settleOnGround(page)
 }

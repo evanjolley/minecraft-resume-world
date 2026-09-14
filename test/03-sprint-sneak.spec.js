@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.js'
 import {
   look, HEADING, tapKey, waitTicks, eyeHeight, fovDegrees, teleport, position,
-  settleOnGround, SURFACE_Y, ISLAND_HALF,
+  settleOnGround, PAD_X0, PAD_Y, PAD_Z, padEdgeX,
 } from './helpers/world.js'
 import { shotRegion } from './helpers/shots.js'
 
@@ -91,8 +91,11 @@ test.describe('sprint', () => {
    * rather than sneaking through on a wide tolerance.
    */
   test('the sprint-jump boost lands on every hop, not just the first',
-    async ({ page }) => {
-      await teleport(page, -35.5, SURFACE_Y + 1, 0.5)
+    async ({ page, flatGround }) => {
+      // 4.2 s of held sprint-jumping is a bit over 30 blocks, and real
+      // terrain has no 30-block run in it, so build one. The assertions --
+      // three launches and a trough above 0.95 * SPRINT -- are unchanged.
+      await flatGround.build({ length: 40 })
       await page.keyboard.down('KeyW')
       await page.keyboard.down('ControlLeft')
       await page.keyboard.down('Space')
@@ -157,53 +160,67 @@ test.describe('sneak', () => {
     })
 
   /*
-   * Edge protection, tested at the island's real rim rather than a dug pit,
-   * because the rim is where it matters: everything past x=39 is void, not a
-   * drop. Both halves run from the same start block so the only difference
-   * between them is whether shift is held.
+   * Edge protection, tested at a real lip with a real drop under it.
+   *
+   * It used to be tested at the island's rim, where everything past x=39 was
+   * open void. The world has no rim any more -- it is a 128x128 cut of real
+   * terrain with an invisible wall around it, and you cannot walk off it
+   * anywhere. So the test builds the ledge it needs: a stone pad in the air
+   * with a two-hundred-block drop off its east lip.
+   *
+   * The BEHAVIOUR under test did not move an inch. Sneak still has to stop
+   * you at an edge, walking still has to take you over it, and both halves
+   * still run from the same start block so the only difference between them
+   * is whether shift is held.
    */
-  const RIM_START = [ISLAND_HALF - 0.5, SURFACE_Y + 0.5, 0.5] // centre of x=39
+  const PAD_LEN = 8
+  const EDGE_X = padEdgeX(PAD_LEN)          // last solid column of the pad
+  const RIM_START = () => [EDGE_X + 0.5, PAD_Y, PAD_Z + 0.5]
 
-  test('sneaking at the rim refuses to walk you off into the void', async ({ page }) => {
-    await teleport(page, ...RIM_START)
-    await settleOnGround(page)
-    await look(page, { heading: HEADING.eastPlusX })
+  test('sneaking at the lip refuses to walk you off the edge',
+    async ({ page, flatGround }) => {
+      await flatGround.build({ length: PAD_LEN })
+      await teleport(page, ...RIM_START())
+      await settleOnGround(page)
+      await look(page, { heading: HEADING.eastPlusX })
 
-    await page.keyboard.down('ShiftLeft')
-    await page.keyboard.down('KeyW')
-    await page.waitForTimeout(2000)
-    const [x, y] = await position(page)
-    await page.keyboard.up('KeyW')
-    await page.keyboard.up('ShiftLeft')
+      await page.keyboard.down('ShiftLeft')
+      await page.keyboard.down('KeyW')
+      await page.waitForTimeout(2000)
+      const [x, y] = await position(page)
+      await page.keyboard.up('KeyW')
+      await page.keyboard.up('ShiftLeft')
 
-    // Still standing on the last column, not hanging off it. The leading edge
-    // is half a width plus the 0.1 lookahead, so the stop belongs just under
-    // x = 39.7, with the feet still at y = 64.
-    const where = `ended at x=${x.toFixed(3)} y=${y.toFixed(3)}`
-    expect(y, `${where} -- fell off the island while sneaking`).toBeCloseTo(SURFACE_Y, 1)
-    // Overhang is the POINT of sneaking, so this only asserts you are still
-    // supported, not that you stopped short. The box is 0.6 wide against a
-    // 1.0 block, so a sneaking player hangs most of their body over the void
-    // -- that is what makes bridging possible.
-    expect(x, `${where} -- lost all footing on the rim`).toBeLessThan(ISLAND_HALF + 0.6)
-    expect(x, `${where} -- never actually walked`).toBeGreaterThan(ISLAND_HALF - 0.55)
-  })
+      // Still standing on the last column, not hanging off it. The leading
+      // edge is half a width plus the 0.1 lookahead, so the stop belongs just
+      // under x = EDGE_X + 0.7, with the feet still on the pad.
+      const where = `ended at x=${x.toFixed(3)} y=${y.toFixed(3)}`
+      expect(y, `${where} -- fell off the ledge while sneaking`).toBeCloseTo(PAD_Y, 1)
+      // Overhang is the POINT of sneaking, so this only asserts you are still
+      // supported, not that you stopped short. The box is 0.6 wide against a
+      // 1.0 block, so a sneaking player hangs most of their body over the
+      // drop -- that is what makes bridging possible.
+      expect(x, `${where} -- lost all footing on the lip`).toBeLessThan(EDGE_X + 1.6)
+      expect(x, `${where} -- never actually walked`).toBeGreaterThan(EDGE_X + 0.45)
+    })
 
-  test('walking the same rim without sneak drops you off it', async ({ page }) => {
-    // The control case. Without it, a sneak test passes just as happily
-    // against a build where the player cannot move at all.
-    await teleport(page, ...RIM_START)
-    await settleOnGround(page)
-    await look(page, { heading: HEADING.eastPlusX })
+  test('walking the same lip without sneak drops you off it',
+    async ({ page, flatGround }) => {
+      // The control case. Without it, a sneak test passes just as happily
+      // against a build where the player cannot move at all.
+      await flatGround.build({ length: PAD_LEN })
+      await teleport(page, ...RIM_START())
+      await settleOnGround(page)
+      await look(page, { heading: HEADING.eastPlusX })
 
-    await page.keyboard.down('KeyW')
-    await page.waitForTimeout(1500)
-    const [x, y] = await position(page)
-    await page.keyboard.up('KeyW')
+      await page.keyboard.down('KeyW')
+      await page.waitForTimeout(1500)
+      const [x, y] = await position(page)
+      await page.keyboard.up('KeyW')
 
-    expect(x, `x was ${x.toFixed(3)}`).toBeGreaterThan(ISLAND_HALF)
-    expect(y, `y was ${y.toFixed(3)} -- did not fall`).toBeLessThan(SURFACE_Y - 5)
-  })
+      expect(x, `x was ${x.toFixed(3)}`).toBeGreaterThan(EDGE_X + 1)
+      expect(y, `y was ${y.toFixed(3)} -- did not fall`).toBeLessThan(PAD_Y - 5)
+    })
 
   test('the crouched player model reads as crouched', async ({ page }) => {
     // Visual only. "Is the model visibly lower and hunched" is a judgement

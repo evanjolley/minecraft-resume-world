@@ -1,10 +1,17 @@
 import { test, expect } from './fixtures.js'
-import { SURFACE_Y, teleport, position, waitTicks, settleOnGround } from './helpers/world.js'
+import {
+  SURFACE_Y, teleport, position, waitTicks, settleOnGround, DROP_X, DROP_Z,
+} from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 
-/* island.js kills you below this. Well under the bedrock floor, so falling
- * off the rim is a real fall rather than an instant teleport. */
-const VOID_Y = -60
+/*
+ * Mirrors island.js. Moved from -60 to -70 because the imported world's
+ * bedrock runs y=-64..-60, so the old line sat inside solid rock. The void is
+ * now genuinely below the world floor -- and, with barriers around the patch,
+ * is no longer somewhere you can WALK to. It is reachable by /tp and by this
+ * teleport, which is exactly how you reach it in Minecraft.
+ */
+const VOID_Y = -70
 
 const survival = (page) => page.evaluate(() => ({
   health: window.game.survival.health,
@@ -112,11 +119,11 @@ test.describe('death and respawn', () => {
       // below the teleport height -- drop from exactly 10 and it measures
       // 9.93 and charges 6 instead of 7. Testing at 10.5 is testing the rule;
       // testing at 10.0 is testing the sampling jitter.
-      await teleport(page, 0.5, SURFACE_Y + 3.4, 0.5)
+      await teleport(page, DROP_X, SURFACE_Y + 3.4, DROP_Z)
       await settleOnGround(page)
       expect((await survival(page)).health, 'a 3-block fall hurt').toBe(20)
 
-      await teleport(page, 0.5, SURFACE_Y + 10.5, 0.5)
+      await teleport(page, DROP_X, SURFACE_Y + 10.5, DROP_Z)
       await settleOnGround(page)
       const hurt = (await survival(page)).health
       expect(hurt, `health after a 10.5-block fall was ${hurt}`).toBe(13)

@@ -1,6 +1,6 @@
 import { test as base, expect } from '@playwright/test'
 import { watchErrors } from './helpers/errors.js'
-import { bootWorld, resetWorld, snapshotRegion } from './helpers/world.js'
+import { bootWorld, resetWorld, snapshotRegion, usePad } from './helpers/world.js'
 
 /*
  * Start here.
@@ -81,6 +81,28 @@ export const test = base.extend({
    * to fail against the current build, and a failing test that leaks a hole in
    * the island would take the next four down with it.
    */
+  /*
+   * Flat ground on demand.
+   *
+   * Real Minecraft terrain has none -- a scan of the whole patch found one
+   * flat three-wide corridor longer than ten blocks, made of packed ice, at
+   * the map edge. So any test that MEASURES WALKING has to build the surface
+   * it measures on. See usePad in helpers/world.js for where and why.
+   *
+   * A fixture for exactly the reason `terrain` is one: teardown runs even when
+   * an assertion throws, and a leaked stone slab hanging at y=199 would be
+   * inherited by every test after it.
+   */
+  flatGround: async ({ page }, use) => {
+    let restore = null
+    await use({
+      async build(opts) {
+        restore = await usePad(page, opts)
+      },
+    })
+    if (restore) await restore()
+  },
+
   terrain: async ({ page }, use) => {
     const undos = []
     await use({

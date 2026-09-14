@@ -2,7 +2,7 @@ import { test, expect } from './fixtures.js'
 import {
   ID, SURFACE_Y, HEADING, aim, holdMouse, getBlock, setBlock, position,
   teleport, settleOnGround, waitTicks, useGamemode, gamemode, caps, isFlying,
-  isOperator, doubleTapFly, targetedBlock, measureSpeed,
+  isOperator, doubleTapFly, targetedBlock, measureSpeed, DROP_X, DROP_Z,
 } from './helpers/world.js'
 
 /* physics.js MC.FLY_SPEED. Duplicated rather than imported for the same reason
@@ -127,6 +127,11 @@ test.describe('creative', () => {
 test.describe('flight', () => {
   test('double-tapping jump in creative leaves the ground and climbs',
     async ({ page }) => {
+      // Four blocks east of spawn: the spawn column has a dark-forest canopy
+      // three blocks overhead, and a climb that stops at a leaf reads as
+      // flight that does not work.
+      await teleport(page, DROP_X, SURFACE_Y, DROP_Z)
+      await settleOnGround(page)
       await useGamemode(page, 'creative')
       const [, y0] = await position(page)
 
@@ -165,6 +170,8 @@ test.describe('flight', () => {
 
   test('flight runs at Minecraft\'s speed, and sprinting doubles it',
     async ({ page }) => {
+      await teleport(page, DROP_X, SURFACE_Y, DROP_Z)
+      await settleOnGround(page)
       await useGamemode(page, 'creative')
       await doubleTapFly(page)
       // Get clear of the ground first: touching down cancels the flight, and
@@ -172,6 +179,16 @@ test.describe('flight', () => {
       await page.keyboard.down('Space')
       await page.waitForTimeout(700)
       await page.keyboard.up('Space')
+
+      /*
+       * ...and then up into genuinely open air. Climbing off the ground was
+       * enough over the old island, whose surface was flat and bare; here the
+       * player is inside a dark forest and would fly into a trunk within a
+       * second, which measures the tree rather than the flight speed. The
+       * teleport keeps `flying` true -- it only zeroes velocity.
+       */
+      await teleport(page, DROP_X, 210, DROP_Z)
+      await waitTicks(page, 2)
 
       const cruise = await measureSpeed(page, ['KeyW'])
       expect(cruise, `flew at ${cruise.toFixed(2)} b/s`).toBeGreaterThan(FLY_SPEED * 0.95)

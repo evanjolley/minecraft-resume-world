@@ -44,9 +44,14 @@ const near = (actual, want, tol = TOL) => Math.abs(actual - want) <= want * tol
  * A block of fluid in mid-air, which is a perfectly good pool: nothing here
  * simulates flow, so a floating cube of water is as still as a lake.
  *
- * Built well above the island (y 90+) rather than by flooding a hole in it.
+ * Built well above the terrain (y 200+) rather than by flooding a hole in it.
  * Digging would mean 200 broken voxels for the terrain fixture to put back,
- * and the island's own surface at y=64 is where half the other specs stand.
+ * and the surface at y=135 is where half the other specs stand.
+ *
+ * Moved up from y=90 with the imported world: the patch runs from bedrock at
+ * y=-64 to a peak at y=177, so the old "mid-air" altitude is now solid rock.
+ * 200 is above everything and still inside noa's vertical load range from
+ * spawn, so authority.requestFill actually lands.
  */
 async function pool(page, terrain, kind, [x0, y0, z0], [x1, y1, z1]) {
   await grantOp(page)
@@ -161,9 +166,9 @@ test.describe('swimming', () => {
    * than at its centre, so a one-wide column would drop out of the test the
    * moment the player drifted a tenth of a block.
    */
-  const SHAFT_MIN = [10, 90, 10]
-  const SHAFT_MAX = [12, 113, 12]
-  const SHAFT_TOP = [11.5, 110, 11.5]
+  const SHAFT_MIN = [10, 200, 10]
+  const SHAFT_MAX = [12, 223, 12]
+  const SHAFT_TOP = [11.5, 220, 11.5]
 
   test('you sink at Minecraft\'s rate rather than falling', async ({ page, terrain }) => {
     await pool(page, terrain, 'water', SHAFT_MIN, SHAFT_MAX)
@@ -188,7 +193,7 @@ test.describe('swimming', () => {
     await pool(page, terrain, 'water', SHAFT_MIN, SHAFT_MAX)
     // Near the bottom of the shaft: 3 s of climbing at 3.5 b/s is 10 blocks,
     // and the shaft is 24 deep.
-    await teleport(page, 11.5, 91, 11.5)
+    await teleport(page, 11.5, 201, 11.5)
     await page.keyboard.down('Space')
     try {
       await page.waitForTimeout(1500)
@@ -202,8 +207,8 @@ test.describe('swimming', () => {
   test('swimming forward is less than half walking speed', async ({ page, terrain }) => {
     // A 24-long trough, 3 wide and 5 deep. The player sinks half a block per
     // second while swimming, so the depth is what keeps them in it.
-    await pool(page, terrain, 'water', [-12, 95, -1], [12, 99, 1])
-    await teleport(page, -11.5, 97, 0.5)
+    await pool(page, terrain, 'water', [-12, 205, -1], [12, 209, 1])
+    await teleport(page, -11.5, 207, 0.5)
     await look(page, { heading: HEADING.eastPlusX })
 
     const v = await measureSpeed(page, ['KeyW'], { warmupMs: 1200, sampleMs: 1000 })
@@ -229,8 +234,8 @@ test.describe('swimming', () => {
   test('falling into water cancels the fall damage entirely', async ({ page, terrain }) => {
     // 40 blocks of drop is 37 past the 3-block safe distance, which is nearly
     // twice a full health bar. Landing on the island instead would be fatal.
-    await pool(page, terrain, 'water', [20, 90, 20], [22, 96, 22])
-    await teleport(page, 21.5, 130, 21.5)
+    await pool(page, terrain, 'water', [20, 200, 20], [22, 206, 22])
+    await teleport(page, 21.5, 228, 21.5)
     await page.waitForFunction(() => window.game.fluids.feet === 'water', null, { timeout: 10_000 })
     await waitTicks(page, 10)
     expect(await health(page)).toBe(20)
@@ -326,12 +331,39 @@ test.describe('lava', () => {
        * Out of the lava, burning takes over at 1 a second for 15 seconds.
        * Real ticks here rather than a driven clock, because the fire countdown
        * is survival's own tick handler -- driving it would test nothing.
+       *
+       * WAITED IN TICKS, NOT MILLISECONDS, and for the reason measureSpeed
+       * spells out at length in helpers/world.js: survival.js's fire handler
+       * is `noa.on('tick', dt)` with noa's FIXED dt of 1000/tickRate, so two
+       * and a half seconds of burning is 75 ticks of simulated time and not
+       * 2500 ms of the laptop's. Those used to be the same number. With a
+       * 250-block-tall world of real terrain to mesh, a swiftshader frame can
+       * stall the tick loop long enough that 2.5 s of wall clock contains 60
+       * ticks, and the test read one point of damage for a burn that was
+       * running exactly to spec. The claim is unchanged -- 1 damage a second
+       * of game time -- only the ruler is.
        */
-      const before = await health(page)
-      await page.waitForTimeout(2500)
-      const after = await health(page)
-      const lost = before - after
-      expect(lost, `burned for ${lost} over 2.5 s at ${MC.FIRE_DPS}/s`)
+      const r = await page.evaluate(() => new Promise((resolve) => {
+        const noa = window.noa
+        const s = window.game.survival
+        // Read the start health INSIDE the same round trip that arms the
+        // counter. Reading it over CDP first and arming second leaves a gap of
+        // unknown length in which the fire can tick, so the window measured is
+        // not the window asserted -- the same class of error measureSpeed
+        // documents, and the reason breathTrace is synchronous too.
+        const h0 = s.health
+        let ticks = 0
+        const want = Math.round(2.5 * noa.tickRate)
+        const fn = () => {
+          if (++ticks < want) return
+          noa.off('tick', fn)
+          resolve({ lost: h0 - s.health, ticks, dead: s.dead })
+        }
+        noa.on('tick', fn)
+      }))
+      const lost = r.lost
+      expect(lost, `burned for ${lost} over ${r.ticks} ticks`
+        + ` (2.5 s of game time) at ${MC.FIRE_DPS}/s, dead=${r.dead}`)
         .toBeGreaterThanOrEqual(2)
       expect(lost).toBeLessThanOrEqual(3)
       expect(await page.evaluate(() => window.game.survival.burning)).toBe(true)
@@ -341,8 +373,8 @@ test.describe('lava', () => {
     await page.evaluate(() => window.game.survival.lavaBurn(0.05))
     expect(await page.evaluate(() => window.game.survival.burning)).toBe(true)
 
-    await pool(page, terrain, 'water', [30, 90, 30], [32, 94, 32])
-    await teleport(page, 31.5, 92, 31.5)
+    await pool(page, terrain, 'water', [30, 200, 30], [32, 204, 32])
+    await teleport(page, 31.5, 202, 31.5)
     await page.waitForFunction(() => window.game.fluids.feet === 'water', null, { timeout: 10_000 })
     await waitTicks(page, 3)
     expect(await page.evaluate(() => window.game.survival.burning)).toBe(false)

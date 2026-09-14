@@ -20,8 +20,11 @@ import { BLOCK_TYPES } from '../../src/blocks.js'
 
 // Only full cubes. Slabs and stairs exist in blocks.js as separate oriented
 // keys for player building; terrain import must not pick them up by name.
+// `invisible` blocks are excluded too: the world-edge barrier is a thing
+// island.js places, never a thing terrain import is allowed to plant in the
+// middle of the map because vanilla happened to have one.
 export const CUBE_KEYS = new Set(
-  BLOCK_TYPES.filter(b => !/_slab|_stairs/.test(b.key)).map(b => b.key),
+  BLOCK_TYPES.filter(b => !/_slab|_stairs/.test(b.key) && !b.invisible).map(b => b.key),
 )
 
 /*
@@ -35,6 +38,19 @@ export const PENDING_KEYS = new Set(['water', 'lava'])
 const RENAMES = {
   grass_block: 'grass',
   oak_planks: 'planks',
+  /*
+   * Suspicious gravel and sand are archaeology blocks: a normal gravel or
+   * sand block with a hidden item inside and a slightly different texture,
+   * generated in trail ruins and ocean ruins. Ten voxels of suspicious_gravel
+   * turned up in this patch and classified as `missing`, which silently makes
+   * them air -- ten one-block holes in a ruin floor.
+   *
+   * Mapped rather than given their own block: the item inside needs a
+   * brushing mechanic that does not exist here, and without it the only thing
+   * a separate block would carry is a texture one pixel different from gravel.
+   */
+  suspicious_gravel: 'gravel',
+  suspicious_sand: 'sand',
   /*
    * Infested blocks are visually identical to the block they imitate -- that
    * is their whole point. The silverfish inside is an entity the engine has

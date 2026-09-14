@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.js'
 import {
   ID, SURFACE_Y, aim, setBlock, teleport, settleOnGround, waitTicks,
-  useGamemode,
+  useGamemode, DROP_X, DROP_Z, standOnBedrock,
 } from './helpers/world.js'
 import { armAudio } from './helpers/audio.js'
 
@@ -32,7 +32,8 @@ const HIT_RATE = 0.5
 const isHurtSample = (name) => /^damage\/hit[123]$/.test(name)
 
 /* island.js kills you below this, same constant 08-death.spec.js uses. */
-const VOID_Y = -60
+// Mirrors island.js: below the world floor at y=-64. See 08-death.spec.js.
+const VOID_Y = -70
 
 /* Straight down. noa clamps just short of a right angle. */
 const DOWN = Math.PI / 2
@@ -171,7 +172,7 @@ test.describe('sounds', () => {
        * and the wiring, not just the emitter. floor(30 - 3) = 27 half hearts:
        * lethal, and well over the 4 that picks the big thump.
        */
-      await teleport(page, 0.5, SURFACE_Y + 30, 0.5)
+      await teleport(page, DROP_X, SURFACE_Y + 30, DROP_Z)
       await audio.clear()
       await waitForDeath(page)
       await waitTicks(page, 2)
@@ -198,7 +199,7 @@ test.describe('sounds', () => {
        * which is NOT greater than 4, so vanilla takes the small branch. The
        * boundary is the whole point of the test.
        */
-      await teleport(page, 0.5, SURFACE_Y + 7.4, 0.5)
+      await teleport(page, DROP_X, SURFACE_Y + 7.4, DROP_Z)
       await audio.clear()
       await settleOnGround(page)
       await waitTicks(page, 2)
@@ -224,13 +225,10 @@ test.describe('sounds', () => {
      * Standing pocket at the world floor, same trick 06-mining.spec.js uses.
      */
     await useGamemode(page, 'survival')
-    await terrain.keep([0, 0, 0], [0, 3, 0])
-    for (const y of [1, 2, 3]) await setBlock(page, ID.air, 0, y, 0)
-    await teleport(page, 0.5, 1, 0.5)
-    await settleOnGround(page)
+    await standOnBedrock(page, terrain)
     await aim(page, { pitch: DOWN })
 
-    expect(await page.evaluate(() => window.noa.getBlock(0, 0, 0))).toBe(ID.bedrock)
+    expect(await page.evaluate(() => window.noa.getBlock(0, -64, 0))).toBe(ID.bedrock)
 
     await audio.clear()
     await page.mouse.down({ button: 'left' })
@@ -248,7 +246,7 @@ test.describe('sounds', () => {
     // walking on the same block.
     expect(hits.every(h => h.name.startsWith('step/stone'))).toBe(true)
     expect(hits[0].gain).toBeCloseTo(HIT_GAIN, 5)
-    expect(await page.evaluate(() => window.noa.getBlock(0, 0, 0))).toBe(ID.bedrock)
+    expect(await page.evaluate(() => window.noa.getBlock(0, -64, 0))).toBe(ID.bedrock)
   })
 
   test('clicking a GUI button gives no feedback', async ({ page }) => {

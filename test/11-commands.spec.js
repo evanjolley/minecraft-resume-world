@@ -10,13 +10,22 @@ import {
 const REFUSED = 'Unknown or incomplete command, see below for error'
 
 /** Every command that requires OP, with arguments that WOULD work if opped. */
+/*
+ * y=200 rather than the old y=70 in the three coordinates below. Not a
+ * loosened test -- the opposite. The check after the loop is "the refused
+ * /setblock left the world alone", and it reads the target voxel back
+ * expecting air. In the imported world y=70 is two hundred blocks of solid
+ * rock under the forest floor, so that voxel is stone whether the command was
+ * refused or not, and the assertion would have passed for the wrong reason.
+ * y=200 is open sky above the highest peak in the patch.
+ */
 const OP_COMMANDS = [
   '/gamemode creative',
   '/time set night',
-  '/tp 5 70 5',
+  '/tp 5 200 5',
   '/give planks 5',
-  '/setblock 4 70 4 stone',
-  '/fill 4 70 4 5 70 5 stone',
+  '/setblock 4 200 4 stone',
+  '/fill 4 200 4 5 200 5 stone',
   '/gamerule doDaylightCycle false',
   '/weather rain',
   '/deop',
@@ -115,7 +124,7 @@ test.describe('operator authentication', () => {
 test.describe('operator commands are refused without OP', () => {
   test('every one of them fails, and none of them has any effect',
     async ({ page, terrain }) => {
-      await terrain.keep([4, 70, 4], [5, 70, 5])
+      await terrain.keep([4, 200, 4], [5, 200, 5])
       const [x0, y0, z0] = await position(page)
 
       for (const cmd of OP_COMMANDS) {
@@ -126,7 +135,7 @@ test.describe('operator commands are refused without OP', () => {
 
       // The refusals are real, not cosmetic.
       expect(await gamemode(page)).toBe('adventure')
-      expect(await getBlock(page, 4, 70, 4)).toBe(ID.air)
+      expect(await getBlock(page, 4, 200, 4)).toBe(ID.air)
       expect(await invCount(page, ID.planks)).toBe(0)
       expect(await page.evaluate(() => window.game.authority.gamerule('doDaylightCycle')))
         .toBe(true)
@@ -174,13 +183,22 @@ test.describe('operator commands, opped', () => {
   })
 
   test('/tp moves the player', async ({ page }) => {
-    const out = await chatCommand(page, '/tp 6 70 -6')
-    expect(systemIn(out)).toEqual(['Teleported Evan to 6, 70, -6'])
+    /*
+     * y=160 rather than the old y=70. Not a weakened assertion -- the same
+     * claim against a world that moved. Sea level used to be y=64, so 70 was
+     * six blocks of air above the island; in the imported patch y=70 is two
+     * hundred blocks underground, and "you land on the ground" would have
+     * been asserting that you were embedded in deepslate.
+     *
+     * The ground at (6, -6) is grass at y=138, so 160 is a 22-block drop.
+     */
+    const out = await chatCommand(page, '/tp 6 160 -6')
+    expect(systemIn(out)).toEqual(['Teleported Evan to 6, 160, -6'])
     const [x, y, z] = await position(page)
     expect(x).toBeCloseTo(6, 1)
     expect(z).toBeCloseTo(-6, 1)
     // y drifts immediately -- you start falling the moment you arrive.
-    expect(y).toBeLessThanOrEqual(70)
+    expect(y).toBeLessThanOrEqual(160)
     expect(y).toBeGreaterThan(SURFACE_Y - 1)
   })
 

@@ -778,7 +778,40 @@ const FLUIDS = [
   },
 ]
 
-export const BLOCK_TYPES = normaliseHardness([...CUBES, ...NON_CUBE, ...FLUIDS])
+/*
+ * The world edge.
+ *
+ * Minecraft's barrier: solid, unbreakable, and drawn as absolutely nothing.
+ * island.js stands a column of these outside the imported 128x128 patch so
+ * you cannot walk off the world.
+ *
+ * `invisible: true` is this file's flag, not noa's, and three things read it:
+ * the atlas builder skips it (it has no texture to put in a page), items.js
+ * skips it (there is no barrier item to hold or place), and registerBlocks
+ * below registers it with no material at all.
+ *
+ * WHY opaque: false ON AN INVISIBLE BLOCK -- and this is the part worth
+ * checking rather than assuming, because the wrong answer is subtle.
+ * noa's greedy mesher decides each face between two voxels like this:
+ *   - both opaque            -> draw nothing
+ *   - same face material     -> draw nothing
+ *   - otherwise draw whichever side is opaque / has a material
+ * With opaque:true, every face between the barrier wall and the terrain hits
+ * the first rule and is CULLED -- the outermost blocks of the world lose their
+ * outward faces and you can see straight into the ground along the entire
+ * perimeter. With opaque:false and no material, barrier-vs-air hits the second
+ * rule (both material 0, nothing drawn, which is what "invisible" means) and
+ * barrier-vs-terrain falls through to the third and draws the TERRAIN's face.
+ * Which is exactly right: the world keeps its skin and the wall has none.
+ */
+const BARRIER = [
+  {
+    id: 638, key: 'barrier', name: 'Barrier', invisible: true,
+    hardness: Infinity,
+  },
+]
+
+export const BLOCK_TYPES = normaliseHardness([...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER])
 
 // Ids must be contiguous from 1. noa fills any gap with a silently-registered
 // filler block that has no material, which renders as untextured white and is
@@ -842,10 +875,14 @@ const opaqueNames = [], alphaNames = []
   const seen = new Set()
   const needsAlpha = new Set()
   for (const def of BLOCK_TYPES) {
-    if (!def.alpha) continue
+    if (def.invisible || !def.alpha) continue
     for (const m of faceMaterials(def)) needsAlpha.add(m)
   }
   for (const def of BLOCK_TYPES) {
+    // An invisible block has no texture names at all, and faceMaterials would
+    // hand back six `undefined`s -- which would land in the atlas as a page
+    // slot named "undefined" and send the build off looking for the file.
+    if (def.invisible) continue
     for (const m of faceMaterials(def)) {
       if (seen.has(m)) continue
       seen.add(m)
@@ -945,6 +982,13 @@ export function registerBlocks(noa) {
       })
       continue
     }
+    if (def.invisible) {
+      // Solid so it stops you; not opaque so it does not cull the faces of the
+      // terrain it stands against; no material so it draws nothing. See the
+      // BARRIER note above for why the middle one is load-bearing.
+      ids[def.key] = noa.registry.registerBlock(def.id, { solid: true, opaque: false })
+      continue
+    }
     ids[def.key] = noa.registry.registerBlock(def.id, {
       material: faceMaterials(def),
       // A non-opaque block must not have its neighbours' faces culled, or you
@@ -972,7 +1016,15 @@ export function registerBlocks(noa) {
    * targets the slab, because fast-voxel-raycast has no notion of a shape.
    */
   const solidity = noa.registry.getBlockSolidity
-  noa.blockTargetIdCheck = (id) => solidity(id) || shapeById[id] !== undefined
+  /*
+   * ...and an invisible block must NOT be targetable, or the crosshair stops
+   * on thin air at the world edge and draws a selection box around nothing.
+   * Minecraft does the same: a barrier is only pickable while you are holding
+   * one, and nobody here can hold one.
+   */
+  const invisible = new Set(BLOCK_TYPES.filter(b => b.invisible).map(b => b.id))
+  noa.blockTargetIdCheck = (id) =>
+    !invisible.has(id) && (solidity(id) || shapeById[id] !== undefined)
 
   installThinInstanceUploadFix(noa)
   installNonCubeCollision(noa, shapeById)

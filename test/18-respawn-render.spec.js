@@ -1,6 +1,6 @@
 import sharp from 'sharp'
 import { test, expect } from './fixtures.js'
-import { SURFACE_Y, teleport, waitFrames } from './helpers/world.js'
+import { waitFrames, teleport, SURFACE_Y, DROP_X, DROP_Z } from './helpers/world.js'
 
 /*
  * Respawning must hand you back a world that is already drawn.
@@ -44,11 +44,92 @@ async function groundPatch(page) {
   return { r: r / n, g: g / n, b: b / n }
 }
 
-/** Fall off the rim for real -- 126 blocks, the way a visitor dies -- rather
- *  than teleporting into the void, so the chunk bookkeeping is the same one
- *  the player exercises. */
+/*
+ * Die by falling into the void, which now has to be ENTERED rather than
+ * stumbled into.
+ *
+ * This used to walk off the island's rim: teleport to (60, 65, 60), which was
+ * open void past the 80x80 island, and fall 126 blocks. The world is now a
+ * 128x128 cut of real terrain with barriers on all four sides, so (60, ., 60)
+ * is solid ground and there is no rim anywhere to fall off.
+ *
+ * Which is a finding, not a workaround, and it is worth writing down: VOID
+ * DEATH BY WALKING NO LONGER EXISTS. The void is still there, still below the
+ * world floor at y=-64, and still kills you -- but bedrock is unbreakable and
+ * the perimeter is sealed, so the only ways to reach it are /tp and this
+ * teleport. That is exactly Minecraft's situation, where the void under the
+ * overworld is real and unreachable without cheating.
+ *
+ * The MECHANISM under test is untouched, and that is why this is a rewrite
+ * rather than a deletion. The bug was "a dead player keeps accelerating
+ * downward, and noa unloads chunks in a box around him". So: drop in below the
+ * floor, hold still long enough for the chunks down there to mesh, then let
+ * go. An unfrozen corpse falls hundreds of blocks off the bottom of that box
+ * and the mesh count collapses; a frozen one keeps every chunk it had. The
+ * chunks being counted are the ones around the death site rather than the ones
+ * around spawn, which is the one thing that had to change -- teleporting two
+ * hundred blocks down evicts the spawn chunks before anybody has died.
+ *
+ * @returns the terrain mesh count at the moment of the fall.
+ */
 async function dieByFalling(page) {
-  await teleport(page, 60.5, SURFACE_Y + 1, 60.5)
+  await page.evaluate(() => {
+    const noa = window.noa
+    // Four blocks under the world floor: void air, nothing to stand on, and
+    // two blocks above island.js's VOID_Y of -70.
+    noa.ents.setPosition(noa.playerEntity, [0.5, -68, 0.5])
+    const body = noa.ents.getPhysics(noa.playerEntity).body
+    body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
+    // Hold position while the chunks below the world mesh. Released below --
+    // and it MUST be released before death, or respawn.js saves a gravity
+    // multiplier of 0 and hands it back, leaving a respawned player floating.
+    body.gravityMultiplier = 0
+    window.game.survival.clearFallTracking()
+  })
+
+  /*
+   * Wait for the count to STOP MOVING, not merely to clear a threshold.
+   * Arriving two hundred blocks below spawn puts noa's loader to work in both
+   * directions at once -- meshing the floor, evicting the surface -- and a
+   * count sampled mid-stream reads high by whatever has not been evicted yet.
+   * The test would then blame the corpse for chunks that were always going.
+   */
+  await page.waitForFunction(() => {
+    const n = window.noa.rendering.getScene().meshes
+      .filter((m) => m.name.startsWith('chunk_')).length
+    const prev = window.__meshSettle
+    window.__meshSettle = { n, hits: prev && prev.n === n ? prev.hits + 1 : 0 }
+    return n > 20 && window.__meshSettle.hits >= 8
+  }, null, { timeout: 60_000, polling: 250 })
+
+  const meshes = await terrainMeshCount(page)
+
+  await page.evaluate(() => {
+    window.noa.ents.getPhysics(window.noa.playerEntity).body.gravityMultiplier = 1
+  })
+  await page.waitForFunction(() => window.game.survival.dead, null,
+    { timeout: 30_000, polling: 20 })
+  return meshes
+}
+
+/*
+ * Die WITHOUT leaving the neighbourhood: a 60-block drop onto the ground four
+ * blocks east of spawn, which is fatal and keeps every chunk around you.
+ *
+ * The respawn-render test needs this and the void does not serve it any more,
+ * which is worth stating plainly rather than hiding in a coordinate. The bug
+ * being guarded against is "respawn hands you a world with no geometry in it",
+ * and the original scenario was a 126-block fall off the island's rim -- close
+ * enough to home that the island stayed loaded the whole way down. There is no
+ * rim now, and the void is two hundred blocks below bedrock, so simply GOING
+ * there evicts the spawn chunks before anyone has died. Testing the pixel after
+ * that would assert something the engine was never claiming.
+ *
+ * So the symptom is tested on the death that a player can actually have here,
+ * and dieByFalling above still covers the void and the corpse freeze.
+ */
+async function dieByFallDamage(page) {
+  await teleport(page, DROP_X, SURFACE_Y + 60, DROP_Z)
   await page.waitForFunction(() => window.game.survival.dead, null,
     { timeout: 30_000, polling: 20 })
 }
@@ -60,21 +141,20 @@ async function dieByFalling(page) {
 const LINGER_MS = 4000
 
 test.describe('respawning into a world that is already drawn', () => {
-  test('lingering on the death screen does not unload the island', async ({ page }) => {
-    const before = await terrainMeshCount(page)
+  test('lingering on the death screen does not unload the world', async ({ page }) => {
+    const before = await dieByFalling(page)
     expect(before, 'no terrain meshed before the test even started').toBeGreaterThan(20)
 
-    await dieByFalling(page)
     await page.waitForTimeout(LINGER_MS)
 
     const after = await terrainMeshCount(page)
-    expect(after, `island chunks went ${before} -> ${after} while the death screen was up`)
+    expect(after, `chunks went ${before} -> ${after} while the death screen was up`)
       .toBeGreaterThanOrEqual(before)
   })
 
   test('the first frame after respawn has ground under you, not sky',
     async ({ page }) => {
-      await dieByFalling(page)
+      await dieByFallDamage(page)
       await page.waitForTimeout(LINGER_MS)
 
       await page.locator('#respawn-btn').click()
