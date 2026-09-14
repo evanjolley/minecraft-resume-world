@@ -156,33 +156,67 @@ const FG = '#e0e0e0'
 const LINE = 9
 
 /*
- * Vanilla's compass, in vanilla's order. Yaw 0 is south (+Z) and increases
- * clockwise through west; the wiki's own table is the source for the "Towards"
- * half, which names the axis rather than the compass point.
+ * The compass, and the one thing on this screen that is NOT a copy of vanilla.
+ *
+ * THIS WORLD IS MIRRORED IN X relative to the Minecraft it was extracted from,
+ * and that is not a bug in this file -- it is Babylon's handedness. Minecraft
+ * is right-handed (+X east, +Y up, +Z south): stand facing south there and west
+ * is on your right. Babylon's scene is LEFT-handed (useRightHandedSystem is
+ * false) and the terrain import copies voxel (x, y, z) straight across, so
+ * stand facing +Z here and +X is on your right. Measured rather than assumed:
+ * at heading 0 the camera's view matrix sends world +X to view-space +x, which
+ * is screen right.
+ *
+ * So the axes cannot carry Minecraft's cardinal names AND turn like a compass.
+ * Pick one:
+ *
+ *   (a) keep vanilla's pairing (east = +X, west = -X). Turning right from north
+ *       then reads north -> west -> south -> east, anticlockwise. This is what
+ *       shipped first and it is what Evan caught by walking it: "I am looking
+ *       north, then I turn right, then I'm looking west."
+ *   (b) keep the compass turning clockwise, and let +X be west here.
+ *
+ * (b), for two reasons. A compass that turns the wrong way is wrong in the only
+ * way a player can perceive. And it makes the "Towards" half true as well: walk
+ * west in this world and X goes UP, so "west (Towards positive X)" is something
+ * you can verify by walking, where vanilla's "negative X" would contradict the
+ * Block: line printed directly above it.
+ *
+ * The happy consequence is that the yaw conversion becomes the identity. noa's
+ * heading 0 faces +Z, which is south; 90 degrees faces +X, which is west here
+ * -- and Minecraft's yaw is 0 at south and 90 at west. Same numbers, no flip.
+ * The sign flip that used to sit in mcYaw WAS the bug.
+ *
+ * KNOWN DIVERGENCE, reported rather than silently deduplicated:
+ * blockMeshes.js has its own `headingToFacing` for orienting stairs and it
+ * uses the (a) labels -- it calls +X "east". It is not wrong in any way you
+ * can see, because its geometry table (blockMeshes.js FACINGS, east = [1,0,0])
+ * is mirrored to match, so a stair placed while looking somewhere still points
+ * there. What it produces is a variant NAME mirrored relative to the source
+ * Minecraft world, which will matter the day a real Minecraft build is
+ * imported and its stair states have to line up. NOT merged with this table:
+ * the two answer different questions, and renaming one without the other is
+ * exactly how stairs start placing backwards.
  */
 const FACINGS = [
-  { name: 'south', towards: 'positive Z' },
-  { name: 'west', towards: 'negative X' },
-  { name: 'north', towards: 'negative Z' },
-  { name: 'east', towards: 'positive X' },
+  { name: 'south', towards: 'positive Z' },   // yaw 0,   noa heading 0
+  { name: 'west', towards: 'positive X' },    // yaw 90,  noa heading PI/2
+  { name: 'north', towards: 'negative Z' },   // yaw 180, noa heading PI
+  { name: 'east', towards: 'negative X' },    // yaw 270, noa heading 3PI/2
 ]
 
 /*
- * noa's camera angles into Minecraft's.
+ * noa's heading into Minecraft's yaw. Per the compass note above the two
+ * frames agree once +X is read as west, so all this does is fold the angle
+ * into Minecraft's -180..180 range.
  *
- * noa builds its look vector by rotating [0, 0, 1] -- so heading 0 faces +Z,
- * which is Minecraft's yaw 0 exactly. But glMatrix's rotateY sends +Z toward
- * +X as the angle grows, and Minecraft's yaw grows the other way (yaw 90 is
- * WEST, -X). So the magnitudes agree and the sign does not, which is the sort
- * of thing that looks right until you check it against a compass.
- *
- * Pitch needs no flip: rotateX sends [0,0,1] to negative Y for a positive
- * angle, and Minecraft's positive pitch is also looking down.
+ * Pitch needs no conversion at all: noa's rotateX sends [0, 0, 1] toward
+ * negative Y for a positive angle, and Minecraft's positive pitch is also
+ * looking down, so degrees go straight across.
  */
 function mcYaw(heading) {
-  let deg = -(heading * 180 / Math.PI)
-  deg = ((deg + 180) % 360 + 360) % 360 - 180
-  return deg
+  const deg = heading * 180 / Math.PI
+  return ((deg + 180) % 360 + 360) % 360 - 180
 }
 
 /** Floor division that stays correct for negatives -- `-1 / 16 | 0` is 0. */
@@ -547,47 +581,71 @@ export function installDebugScreen(noa, deps = {}) {
    * leave alone, and rebuilding it per frame would cost more than the rest of
    * this file put together.
    */
-  let borderMesh = null
+  let borderMeshes = []
   let borderChunkKey = ''
   let bordersOn = false
 
   function updateBorders(s) {
     if (!bordersOn) {
-      if (borderMesh) { borderMesh.dispose(); borderMesh = null; borderChunkKey = '' }
+      borderMeshes.forEach(m => m.dispose())
+      borderMeshes = []
+      borderChunkKey = ''
       return
     }
     const key = `${s.chunk[0]},${s.chunk[2]}`
-    if (key === borderChunkKey && borderMesh) return
+    if (key === borderChunkKey && borderMeshes.length) return
     borderChunkKey = key
-    if (borderMesh) borderMesh.dispose()
-    borderMesh = buildChunkBorder(s.chunk[0], s.chunk[2])
+    borderMeshes.forEach(m => m.dispose())
+    borderMeshes = buildChunkBorder(s.chunk[0], s.chunk[2])
   }
 
+  /*
+   * Vanilla's cage, not four corner posts.
+   *
+   * The first version of this drew one wireframe box per chunk, and from
+   * INSIDE the chunk -- which is the only place you ever are when you press
+   * F3+G -- it was invisible: the four verticals sit at the corners, behind
+   * whatever terrain is between you and them. Vanilla solves that by drawing a
+   * dense cage you are standing in the middle of:
+   *
+   *   blue verticals every 2 blocks along all four chunk edges
+   *   yellow verticals at the four corners
+   *   yellow horizontal rings at every 16-block section boundary
+   *
+   * Two meshes rather than one, because a Babylon LinesMesh carries a single
+   * `color` for the whole mesh. Rejected: one mesh with per-vertex colours,
+   * which CreateLineSystem supports -- it needs a parallel colour array the
+   * same shape as the points and buys nothing here, since there are exactly
+   * two colours and they never change.
+   */
   function buildChunkBorder(cx, cz) {
     const scene = noa.rendering.getScene()
     const x0 = cx * CHUNK, z0 = cz * CHUNK
     const x1 = x0 + CHUNK, z1 = z0 + CHUNK
-    // The world's own vertical extent. A box that stops at the player's feet
-    // tells you nothing about the column you are actually in.
+    // The world's own vertical extent, from island.js's floor to above its
+    // ceiling. A cage that stops at the player's feet answers nothing.
     const y0 = -70, y1 = 190
-    const lines = []
-    // The four vertical edges, then the top and bottom rings.
-    for (const [cxx, czz] of [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]) {
-      lines.push([[cxx, y0, czz], [cxx, y1, czz]])
+
+    const blue = [], yellow = []
+    for (let d = 2; d < CHUNK; d += 2) {
+      blue.push([[x0 + d, y0, z0], [x0 + d, y1, z0]])
+      blue.push([[x0 + d, y0, z1], [x0 + d, y1, z1]])
+      blue.push([[x0, y0, z0 + d], [x0, y1, z0 + d]])
+      blue.push([[x1, y0, z0 + d], [x1, y1, z0 + d]])
     }
-    for (const yy of [y0, y1]) {
-      lines.push([[x0, yy, z0], [x1, yy, z0], [x1, yy, z1], [x0, yy, z1], [x0, yy, z0]])
+    for (const [x, z] of [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]) {
+      yellow.push([[x, y0, z], [x, y1, z]])
     }
-    const mesh = createLines(scene, 'debug-chunk-border', lines)
-    // Vanilla's chunk grid is drawn in a stack of colours; the vertical edges
-    // are the yellow ones, which is the colour anyone picturing F3+G pictures.
-    mesh.color = new Color3(1, 1, 0)
-    // noa keeps its own global offset so a big world never loses float
-    // precision; a mesh positioned in absolute world coordinates would drift
-    // away from the terrain as you walk. addMeshToScene is how every other mesh
-    // in this repo joins the world, and it does the offsetting.
-    noa.rendering.addMeshToScene(mesh, false, [0, 0, 0])
-    return mesh
+    // Section boundaries. `- (y0 & 15)` snaps the first ring onto a real
+    // multiple of 16 rather than onto the world floor, which is not one.
+    for (let y = y0 - (y0 & (CHUNK - 1)); y <= y1; y += CHUNK) {
+      yellow.push([[x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1], [x0, y, z0]])
+    }
+
+    return [
+      addLines(scene, 'debug-chunk-border', yellow, new Color3(1, 1, 0)),
+      addLines(scene, 'debug-chunk-border-cage', blue, new Color3(0.25, 0.45, 1)),
+    ]
   }
 
   /* ---- hitboxes (F3+B) ---- */
@@ -619,17 +677,7 @@ export function installDebugScreen(noa, deps = {}) {
       }
     }
     if (!lines.length) return
-    hitboxMesh = createLines(scene, 'debug-hitboxes', lines)
-    hitboxMesh.color = new Color3(1, 1, 1)
-    /*
-     * The vertices above are ABSOLUTE world coordinates, and [0, 0, 0] is what
-     * converts them: addMeshToScene runs the origin through globalToLocal and
-     * parks the mesh at the negated offset, so absolute vertices land in the
-     * right place and stay there across noa's periodic re-basing. Getting this
-     * wrong is invisible at spawn and drifts the further you walk, which is the
-     * worst way for it to be wrong.
-     */
-    noa.rendering.addMeshToScene(hitboxMesh, false, [0, 0, 0])
+    hitboxMesh = addLines(scene, 'debug-hitboxes', lines, new Color3(1, 1, 1))
   }
 
   /*
@@ -641,10 +689,22 @@ export function installDebugScreen(noa, deps = {}) {
    * disposal, not by rewriting vertices, because they change only when you
    * cross a chunk edge rather than every frame.
    */
-  function createLines(scene, name, lines) {
-    return CreateLineSystem(name, {
+  function addLines(scene, name, lines, color) {
+    const mesh = CreateLineSystem(name, {
       lines: lines.map(seg => seg.map(([a, b, c]) => new Vector3(a, b, c))),
     }, scene)
+    mesh.color = color
+    /*
+     * The vertices above are ABSOLUTE world coordinates, and [0, 0, 0] is what
+     * converts them: addMeshToScene runs the origin through globalToLocal and
+     * parks the mesh at the negated offset, so absolute vertices land in the
+     * right place -- and noa shifts every mesh it knows about when it re-bases
+     * the origin, so they stay there. Skipping addMeshToScene and setting
+     * mesh.position by hand renders correctly at spawn and drifts the further
+     * you walk, which is the worst way for it to be wrong.
+     */
+    noa.rendering.addMeshToScene(mesh, false, [0, 0, 0])
+    return mesh
   }
 
   /* ---- the key ---- */

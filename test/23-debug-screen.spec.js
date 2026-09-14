@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures.js'
 import { shot } from './helpers/shots.js'
-import { aim, teleport, waitTicks, look, HEADING, getBlock, ID } from './helpers/world.js'
+import { aim, teleport, waitTicks, look, useGamemode, HEADING, getBlock, ID } from './helpers/world.js'
 
 /*
  * The F3 debug screen.
@@ -121,14 +121,24 @@ test.describe('F3 debug screen', () => {
       && l.endsWith(' -2 [31 30 in r.-1.-1.mca]'))).toBe(true)
   })
 
-  test('Facing names the cardinal and the axis, with vanilla yaw signs', async ({ page }) => {
+  /*
+   * Four cardinals AND the turn direction, because checking only the four is
+   * how the mirrored compass shipped: "north reports north" passes perfectly
+   * happily on a compass that runs backwards. The turn is the asymmetric test.
+   *
+   * See the compass note in debugScreen.js: this world is mirrored in X by
+   * Babylon's left-handed scene, so +X reads as WEST here, and the "Towards"
+   * axis is the one you can verify by walking rather than the one vanilla
+   * prints.
+   */
+  test('the four cardinals, in this world\'s frame', async ({ page }) => {
     await press(page, 'F3')
 
     for (const [heading, name, towards, yaw] of [
       [HEADING.southPlusZ, 'south', 'positive Z', 0],
-      [HEADING.westMinusX, 'west', 'negative X', 90],
-      [HEADING.eastPlusX, 'east', 'positive X', -90],
+      [HEADING.eastPlusX, 'west', 'positive X', 90],
       [HEADING.northMinusZ, 'north', 'negative Z', 180],
+      [HEADING.westMinusX, 'east', 'negative X', -90],
     ]) {
       await look(page, { heading, pitch: 0 })
       await waitTicks(page, 2)
@@ -136,9 +146,55 @@ test.describe('F3 debug screen', () => {
       expect(s.facing).toBe(name)
       expect(s.towards).toBe(towards)
       expect(Math.abs(s.yaw)).toBeCloseTo(Math.abs(yaw), 1)
-      // Minecraft yaw 90 is WEST. noa's heading grows the other way, so this
-      // is the sign flip that a compass-less reading gets backwards.
       if (yaw !== 0 && Math.abs(yaw) !== 180) expect(Math.sign(s.yaw)).toBe(Math.sign(yaw))
+    }
+  })
+
+  /*
+   * THE regression test. Evan found the bug by walking it: "I am looking north,
+   * then I turn right, then I'm looking west." Turning right has to run
+   * clockwise -- north, east, south, west -- and a mirrored compass runs the
+   * other way while every single-direction assertion above still passes.
+   *
+   * Turning right is heading INCREASING: noa's mouse handler does
+   * `heading += dx` and dx is positive for a rightward mouse move.
+   */
+  test('turning right walks the compass clockwise', async ({ page }) => {
+    await press(page, 'F3')
+
+    const clockwise = ['north', 'east', 'south', 'west']
+    let heading = HEADING.northMinusZ
+    const seen = []
+    for (let i = 0; i < 4; i++) {
+      await look(page, { heading, pitch: 0 })
+      await waitTicks(page, 2)
+      seen.push((await sample(page)).facing)
+      heading += Math.PI / 2
+    }
+    expect(seen).toEqual(clockwise)
+  })
+
+  /*
+   * And the same thing again from the other end: the direction the camera is
+   * actually pointing, straight out of noa, has to agree with the cardinal the
+   * screen names. This is the one that cannot be satisfied by a consistent-but
+   * -mirrored table, because it compares against the look vector itself.
+   */
+  test('the named cardinal matches the direction the camera points', async ({ page }) => {
+    await press(page, 'F3')
+
+    // In this world's frame: north is -Z, south is +Z, west is +X, east is -X.
+    const axis = { north: [0, 0, -1], south: [0, 0, 1], west: [1, 0, 0], east: [-1, 0, 0] }
+    for (const heading of [0, Math.PI / 2, Math.PI, -Math.PI / 2, 2.4]) {
+      await look(page, { heading, pitch: 0 })
+      await waitTicks(page, 2)
+      const s = await sample(page)
+      const dir = await page.evaluate(() => [...window.noa.camera.getDirection()])
+      const want = axis[s.facing]
+      // The named cardinal must be the closest axis to where the camera looks,
+      // which a mirrored table fails on every heading that is not north/south.
+      const dot = dir[0] * want[0] + dir[2] * want[2]
+      expect(dot).toBeGreaterThan(0.7)
     }
   })
 
@@ -352,6 +408,25 @@ test.describe('F3 debug screen', () => {
     await press(page, 'F3')
     await waitTicks(page, 30)
     await shot(page, 'debug-screen')
+
+    /*
+     * The F3+G / F3+B shot is taken from a vantage the assertions cannot
+     * reach: high above the middle of chunk 0, looking down, in third person.
+     * The specs above prove the meshes exist and that the hitbox encloses the
+     * player's AABB -- neither proves they are actually DRAWN, and a mesh that
+     * never reaches the octree passes both while being invisible.
+     */
+    // F5 twice is third-person-front; once is third-person-back, which is the
+    // one that puts your own hitbox in shot. Creative so the drop from 170
+    // does not end in a death screen over the top of the evidence.
+    await useGamemode(page, 'creative')
+    // Above the canopy and near the middle of chunk 0, looking slightly down.
+    // Inside the terrain the cage is mostly behind solid blocks, which is what
+    // made the first version of this shot look like nothing had been drawn.
+    await teleport(page, 8.5, 172, 8.5)
+    await press(page, 'F5')
+    await waitTicks(page, 3)
+    await aim(page, { heading: 0.6, pitch: 0.25 })
 
     await page.keyboard.down('F3')
     await page.keyboard.press('KeyG')
