@@ -31,6 +31,7 @@ import { installGamemode } from './gamemode.js'
 import { installCommands } from './commands.js'
 import { createRoster, GUEST_NAME } from './identity.js'
 import { installNPC } from './npc.js'
+import { installDebugScreen } from './debugScreen.js'
 import { createEvanTools, stubBackend, LINES } from './aiEvan.js'
 
 /*
@@ -346,6 +347,30 @@ const weather = installWeather(noa, { sky, authority, sounds })
  */
 const drops = installItemEntities(noa, { inventory, authority, sounds, inputLock })
 
+/*
+ * F3. Installed after `drops` and `particles` because it counts both, and it
+ * is handed `inputLock` to READ rather than to take: F3 is an overlay, not a
+ * screen -- the world keeps ticking and you keep walking with it open. All the
+ * lock does here is tell the key handler that the current keystroke belongs to
+ * the chat bar rather than to the game, which is the same guard the hotbar
+ * number keys use.
+ */
+const debug = installDebugScreen(noa, {
+  particles, drops, inputLock,
+  /*
+   * The block's display name, so "Targeted Block" reads "Grass Block" rather
+   * than an integer. items.js already owns the id -> name map the held-item
+   * label uses, so this is the same answer rather than a second one.
+   *
+   * NOT vanilla's form: F3 prints the IDENTIFIER (minecraft:grass_block).
+   * blocks.js keys blocks by a shorthand -- 'grass', 'planks' -- that is not
+   * the Minecraft id, so `minecraft:${key}` would be confidently wrong for
+   * every block whose shorthand was abbreviated. A real identifier field on
+   * BLOCK_TYPES is what this wants, and that is blocks.js's call to make.
+   */
+  blockName: (id) => itemName(id),
+})
+
 const menu = installMenu(noa, { inputLock, inventory, inventoryScreen, survival })
 
 /*
@@ -540,6 +565,12 @@ window.game = {
    * real rather than rebuilt every frame.
    */
   held, itemModelStats,
+  /*
+   * The debug screen, for the console and for the test suite. `sample()` is
+   * the numbers BEFORE they are formatted, which is how a spec asserts that
+   * the position is live rather than that a div exists.
+   */
+  debug,
   authority, gamemode, commands, interaction, flight: movement.flight,
   /*
    * Identity and the agent, for the console and for the test suite. `roster`

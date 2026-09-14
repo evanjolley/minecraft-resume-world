@@ -111,6 +111,40 @@
     #coords { position: absolute; left: 10px; top: 10px; font-size: 12px; opacity: 0.55;
       text-shadow: 1px 1px 0 #000; pointer-events: none; z-index: 4; }
 
+    /* ---------------- F3 debug screen ----------------
+       Sizes and offsets come from debugScreen.js in Minecraft GUI pixels, like
+       the HUD and chat. Only the things that are the same for every line live
+       here.
+
+       z-index 10 puts it OVER chat (6/7) and under the inventory and pause menu
+       (20+), which is vanilla's own stacking: the debug overlay is drawn last
+       in the HUD pass, so it covers chat, and screens are drawn after the HUD,
+       so they cover it. Note the absence of a `body.inv-open #debug` rule --
+       every other layer here hides under a screen and this one deliberately
+       does not, because in vanilla the F3 text stays visible behind an open
+       inventory.
+
+       No text-shadow, unlike every other text layer in this file. Vanilla draws
+       the debug screen with shadow off and leans on the per-line background
+       instead, which is why it stays legible against a bright sky. */
+    #debug { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
+    #debug.hidden { display: none; }
+    /* overflow:hidden establishes a block formatting context so the floated
+       lines inside are contained; without it both columns collapse to zero
+       height and the first line paints over the second. */
+    #debug-left, #debug-right { position: absolute; overflow: hidden; }
+    /* The right column is right-aligned as a block, so each line's background
+       hugs its own text from the right edge inward -- which is what vanilla
+       does, and what a fixed-width column would not. */
+    #debug-right { text-align: right; }
+    /* float + clear is what makes each line its own row while still shrinking to
+       fit its text. A plain block would stretch the background bar to the full
+       column width; a plain inline-block would put every line on one row.
+       `pre` keeps the blank separator lines from collapsing to zero height --
+       they have no content, and a collapsed row would swallow the gap. */
+    .debug-line { color: #e0e0e0; white-space: pre; float: left; clear: both; }
+    #debug-right .debug-line { float: right; }
+
     /* ---------------- inventory ---------------- */
     /* Two container screens share every rule: the inventory (2x2 crafting,
        armor, offhand) and the crafting table (3x3). Only the background
