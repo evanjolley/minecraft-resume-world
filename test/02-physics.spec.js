@@ -17,15 +17,49 @@ const MC = {
   SPRINT_JUMP: 7.127,
 }
 
-// 1.5% either way. noa integrates continuously against Minecraft's fixed
-// 20 Hz tick, so exact equality is not reachable; 1.5% is tight enough that
-// a wrong constant (or a silently doubled gravityMultiplier) still fails.
+/*
+ * 1.5% either way. noa integrates continuously against Minecraft's fixed
+ * 20 Hz tick, so exact equality is not reachable; 1.5% is tight enough that
+ * a wrong constant (or a silently doubled gravityMultiplier) still fails.
+ *
+ * NOT widened when measureSpeed stopped dividing by wall clock, even though
+ * that turned a wobble into a standing number. The three ground speeds now
+ * read dead steady and all three land at exactly 0.664% BELOW Minecraft:
+ *
+ *   walk   4.2883 vs 4.317    ratio 0.99336
+ *   sprint 5.5747 vs 5.612    ratio 0.99335
+ *   sneak  1.2864 vs 1.295    ratio 0.99336
+ *
+ * One ratio, three speeds, so it is not three wrong constants -- it is one
+ * systematic factor, and it is the same one src/fluids.js already corrects
+ * for in water. noa's movement component pushes with `responsiveness * (S - v)`
+ * and voxel-physics-engine's global airDrag pulls back with `drag * v`, which
+ * balance strictly below S at S * r / (r + drag). With physics.js's
+ * responsiveness = 15 and noa's default airDrag = 0.1 that predicts
+ * 15 / 15.1 = 0.993377, and the measurements above agree to five digits.
+ *
+ * So the fix is the fluids.js one applied on land: scale move.maxSpeed by
+ * (r + drag) / r rather than assigning MC.WALK_SPEED raw. That is a
+ * calibrated fidelity constant in src/ and therefore the owner's call, not
+ * this file's -- the test's job is to hold the real number up and let the
+ * 0.664% be visible. It passes at 1.5% today; if anyone tightens TOL below
+ * 0.7% this is the first thing that will fail, and that is correct.
+ */
 const TOL = 0.015
 const near = (actual, want) => Math.abs(actual - want) <= want * TOL
 
 test.describe('movement physics', () => {
   test.beforeEach(async ({ page }) => {
-    // Walk +x from spawn: 8 blocks of travel with 30 to spare before the rim.
+    /*
+     * Four blocks east of spawn, and looking east.
+     *
+     * Spawn itself is now under a dark forest canopy -- leaves at y=139 over a
+     * floor at y=135 -- and a 1.25-block jump puts a 1.8-tall player's head
+     * straight into them, which clips the apex. DROP_X is the nearest column
+     * with clear sky and identical ground height.
+     */
+    await teleport(page, DROP_X, SURFACE_Y, DROP_Z)
+    await settleOnGround(page)
     await look(page, { heading: HEADING.eastPlusX })
   })
 

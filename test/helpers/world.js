@@ -383,70 +383,86 @@ export async function readApex(page) {
  *
  * Two-phase on purpose: `warmupMs` burns the acceleration ramp (noa pushes
  * toward maxSpeed with a force, it does not snap), then displacement is
- * divided by the elapsed time READ FROM THE PAGE. Using the test-side clock
- * instead attributes CDP round-trip latency to the player and reads ~5% slow.
+ * divided by the SIMULATED time the engine spent covering it.
  *
- * BOTH ENDPOINTS ARE READ INSIDE A TICK, which is the whole trick and was the
- * bug. noa runs its physics and THEN emits 'tick', so the end position is a
- * post-tick value. Reading the start position when the handler is armed --
- * between ticks -- picks up the PREVIOUS tick's position, so the distance
+ * BOTH ENDPOINTS ARE READ INSIDE A TICK, which is half the trick and was the
+ * first bug. noa runs its physics and THEN emits 'tick', so the end position
+ * is a post-tick value. Reading the start position when the handler is armed
+ * -- between ticks -- picks up the PREVIOUS tick's position, so the distance
  * covered up to one extra tick (33 ms) of travel that the elapsed time knew
  * nothing about. At sampleMs=700 that is up to 4.7% fast, random per run
  * depending where the arming moment fell in the tick cycle, against a 1.5%
  * tolerance. Measured: the error tracked (33.3 - phase)/elapsed with
  * correlation -1.000 across twelve samples, and the same sprint read 5.564 to
- * 5.820 b/s on one machine from one build. Taking the start on the first tick
- * makes both ends the same kind of sample and the ratio exact.
+ * 5.820 b/s on one machine from one build.
  *
- * Rejected: deriving `secs` from the tick count times noa's nominal period.
- * That assumes the engine held its rate, which is precisely the thing
- * `healthy` below exists to check, so it would launder dropped ticks into a
- * clean-looking number instead of rejecting them.
+ * THE DENOMINATOR IS TICKS, NOT WALL CLOCK, which is the other half and was
+ * the second bug. Dividing by performance.now() elapsed asks "how far did the
+ * player get per second of the laptop's life", and the honest answer includes
+ * every tick the engine failed to run. micro-game-shell issues ticks from a
+ * setInterval and, when it falls more than maxTickTime behind, does
+ * `lastTickStarted = now` and DISCARDS the backlog: simulated time is
+ * permanently lost while wall clock keeps going. Run the other way, its
+ * lookAhead can issue ticks slightly early, so the sample can also read fast.
+ * Either way the reading moves and the game did not.
+ *
+ * Measured over 5 runs x 4 samples with both denominators logged side by side:
+ * every wall-clock reading was exactly pertick x (ticks / expectedTicks), so
+ * corr(tick shortfall, error) is -1 by construction and -1 in the data. The
+ * wall-clock numbers ranged walk 4.249..4.311 and sprint 5.534..5.668; the
+ * per-tick numbers were 4.2883 and 5.5747 in ALL FIVE runs, to four decimals.
+ * The measurement noise was not noise, it was the shell's clock drift.
+ *
+ * This is safe only because noa's tick dt is FIXED. micro-game-shell calls
+ * onTick(1000 / tickRate) -- a constant, never an observed delay -- and noa's
+ * tick() scales it by timeScale before handing it to the physics step, which
+ * is why timeScale is in the sum below. Verify that again before trusting
+ * this if noa is ever upgraded; a variable-dt engine would need the engine to
+ * publish its own accumulated sim time instead.
+ *
+ * Removed with it: a `healthy` guard plus a three-attempt retry, which
+ * rejected windows where ticks came in under 85% of expected and re-rolled.
+ * Its insight was right -- a stalled window measures the laptop, not the game
+ * -- but it was a threshold guarding a broken ruler, and it only ever caught
+ * the top 15% of an error that was continuous. A 1% shortfall sailed through
+ * and read as 1% slow, which is what failed 2 runs in 5. Counting simulated
+ * time makes the stall arithmetically irrelevant rather than merely rare, so
+ * there is nothing left to retry.
+ *
+ * Rejected: widening TOL in the spec. The residual after this fix is a real
+ * -0.664% on every ground speed (see 02-physics.spec.js), not noise.
  */
 export async function measureSpeed(page, keys, { warmupMs = 900, sampleMs = 700 } = {}) {
   for (const k of keys) await page.keyboard.down(k)
   try {
     await page.waitForTimeout(warmupMs)
 
-    // Up to three attempts, and NOT because the assertion is flaky. A sample
-    // window in which the engine dropped ticks -- swiftshader stalling on a
-    // chunk remesh, the machine busy -- measures the laptop, not the game:
-    // the player really did stand still for 200 ms of wall clock. `healthy`
-    // rejects exactly that and nothing else, so a genuinely wrong speed
-    // constant still fails three times out of three.
-    for (let attempt = 0; ; attempt++) {
-      const r = await page.evaluate((ms) => new Promise((resolve) => {
-        const noa = window.noa
-        const p = () => noa.ents.getPositionData(noa.playerEntity).position
-        let x0 = 0, z0 = 0, t0 = 0
-        // -1 until the window opens. `ticks` then counts the intervals that
-        // actually elapsed inside it -- the opening tick is the fencepost, not
-        // an interval -- which is what `expectedTicks` compares against.
-        let ticks = -1
-        const fn = () => {
-          if (ticks < 0) {
-            const [x, , z] = p()
-            x0 = x; z0 = z; t0 = performance.now(); ticks = 0
-            return
-          }
-          ticks++
-          const dt = performance.now() - t0
-          if (dt < ms) return
-          noa.off('tick', fn)
-          const [x1, , z1] = p()
-          resolve({
-            dist: Math.hypot(x1 - x0, z1 - z0),
-            secs: dt / 1000,
-            ticks,
-            expectedTicks: (dt / 1000) * noa.tickRate,
-          })
-        }
-        noa.on('tick', fn)
-      }), sampleMs)
+    return await page.evaluate((ms) => new Promise((resolve) => {
+      const noa = window.noa
+      const p = () => noa.ents.getPositionData(noa.playerEntity).position
+      // The window is a COUNT OF TICKS, so no clock is consulted at all --
+      // sampleMs is just the caller's way of saying how long they want it.
+      const want = Math.max(1, Math.round((ms / 1000) * noa.tickRate))
+      const tickSecs = (1000 / noa.tickRate) * (noa.timeScale || 1) / 1000
 
-      const healthy = r.ticks >= r.expectedTicks * 0.85
-      if (healthy || attempt === 2) return r.dist / r.secs
-    }
+      let x0 = 0, z0 = 0
+      // -1 until the window opens. `ticks` then counts the intervals that
+      // actually elapsed inside it -- the opening tick is the fencepost, not
+      // an interval.
+      let ticks = -1
+      const fn = () => {
+        if (ticks < 0) {
+          const [x, , z] = p()
+          x0 = x; z0 = z; ticks = 0
+          return
+        }
+        if (++ticks < want) return
+        noa.off('tick', fn)
+        const [x1, , z1] = p()
+        resolve(Math.hypot(x1 - x0, z1 - z0) / (ticks * tickSecs))
+      }
+      noa.on('tick', fn)
+    }), sampleMs)
   } finally {
     for (const k of keys) await page.keyboard.up(k)
   }
