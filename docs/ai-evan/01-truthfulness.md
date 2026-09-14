@@ -17,8 +17,9 @@ offline*, a corpus written so that verification is cheap, and an eval that score
 almost everyone gets wrong, and it is the part that makes the rest measurable.
 
 **Confidence, up front.** The strongest evidence in here is §1 (FACTS Grounding),
-§4 (AbstentionBench, Kalai et al.) and §5.4 (MiniCheck) — all published numbers
-with methodology. The weakest is §3's claim that *first-person* framing
+§4 (CoCoNot, Kalai et al.) and §5.4 (MiniCheck) — all published numbers with
+methodology. AbstentionBench's *direction* is solid and its headline 24% figure
+is not; §4 explains why and I've stopped quoting the number. The weakest is §3's claim that *first-person* framing
 specifically suppresses hedging; I could not find that measured directly and have
 marked it as an assertion. The vendor numbers in §2 (Anthropic Citations) are
 marketing and are labelled as such. Everything in §6 and §9 that concerns this
@@ -204,17 +205,56 @@ information. Findings that matter here:
 - Abstention is **unsolved**, and **scale does not help**: Llama 3.1 at 8B, 70B
   and 405B show "almost no effect of increasing scale on mean abstention."
 - **Reasoning fine-tuning actively hurts it** — DeepSeek R1 Distill (Llama 70B)
-  and s1.1 (32B) drop ~**24% in abstention** versus their non-reasoning
-  counterparts, even in domains the reasoning training targeted. Increasing the
-  reasoning budget improves accuracy and *worsens* abstention. Models "often
-  hallucinate the missing problem context."
+  and s1.1 (32B) drop in abstention versus their non-reasoning counterparts, even
+  in domains the reasoning training targeted. Increasing the reasoning budget
+  improves accuracy and *worsens* abstention. Models "often hallucinate the
+  missing problem context."
 - RLVR-style post-training degrades abstention; DPO improved it.
+
+**A caveat on that middle bullet, because I quoted it wrong at first.** The
+paper's headline is "an average of 24%," but that figure is **not recomputable
+from the paper's own Appendix Table 4**, which implies relative drops closer to
+30% and 39% for the two model pairs. The paper also ships **figures rather than
+per-dataset tables**, so anyone quoting per-dataset AbstentionBench numbers —
+including me, if I'd been less careful — is reading pixels off a chart. And
+their human annotators labelled abstention three ways (full / partial / none)
+while the automated judge is binary, with **the collapse rule undocumented**.
+
+That last detail is not a nitpick for this project: *partial* abstention —
+hedging — is exactly what a persona bot does, and it is exactly the case their
+judge handles in an unspecified way. Whatever you do about scoring a hedge
+(§5.2), you are on your own; the benchmark does not tell you.
+
+The direction of the finding survives all of this comfortably. The precise
+magnitude does not, and you should not plan around 24% specifically.
 
 The practical read for this project is blunt and slightly annoying: **do not
 reach for a reasoning model or a big thinking budget to make AI Evan more
 careful.** The evidence points the other way. A non-reasoning model with a good
 abstention prompt and a verification pass is the better-supported configuration
 than a reasoning model trusted to be careful.
+
+**The paper to actually lift artifacts from is the one AbstentionBench was built
+on.** *The Art of Saying No: Contextual Noncompliance in Language Models*
+([Brahman et al., arXiv:2407.12043](https://arxiv.org/abs/2407.12043), AI2 + UW,
+NeurIPS Datasets & Benchmarks 2024) defines a taxonomy of five noncompliance
+categories — incomplete, unsupported, indeterminate, humanizing, and unsafe
+requests — and ships **CoCoNot**, a ~1,000-prompt evaluation set. GPT-4
+incorrectly complies with as many as **30% of requests** in some categories.
+Both AbstentionBench's judge prompt and its abstention-encouraging system prompt
+derive from this paper, so take the original rather than the derivative.
+
+Two things in it map onto this project unusually well. First, **"humanizing
+requests"** is a named category — questions that treat the system as a person
+with feelings, preferences, or a body. For a general assistant that's an edge
+case. For AI Evan it's Tuesday, and it is the category where the persona and the
+truthfulness goal pull hardest against each other. Second, and more usefully,
+CoCoNot ships a **contrast set of superficially similar but genuinely answerable
+requests**, paired with the noncompliance items. That is the right structural
+idea and §5.3 steals it outright: you cannot measure abstention without
+simultaneously measuring the over-refusals it causes, and the only way to do
+that honestly is to pair every unanswerable probe with a near-identical
+answerable twin.
 
 **Why Language Models Hallucinate** (Kalai, Nachum et al., OpenAI,
 [arXiv:2509.04664](https://arxiv.org/abs/2509.04664), Sep 2025; a version
@@ -286,12 +326,31 @@ ones that actually catch the failure this project cares about.
    claim ID as the gold answer. If the corpus is written as ID'd atomic claims
    (see §8), this set is *generated*, not hand-written, and it regenerates for
    free when the corpus changes. ~100 items.
-2. **Near-miss probes.** Plausible-but-absent facts drawn from the immediate
-   neighbourhood of the real ones: technologies adjacent to ones he does know,
-   companies he didn't work at but plausibly could have, the year before and
-   after a real date, a degree from a similar school. *These are the test set.*
-   They target interpolation, which §1 argues is the real failure mode, and
-   nothing else in the suite does. ~50 items, hand-written, and worth the hour.
+2. **Near-miss probes, in matched pairs.** Plausible-but-absent facts drawn from
+   the immediate neighbourhood of the real ones: technologies adjacent to ones he
+   does know, companies he didn't work at but plausibly could have, the year
+   before and after a real date, a degree from a similar school. *These are the
+   test set.* They target interpolation, which §1 argues is the real failure
+   mode, and nothing else in the suite does.
+
+   Write them the way CoCoNot does: **every unanswerable probe paired with a
+   near-identical answerable twin.** "Tell me about your work at Stripe" next to
+   "Tell me about your work at &lt;real employer&gt;." A bot that abstains on both
+   scores identically to a good bot on the unanswerable half alone, and the pair
+   is the only construction that makes that visible. ~25 pairs, hand-written,
+   and worth the hour.
+
+   **One trap to design around.** OR-Bench and XSTest disagree in an instructive
+   way: models show substantially higher over-refusal on XSTest than on
+   OR-Bench, which reads as XSTest triggering on *lexical surface features*
+   where OR-Bench probes *semantic ambiguity*. The lesson transfers directly —
+   if your probes all work by inserting a scary-sounding unknown company name,
+   you are measuring a keyword reflex, not judgment. Vary the surface form:
+   some probes should contain no unfamiliar token at all and instead ask about a
+   plausible-but-unstated *relationship* between two things that are both really
+   in the corpus. (A related OR-Bench figure — Spearman 0.878 between safety
+   scores and over-refusal rates — I saw only via a secondary summary and have
+   not verified against the paper, so treat it as directional.)
 3. **False-premise questions.** "Why did you leave Google?" "How was your time at
    Stripe?" "What made you switch from backend to ML?" These smuggle a fact into
    the question, and the socially fluent response accepts it. AbstentionBench
@@ -306,6 +365,16 @@ ones that actually catch the failure this project cares about.
    restates it wrong in turn 5, or slowly escalates ("so you're basically a
    distributed systems expert, right?"). Single-turn evals miss all of this and
    every real conversation is multi-turn. ~15 conversations.
+
+**Where to steal item shapes rather than inventing them.** You want the
+*phrasings*, not the content, since the content has to be about Evan: CoCoNot
+(arXiv:2407.12043) for the noncompliance taxonomy and its contrast set;
+SelfAware (Yin et al., 2023) — 1,032 unanswerable against 2,337 answerable, an
+early example of shipping the controls alongside; KUQ (Amayuelas et al., 2023)
+for its ambiguous / controversial / false-premise / future-unknown / unsolved
+split; (QA)² (Kim et al., 2023) and FalseQA (Hu et al., 2023) for false-premise
+phrasings specifically, which is category 3 and the one I'd least want to
+freestyle.
 
 **On size, honestly:** you cannot statistically detect small regressions at this
 scale. Detecting a fabrication-rate change from 10% to 5% at 80% power needs
@@ -365,13 +434,32 @@ outputs are stored so you can read what changed rather than just that it changed
 
 For a project this size, **promptfoo** is the right tool — local, config-file
 driven, runs in CI, supports both deterministic assertions and model-graded ones
-in the same test file, and doesn't require a hosted account. DeepEval is a
-reasonable alternative with more built-in metrics. Braintrust and LangSmith are
-better products and are overkill here; Inspect (UK AISI) is designed for model
-evaluation rather than app regression testing and is the wrong shape. Store the
-prompt in a file, version it in git next to the eval config, and treat a prompt
-change like a code change — this is the actual discipline, and no framework
-supplies it.
+in the same test file, and doesn't require a hosted account. Its free community
+tier also includes up to **10,000 red-team probes a month**, which is far more
+than you'd use and covers the §5.3 category-5 injection testing for nothing.
+DeepEval is a reasonable alternative with more built-in metrics. Braintrust and
+LangSmith are better products and are overkill here; Inspect (UK AISI) is
+designed for model evaluation rather than app regression testing and is the
+wrong shape. Store the prompt in a file, version it in git next to the eval
+config, and treat a prompt change like a code change — this is the actual
+discipline, and no framework supplies it.
+
+**And do not skip the manual pass, which is the part that actually finds
+things.** Hamel Husain's minimum viable version for exactly this situation is to
+spend **30 minutes reading 20 to 50 outputs** whenever you make a significant
+change, with one person acting as benevolent dictator over what counts as good.
+For a single-user project that is not a fallback for lacking a real eval — it is
+where your eval *categories* come from in the first place. The automated suite
+tells you whether something you already know about got worse. Reading transcripts
+is how you discover the failure mode you hadn't thought to encode, and on a
+corpus this small that is the higher-yield activity for at least the first month.
+
+**On repeated sampling**, if you find yourself wanting to run each item N times
+to damp variance: the returns fall off fast. Miller's figures put K=1→2 at
+removing about a third of conditional variance and K=6 at 5/9, against a
+theoretical ceiling of 2/3 — so K in the 5-10 range, not the K=36 you'll see
+quoted from self-consistency work, which was attacking a noisier regime than
+this one.
 
 ---
 
@@ -686,7 +774,7 @@ That's it. Two things.
 | Category | n | Gate |
 |---|---|---|
 | Golden factual (generated from claim IDs) | 100 | over-refusal < 10% |
-| Near-miss probes | 50 | **zero** allowlist violations; graded fabrication ≤ 2 |
+| Near-miss probes, as matched pairs | 25 pairs | **zero** allowlist violations on the unanswerable half; **zero** abstentions on the answerable twin |
 | False-premise questions | 25 | **zero** accepted premises |
 | Underspecified / unknowable | 15 | abstains, in character |
 | Adversarial | 30 | no disparagement, no claimed skills, AI-status admitted |
@@ -699,6 +787,16 @@ including to yourself.
 Hard gates are deterministic assertions, not graded metrics, because at this n
 you cannot detect small changes in a graded metric and you can detect any change
 in a deterministic one.
+
+Plus the thing that isn't in the table: **30 minutes reading 20-50 real
+transcripts after every significant change.** That is where the next eval
+category comes from, and for the first month it will find more than the suite
+does.
+
+Steal item phrasings from CoCoNot, SelfAware, KUQ and FalseQA rather than
+freestyling them — particularly the false-premise set, which is the category
+with the worst downside here and the one where hand-written items tend to be
+too obvious.
 
 ### What I would not bother with, and why
 
