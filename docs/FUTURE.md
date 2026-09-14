@@ -89,16 +89,63 @@ families where it extracted 62 across 6. None of it changes the deployed
 build, which is still the free set and still sounds as it did, minus the
 leaves-are-stone bug — see `docs/DEPLOYMENT.md`.
 
+Two more since that, and the second of them strikes an item that was about to
+be added to the list below.
+
+- **Blocks drop what Minecraft says they drop.** Ore drops were the first item
+  on this list and had already shipped when the list was last edited, which is
+  the exact failure this file is supposed to prevent. `src/items.js` carries
+  real drop tables now — coal ore drops coal, lapis drops 4–9 lapis lazuli,
+  redstone 4–5 — instead of every block handing back itself, which was silk
+  touch for everyone. `test/13-drops.spec.js` is 22 of the suite's tests.
+- **AI Evan's head follows you.** He tracks the player with Minecraft's own
+  50-degree head/body split — the same rule `perspective.js` applies to you,
+  in the same file that argues he should not move — and the pitch is aimed
+  eye-to-eye rather than eye-to-feet so he is not staring at your shoes. This
+  was going to be proposed here as the cheapest presence win available. It is
+  already at the bottom of `npc.js`'s tick handler, so it is recorded as done
+  rather than as an idea. It is worth saying why it was the cheapest one: a
+  figure that turns to face you reads as alive before it says anything.
+
 ## Next, in the order I'd take them
 
 Roughly ascending in how much they depend on a decision from Evan rather than
 on effort.
 
-1. **Ore drops.** Ores still drop themselves rather than coal, diamond and
-   lapis, which is silk-touch behaviour. Needs an ore-to-item table in
-   `blocks.js`. Small, and conspicuous once you mine one — more so now, since
-   the imported patch is full of real ore veins rather than a hand-seeded
-   rarity table.
+1. **There is no way to put text in the world.** No signs, no wall signs, no
+   written books, no lecterns. Both `blocks.js` and `items.js` were searched:
+   `bookshelf` is an ordinary full cube and `book` is a crafting ingredient,
+   and neither a sign block nor a writable book item exists anywhere in the
+   palette. That is a bigger hole than it looks, because **content is this
+   project's only real blocker and a sign is the cheapest delivery surface
+   there is** — and vanilla already answers the question, so nothing has to be
+   invented.
+
+   **A sign is a non-cube**, which puts it in `blockMeshes.js` alongside slabs
+   and stairs rather than in the fence problem below. The distinction is the
+   one that file already draws: noa renders every voxel of a block id as a
+   thin instance of one shared mesh, so position, rotation and scale can vary
+   per voxel and vertices cannot. A fence with two arms is not a transform of
+   a fence with three; a sign facing east IS a transform of a sign facing
+   south. `installPlacementOrientation` already resolves a canonical id into a
+   facing variant on placement, over the four compass facings
+   `headingToFacing` returns — vanilla's standing sign has sixteen rotations,
+   so either four is accepted or that helper gets a finer version. And signs
+   are non-solid, so the sub-voxel collision half of that file — which is the
+   expensive half — does not apply at all.
+
+   **The text is the actual new work.** A sign face is four lines of
+   Minecraft's bitmap font drawn into a texture, and `nametag.js` already does
+   exactly that: Monocraft at 8x supersample, NEAREST sampling, mipmaps off,
+   because a mipped nametag turns to grey mush at twenty blocks and so would a
+   sign. The difference is quantity. A nametag is one billboard per character;
+   signs are a canvas and a `DynamicTexture` per placed sign, which is a
+   budget nobody has counted yet. A written book is a screen instead, and
+   `menu.js` plus `inputLock.js` are already the shape for one.
+
+   Plausibly the highest value-per-effort item on this entire list. Everything
+   else here makes the world more elaborate. This is the first thing that lets
+   it say anything. It absorbs "spawn signage" from "Also worth building".
 2. **Dropped non-block items are flat planes.** `itemModel.js` now extrudes
    item sprites for the hand, and the same mesh is reusable in
    `itemEntity.js` — but it needs a `ground` entry in `DISPLAY` (vanilla's is
@@ -205,9 +252,35 @@ on effort.
    `public/terrain/` is gitignored, and `scripts/check-deploy-assets.mjs`
    fails the build if `dist/terrain/` exists. That argument is not repeated
    here on purpose. What belongs here is the consequence, in the next section.
-10. **Content on the island.** No resume content exists. This has been the
+10. **Interview Evan, on tape.** The question set already exists and does not
+    need designing — this item is doing the interview, not building one.
+    `docs/ai-evan/03-corpus.md` ends with **43 questions in six groups, A
+    through F**, budgeted at 75–100 minutes and split cleanly into two
+    sittings at group C. They are written to be **recorded and transcribed,
+    not typed**, and that constraint is the whole design: typed answers come
+    out in written register, and written register is the one thing a
+    spoken-voice corpus cannot be built out of. Group A is the fast one —
+    15 minutes, answer without thinking — and it is the group that produces
+    the canonical fact record everything else is checked against.
+
+    That fact record is the deliverable that matters, for a reason that doc
+    found rather than assumed: **the served resume PDF and every other
+    artifact disagree about Evan's current job title.** A PDF is a document a
+    human reads once and forgives. An agent is a thing that repeats the wrong
+    title to a recruiter at 3am with nobody in the room. Question 2 of Group A
+    resolves it, and a contract missing from the PDF entirely is question 3.
+    The full argument is there; it is not repeated here.
+
+    It sits this late in a list ordered by how much it waits on Evan because
+    it waits on him completely. Nothing has to be built first, no decision
+    blocks it, and it unblocks both the content and the agent — which is why
+    "Sequencing" below moves it off this list and onto the critical path.
+11. **Content on the island.** No resume content exists. This has been the
     real gap for the entire life of this project, through every engine feature
-    above, and it is still the gap.
+    above, and it is still the gap. It now has a **shape**, though, which it
+    has never had before: **one build per resume point**. That is Evan's
+    answer, and section 2 argues that the builds and the route between them
+    are one feature rather than two.
 
 ## Sequencing
 
@@ -218,7 +291,11 @@ has been the fun half and it is essentially done for a first ship. Everything
 that remains between here and a site someone can visit is either content or a
 decision.
 
-**The critical path to a shippable site is four things, in this order.**
+**The critical path to a shippable site is six things, in this order.** It was
+four. Two were added rather than reordered, and both of them sit in front of
+the content: **the interview**, because the content cannot be written before
+the facts are settled, and **signs**, because there is nowhere to put the
+content once it is. Neither was a priority call — both were missing.
 
 1. **Decide the terrain licence question.** It is first not because it is
    urgent but because everything downstream inherits it. If the answer is the
@@ -234,26 +311,47 @@ decision.
    has said he does not love this terrain, and both the re-pick and the
    re-score of spawn (item 6) cost one pipeline run and three constants while
    the island is empty, and cost a rebuild of the island once it is not.
-2. **Content on the island.** Blocked on nothing technical, and it is the
-   whole point. Everything else on this list makes the world more elaborate;
-   only this makes it worth visiting. The authoring story is in "Also worth
-   building" below and is no longer blocked either.
-3. **The credits surface.** Cheap, small, and it stops being optional the
+2. **Do the interview** (item 10). Numbered second, but it should start the
+   same week as 1 and probably the same day, because **it blocks on nothing
+   and nothing blocks on it**. It is 75–100 minutes of Evan talking into a
+   recorder, it needs no code, and it does not care which patch or which
+   licence answer wins. It is first among the things that produce the site's
+   substance because writing resume content before the fact record exists
+   means writing content that has to be checked against a document that
+   disagrees with itself.
+3. **Signs** (item 1). The delivery surface. This is the one that reorders the
+   list: "content on the island" has been sitting at the top of the substance
+   half of this file for the whole project, and the world has no mechanism for
+   displaying a sentence. A build with no text in it is a shape. Signs are
+   days, not weeks, and every piece of content authored after them is cheaper.
+4. **Content on the island** (item 11). Blocked on nothing technical once 2
+   and 3 are done, and it is the whole point. Everything else on this list
+   makes the world more elaborate; only this makes it worth visiting. The
+   shape is **one build per resume point** — see section 2 — and the authoring
+   story is in "Also worth building" below.
+5. **The credits surface.** Cheap, small, and it stops being optional the
    moment anything is served. Do it alongside content rather than after.
-4. **Deploy.** The platform is decided and the pipeline is built and exercised
+6. **Deploy.** The platform is decided and the pipeline is built and exercised
    on every push — see `docs/DEPLOYMENT.md`. What is missing is a Cloudflare
    account, two repository secrets, and a decision about the domain. Nothing
    is live, so no visitor has ever seen any of this.
 
 **After a first ship**, in the order they earn their keep:
 
-5. **An AI version of Evan**, in the world, that visitors can talk to and book
+7. **An AI version of Evan**, in the world, that visitors can talk to and book
    time with. See section 2. This displaced multiplayer, and the reasoning is
    in section 2b. It needs the Worker and it needs content to be grounded in,
    so it cannot start earlier than it appears here.
-6. **Video screens.** The richest way to deliver the content, independent of
+8. **The guided tour** — he walks you from build to build. Section 2 again,
+   and it is the reason items 3 and 4 above are worth doing well: the tour is
+   a route through the content, so it is worthless before the content and
+   obvious after it. Note it does NOT have to wait for a real model. A
+   scripted walk on the stub brain is the honest way to find out whether being
+   led around this world feels good before paying per token to find out.
+9. **Video screens.** The richest way to deliver the content, independent of
    everything else, and gated on recording the clips rather than on code.
-7. **Multiplayer presence**, then **skin customization**, then the long tail.
+10. **Multiplayer presence**, then **skin customization**, then the long
+    tail.
 
 The ordering rule has not changed: anything that makes the world worth
 visiting beats anything that makes it more elaborate. Engine polish has been
@@ -434,8 +532,9 @@ beside the game: a thing you walk up to.
 ### FIRST SLICE BUILT: the agent seam, with no agent behind it
 
 Evan is standing four blocks east of spawn under an `[Admin] Evan` nameplate.
-Walk within three and a half blocks and he greets you and asks your name; tell
-him in chat and **you are renamed**, nameplate and chat line both.
+His head follows you as you circle him. Walk within three and a half blocks
+and he greets you and asks your name; tell him in chat and **you are
+renamed**, nameplate and chat line both.
 
 The point of building this first is that **the rename is a tool call**, not a
 special case:
@@ -491,6 +590,97 @@ the reasons below. The registry already returns `is_error` with a message on a
 bad call and lets the model retry, which is most of what a booking tool needs
 when someone asks for a slot that just went.
 
+### He does not move, and the guided tour is why that changes
+
+Verified rather than assumed. `src/npc.js` creates no noa entity and no
+physics body — deliberately, and the file says so — and its tick handler moves
+his head and nothing else. The walk itself is not missing: `poseModel` carries
+Minecraft's full limb cycle and `perspective.js` accumulates `limbSwing` from
+distance travelled to drive it for the player. `npc.js` declares `limbSwing`,
+passes it into `poseModel`, and never increments it. He is a model with a walk
+that has never been asked to do it.
+
+**Evan wants him to move, and wants the movement, the conversation and the
+content to be one feature rather than three.** In his words: look at me, then
+we decide what we want to talk about, then the AI leads the person there.
+Like a build per resume point.
+
+So the feature is a **guided tour**. He notices you — built. You work out
+between you what you actually want to hear about — the agent, once it is real.
+Then he walks you to the build for that resume point and talks about it while
+you are both standing in it.
+
+Two things fall out of that, and the second is the bigger one.
+
+**It is a tool call on the seam that already exists.** `walk_to(plot)` sits
+beside `set_player_name` in `aiEvan.js`, registered through the same registry,
+retried through the same `is_error` path when it names a plot that is not
+there. Nothing in `agent.js` changes. This is what the first slice was built
+to make cheap, and it is the first tool since that actually uses the world
+rather than the roster.
+
+**One build per resume point is the content plan**, and it is the first
+concrete answer this file has ever been able to record to "what does resume
+content in the world actually mean". It also answers a worry this project has
+had since the patch got big: 128x128 is a lot of ground to wander without
+finding anything, and nobody had a discoverability story better than hoping.
+A person who walks you between the builds IS the discoverability story. A
+visitor who follows him sees everything in the order Evan wants it seen; a
+visitor who wanders off still has signs.
+
+**Depends on** the builds existing (item 11) and on there being readable text
+in them (item 1). It does not depend on the model being real.
+
+### Navigation is a search problem, not a learning one
+
+Worth stating plainly, because the seductive alternative is in "Someday" and
+it must not creep in front of this.
+
+Leading a visitor from one build to another over a voxel grid is **A\*, with
+movement rules that know about jumping and falling**. Baritone does exactly
+this in real Minecraft, at scale, on arbitrary terrain. It is deterministic,
+it is testable against a fixed patch that never changes, it fails visibly
+rather than subtly, and it costs nothing per visitor. For the product, this is
+the boring correct answer and it should be assumed.
+
+Parkour — the version where he takes the interesting route across a gap rather
+than the walkable one — is a harder search with a bigger action space and
+tighter timing. It is still not a learning problem.
+
+### Can you punch him, and can he punch you?
+
+Evan's ask. Smaller than it sounds in one direction, and a decision he has not
+made in the other.
+
+**The animation half is done.** `swing.js` drives the player's arm on left
+click whether or not it connects with anything, and `poseModel` takes an
+`attack` parameter that is Minecraft's own `attackTime` counting from 0 at the
+start of the swing — so making Evan swing is the same call that already makes
+him look at you. On the receiving side `survival.js` has
+`damage(amount, cause)` with an emitter, armour reduction and death already
+wired, so "Evan punched you" is a cause string and nothing more.
+
+**The missing half is hit detection**, and it is the same structural fact as
+the movement above: with no entity and no AABB there is nothing for a pick to
+hit. The only thing this world can currently target is a block. So it is
+either a hand-rolled ray-against-box test on his known position — cheap, and
+it keeps him out of noa's entity system, which is the thing `npc.js` has
+protected from the start — or it is giving him a body, which is a bigger
+decision than punching.
+
+**The open question is Evan's, and it is recorded here unanswered: if he can
+be punched, can he die?** Real servers make NPCs invulnerable, and the reason
+is not squeamishness. An NPC that can be killed is an NPC that is missing when
+the next visitor arrives, which means a respawn rule; and on a personal resume
+site it means the front page can be vandalised by one person with a stone
+sword. The options are knockback and a hurt flash with no health at all,
+health that regenerates, or real mortality with a timer. Not answered here.
+
+This does **not** reopen "hostile mobs and combat" in "Not worth building".
+That entry is about a zombie interrupting someone halfway through reading a
+work history. Punching the person you are talking to is a Minecraft verb, not
+a combat system.
+
 ### Why this displaced multiplayer
 
 Multiplayer has an empty-room problem no engineering fixes. Traffic here is a
@@ -517,6 +707,15 @@ Most of the body already exists: `playerModel.js` is a factory, `poseModel()`
 takes explicit state rather than reading the player, and the skin is one
 swappable material. An NPC is that model with no keyboard attached.
 
+**That argument has a shelf life, and the tour above is the end of it.** It was
+right for the first slice and it is still right for the second — nothing about
+booking a meeting needs him to walk. But "stationary gets most of the value"
+stops being true the moment the value is *a route through content*, and the
+right reading of the paragraph above is now: the body was withheld until there
+was a reason for it, and the reason has arrived. What it bought in the
+meantime is real. Everything in the slice that shipped works without an
+entity, so nothing has to be unpicked to give him one.
+
 ### Tools, which is what makes it an agent rather than a chatbot
 
 - **Answer questions** about Evan's work, grounded in real content.
@@ -526,8 +725,10 @@ swappable material. An NPC is that model with no keyboard attached.
   handles timezones, availability and confirmations, none of which are worth
   rebuilding. Google Calendar directly is the alternative and means owning
   OAuth for no benefit.
-- **Point at things in the world** — walk a visitor to a plot, or just
-  highlight it. Cheap, and it ties the agent to the space.
+- **Walk a visitor to a plot.** This started life here as "point at things in
+  the world — cheap, and it ties the agent to the space", which undersold it
+  by a long way. It is the guided tour, it has its own section above, and it
+  is the thing that makes him more than a chatbot standing in a field.
 
 The Worker holds the keys and runs the tool loop. Nothing model-facing can live
 in the bundle.
@@ -536,7 +737,10 @@ in the bundle.
 
 - **Grounding.** A vague AI Evan is worse than none — it reads as a gimmick
   that dodges questions. It needs real career detail to draw on, which is the
-  same content gap blocking everything else on this list.
+  same content gap blocking everything else on this list. The specific fix is
+  item 10: a recorded interview producing one canonical fact record that is
+  not the resume PDF, because `docs/ai-evan/03-corpus.md` found the PDF
+  already disagreeing with every other artifact about his current title.
 - **Hallucinating a job he never had** is the failure that matters. This
   speaks as Evan, on Evan's domain, to people evaluating him. Bounds on what it
   will claim are not optional.
@@ -726,9 +930,12 @@ the lesson that produced the gap, and the parts of those two features
   address block variants directly rather than through `noa.setBlock`'s
   placement orientation, which deliberately only rewrites a family's canonical
   id.
-- **Spawn signage or a guided path.** A visitor drops into a dark forest under
-  a canopy with no idea what to do. Even one sign at spawn changes that, and
-  it is the cheap half of item 6 above.
+- **Spawn signage or a guided path.** Folded upward rather than deleted: the
+  signage half is item 1 and the guided path is section 2's tour, which are
+  the two halves of one problem and are both on the critical path now. The
+  observation that produced this bullet still stands and is why — a visitor
+  drops into a dark forest under a canopy with no idea what to do, and one
+  sign at spawn is still the cheap half of item 6.
 - **Mobile.** Explicitly dropped, and that's a real decision — but pointer lock
   does not exist on touch devices, so phone visitors currently get a world they
   cannot move in. A fixed camera flythrough would at least show them something.
@@ -743,17 +950,78 @@ are not lost. Evan has more to add here.
 
 ### Autonomous NPCs that move
 
-The full version of section 2: characters that walk, follow, and act rather
-than standing still. The hard piece is **pathfinding** — A* over the voxel grid
-with costs for jumping and falling — and it is what makes an NPC look alive or
-look broken. Deliberately not in the MVP, because a stationary AI Evan gets
-most of the value without it.
+**Promoted out of here.** Evan asked for a moving NPC and a guided tour, so
+this is section 2 work now rather than someday work, and the pathfinding
+argument that used to live in this paragraph lives there. What stays someday
+is the *autonomous* half — characters that wander and act on their own,
+without a visitor to lead. The tour needs a route between two known points.
+That is a much smaller thing than a life of its own.
+
+### Voice
+
+**TABLED**, which is Evan's word for it — deferred, not rejected. Text to
+speech for AI Evan, so you hear him instead of reading him. It is the
+conversational twin of the video screens in section 1, which are already
+planned and already gated on recording clips of him talking, and the fidelity
+argument is the same argument: a recruiter who hears thirty seconds of him has
+had a different experience from one who read it.
+
+The reason it is parked rather than scheduled is that **it is a cost and
+latency question before it is a fidelity one**, and this project has already
+done that arithmetic once. `docs/ai-evan/02-operations.md` section 6 sets out
+what the timing has to be for a text reply inside a running world, and why
+tool loops rather than models are where perceived latency actually dies;
+section 3 sets out the per-visitor cost model and the caps that stop a bill.
+Synthesis adds a second provider, a second bill and a second round trip on top
+of both — applied to a reply that is already racing a character who reads as
+broken if he pauses for three seconds. There is a third question nobody has
+asked yet either: whether a cloned voice of Evan, saying sentences Evan never
+said, is a thing Evan wants on his own domain.
+
+Revisit after the agent is real and the latency numbers are measured rather
+than estimated.
+
+### Learned navigation, if the point is the learning
+
+Kept separate from the tour on purpose, and it must not become a prerequisite
+for it. The tour's navigation is A* and that is settled in section 2.
+
+But it is worth writing down that **this world is already most of an RL
+environment**, because it was not built to be one and it arrived there anyway:
+a fixed tick loop, real Minecraft physics with the constants checked against
+the wiki, fully resettable state, an observable position, a discrete action
+space that the input handling already enumerates, and an obvious reward in
+reaching a target block. The 238-test suite is a harness that can already
+stand the world up headlessly and measure it.
+
+And Evan starts at Patronus AI on RL environments and LLM evaluation. So
+"train him to navigate" may be the point rather than the means — a real
+environment he owns end to end, rather than a gridworld. That is a legitimate
+reason to build it. It is not a reason to block a visitor-facing feature on
+it.
+
+The honest split: **A\* ships the tour; the environment is a separate project
+that happens to share a world.** Evan's call which he wants, and there is no
+reason he cannot have both in that order.
 
 ## Not worth building
 
 - **Hostile mobs and combat.** Large effort, and actively harmful: a zombie
   attacking someone halfway through reading your work history is worse than no
-  mobs at all. Passive animals are the version worth having.
+  mobs at all. Passive animals are the version worth having. This is about
+  *hostility*, not about swinging — being able to punch AI Evan, and the
+  unanswered question of whether he can die, is section 2 and is not covered
+  by this entry.
+- **Chat bubbles over his head.** Proposed, and rejected by Evan on fidelity
+  grounds: *never chat bubbles above his head, that is not real Minecraft.*
+  He is right. Speech floating over an NPC is a server-plugin convention —
+  common enough on real servers that it feels vanilla and is not. Minecraft
+  puts every word in the chat log and nowhere else, and this project's
+  standing rule is that it looks and behaves like Minecraft. The problem the
+  bubbles were meant to solve is real — you cannot tell from across the island
+  that he is interactive — but it is signs and the guided tour that solve it,
+  not a new UI vanilla does not have. Written down so nobody proposes it a
+  second time.
 - **Redstone.** No.
 - **Voice chat.** WebRTC infrastructure plus the worst moderation surface
   available, for something nobody wants on a resume site.
