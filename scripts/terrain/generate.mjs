@@ -47,17 +47,19 @@ const JAVA = existsSync(LAUNCHER_JRE) ? LAUNCHER_JRE : 'java'
 // issued as a grid of at-most-16x16-chunk commands.
 const MAX_SIDE = 16
 
-const properties = (seed, port) => [
+const properties = seed => [
   `level-seed=${seed}`,
   /*
-   * Every server binds a port even though nothing will ever connect, and two
-   * servers on one port do not queue -- the second dies with BindException
-   * during init. That failure is invisible at the obvious checkpoint: the
-   * JVM still exits 0, so a run that generated nothing looks exactly like a
-   * run that worked, only faster. Per-lane ports fix the cause; the chunk
-   * count check at the end of generateSeed catches whatever else goes wrong.
+   * Port 0 means "let the OS pick a free one". Nothing ever connects to these
+   * servers -- they exist to run the world generator and exit -- so the port
+   * is pure ceremony, and picking it by hand was the single biggest source of
+   * wasted runs here. Two servers on one port do not queue: the second dies
+   * with BindException during init, the JVM still exits 0, and a run that
+   * generated nothing looks exactly like one that worked, only faster. Fixed
+   * per-lane ports fixed that until a stale server from an earlier run held
+   * the port and broke it again. Port 0 cannot collide with anything, ever.
    */
-  `server-port=${port}`,
+  'server-port=0',
   'level-type=minecraft:normal',
   'level-name=world',
   'online-mode=false',
@@ -77,6 +79,15 @@ const properties = (seed, port) => [
   // save-all flush covers that, but this removes the OS-buffering question
   // entirely for the price of a slower generate we run a handful of times.
   'sync-chunk-writes=true',
+  /*
+   * Disable the watchdog. It exists to kill a server whose main thread has
+   * hung, and it cannot tell that apart from a main thread legitimately busy
+   * generating a thousand chunks in one go -- so at the default 60s it
+   * crash-reports a perfectly healthy generate, and does it more often the
+   * more lanes are competing for cores. Nothing connects to these servers,
+   * so there is no hang for it to protect anyone from.
+   */
+  'max-tick-time=-1',
 ].join('\n') + '\n'
 
 /**
@@ -84,7 +95,7 @@ const properties = (seed, port) => [
  * Returns the world directory. Idempotent: an already-generated seed is
  * reused unless `fresh` is set.
  */
-export async function generateSeed(seed, radius, { fresh = false, port = 25565, log = console.log } = {}) {
+export async function generateSeed(seed, radius, { fresh = false, log = console.log } = {}) {
   const dir = join(WORK, `seed-${seed}`)
   const region = join(dir, 'world', 'region')
   if (fresh) rmSync(dir, { recursive: true, force: true })
@@ -94,7 +105,7 @@ export async function generateSeed(seed, radius, { fresh = false, port = 25565, 
   // Mojang requires explicit EULA acceptance; without it the server writes a
   // fresh eula.txt and exits immediately, which looks exactly like a crash.
   writeFileSync(join(dir, 'eula.txt'), 'eula=true\n')
-  writeFileSync(join(dir, 'server.properties'), properties(seed, port))
+  writeFileSync(join(dir, 'server.properties'), properties(seed))
 
   const cMin = Math.floor(-radius / 16)
   const cMax = Math.floor((radius - 1) / 16)

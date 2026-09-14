@@ -477,3 +477,66 @@ most work, not the least.
 Recommendation while the island is still empty: `workers.dev`. Deciding the
 domain is cheap later and the choice is reversible; replacing a working
 portfolio with an empty island is neither.
+
+## Open: is generated terrain redistributable? (blocks deployment)
+
+**This is unresolved, and until it resolves the terrain data does not ship.**
+`public/terrain/` is gitignored and `dist/` must not carry it. That default is
+a choice made in the absence of an answer, not an answer.
+
+### Why this is not the textures question again
+
+The textures rule is settled and easy: Mojang's PNGs are Mojang's artwork,
+copying them into a public repo is redistribution, so the build keeps them
+untracked and offers a CC-licensed alternative. Same for the audio.
+
+The terrain data is a different shape. Nobody at Mojang drew this hillside.
+It is the **output of running their world generator** on a seed — closer to
+the output of a compiler than to an art asset. The familiar analogy is that
+the output of GCC is not covered by GCC's licence, and that instinct says
+this is fine.
+
+The instinct is not evidence, and there are at least three reasons to be
+careful before acting on it:
+
+- **The output is not independent of the program.** A compiler's output is
+  mostly a transformation of input the user wrote. Here the "input" is a
+  64-bit number and *everything* interesting in the output — the shape of the
+  mountain, where the biomes meet — comes from Mojang's code. That is much
+  closer to generated content than to a transformation.
+- **Block names and the palette are Mojang's vocabulary.** The manifest lists
+  `minecraft:`-derived keys. Probably de minimis, but it is a second thing
+  being copied, not zero things.
+- **The EULA is not the usual open-source licence, and it talks about what
+  you may do with things you make using the game.** Whether a generated
+  region file is one of those things is exactly the question, and reading the
+  EULA to find out is a job for someone willing to be accountable for the
+  reading. This file is not that.
+
+### What the honest positions are
+
+- **Conservative**, and the current default: treat generated terrain like the
+  textures. Keep it local, keep it out of the deploy, and either ship the
+  hand-generated island publicly or write an original generator for the
+  public build. Costs the realism that motivated the whole exercise.
+- **Permissive**: publish it, on the compiler-output reasoning, and accept
+  that the reasoning is untested. Cheap and probably fine and definitely not
+  verified.
+- **Sidestep entirely**, and worth more thought than it first gets: ship the
+  *seed and the extractor* rather than the blocks, and generate on the
+  visitor's machine. This fails for this project — it needs a JVM — but the
+  general move (ship the recipe, not the dish) is what an original generator
+  tuned to look like the scored patch would be, and that has no licensing
+  question at all.
+
+### What would actually settle it
+
+Someone reading the current Minecraft EULA and the Commercial Usage
+Guidelines against this specific use — a non-commercial personal portfolio
+serving a 128x128 region of generated blocks, no Mojang textures, no Mojang
+code. That is a decision with a named owner, and it is Evan's, not this
+build's.
+
+Until then the gate is: **`dist/` must not contain `terrain/`.** Worth adding
+to `scripts/check-deploy-assets.mjs` as a hard assertion the way
+`dist/sounds/.source` is checked, so the default cannot be lost by accident.

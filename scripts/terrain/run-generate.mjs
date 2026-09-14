@@ -9,16 +9,14 @@ const LANES = Number(process.env.LANES ?? 4)
 // on a multi-core machine.
 const queue = [...CANDIDATE_SEEDS]
 const failures = []
-// Each lane owns a port for its whole life, so concurrent servers never
-// collide on 25565.
-const lane = async n => {
+const lane = async () => {
   while (queue.length) {
     const seed = queue.shift()
-    try { await generateSeed(String(seed), RADIUS, { port: 25600 + n }) }
+    try { await generateSeed(String(seed), RADIUS) }
     catch (e) { failures.push(seed); console.log(`  seed ${seed}: FAILED ${e.message}`) }
   }
 }
-await Promise.all(Array.from({ length: LANES }, (_, n) => lane(n)))
+await Promise.all(Array.from({ length: LANES }, lane))
 if (failures.length) {
   console.log(`FAILED seeds: ${failures.join(', ')}`)
   process.exitCode = 1
