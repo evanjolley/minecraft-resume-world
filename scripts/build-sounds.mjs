@@ -187,6 +187,50 @@ const SETS = {
    * a manifest built before today.
    */
   pickup: ['random/pop'],
+
+  /* ------------------------------------------------------------------ *
+   * Water.
+   *
+   * Every one of these is in the flat `liquid/*` and `ambient/underwater/*`
+   * layout, which is the same shape the four sets above already use -- so
+   * this is rows, not a new extraction path. Verified present in asset index
+   * 26 (1.21.8) on this machine.
+   *
+   * Vanilla's event names, for anyone tracing these back to sounds.json:
+   *   splash        entity.generic.splash          (and entity.player.splash)
+   *   splashHigh    entity.player.splash.high_speed
+   *   swim          entity.generic.swim
+   *   waterAmbient  block.water.ambient
+   *   underwater*   ambient.underwater.loop / .enter / .exit
+   *   lava*         block.lava.ambient / block.lava.pop
+   *
+   * EIGHTEEN SWIM SAMPLES is vanilla's own count, not enthusiasm. Swimming
+   * fires one roughly every six ticks for as long as you hold a direction, so
+   * it is the most repeated sound in the game after footsteps, and six
+   * variants would read as a loop within one length of a pond.
+   *
+   * NOT EXTRACTED -- ambient.underwater.loop.additions, twenty-one files of
+   * whale song, bubbles, crackles and distant dark. They are the good half of
+   * being underwater in vanilla and they are also twenty-one more files to
+   * cover a state this world's ocean can hold you in for about fifteen
+   * seconds before you drown. Left on the table deliberately; the loop bed is
+   * the part you actually hear.
+   * ------------------------------------------------------------------ */
+  splash: ['liquid/splash', 'liquid/splash2'],
+  splashHigh: ['liquid/heavy_splash'],
+  swim: Array.from({ length: 18 }, (_, i) => `liquid/swim${i + 1}`),
+  waterAmbient: ['liquid/water'],
+  underwaterLoop: ['ambient/underwater/underwater_ambience'],
+  underwaterEnter: ['ambient/underwater/enter1', 'ambient/underwater/enter2',
+    'ambient/underwater/enter3'],
+  underwaterExit: ['ambient/underwater/exit1', 'ambient/underwater/exit2',
+    'ambient/underwater/exit3'],
+  lavaAmbient: ['liquid/lava'],
+  lavaPop: ['liquid/lavapop'],
+  // entity.player.breath -- the bubble popping off the air meter. The one
+  // water sound that is a HUD sound rather than a world sound, which is why
+  // it lives under ui/ and plays flat.
+  breath: ['ui/hud/hud_bubble'],
 }
 
 /* ------------------------------------------------------------------ *

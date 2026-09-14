@@ -1,4 +1,7 @@
 import { BLOCK_BY_ID, BLOCK_TYPES } from './blocks.js'
+// For the air meter only. hud.js draws the bubbles off these same two
+// constants, so counting them here counts exactly what the player can see.
+import { MC } from './physics.js'
 
 /*
  * Minecraft's block sounds, played through Web Audio.
@@ -428,6 +431,34 @@ const MIX = {
    * manifest wins and this line stops mattering.
    */
   pickup: { set: 'pickup', fallback: 'uiClick', shared: true, volume: 0.3, pitch: 2.0, vary: 0.7 },
+
+  /* ------------------------------------------------------------------ *
+   * Water. All `shared`, because none of them hangs off a block.
+   *
+   * That is not a shortcut around GROUP_RULES' `[/^(water|lava)$/, null]` --
+   * that line is still right. Vanilla fluids genuinely have no SoundType;
+   * water's noises are ENTITY events (entity.generic.splash, .swim) and
+   * AMBIENT events (ambient.underwater.*), which is why they are here with
+   * hurt and the UI click rather than in the block grid.
+   *
+   * Volumes are vanilla's own where sounds.json publishes one:
+   * ambient.underwater.loop 0.65, .enter 0.5, .exit 0.3, block.water.ambient
+   * 0.75-1.0 at pitch 0.5-1.5. Splash and swim are mixed by ear against the
+   * footsteps they play alongside -- Entity.playSwimSound scales its volume
+   * by how hard you are moving, which this does not reproduce.
+   * ------------------------------------------------------------------ */
+  splash: { set: 'splash', shared: true, volume: 0.6, pitch: 1.0, vary: 0.2 },
+  splashHigh: { set: 'splashHigh', shared: true, volume: 0.7, pitch: 1.0, vary: 0.2 },
+  swim: { set: 'swim', shared: true, volume: 0.3, pitch: 1.0, vary: 0.4 },
+  // The pitch spread really is that wide -- block.water.ambient is declared
+  // 0.5 to 1.5 in sounds.json, which is why a pond never sounds like a loop.
+  waterAmbient: { set: 'waterAmbient', shared: true, volume: 0.35, pitch: 1.0, vary: 0.5 },
+  underwaterEnter: { set: 'underwaterEnter', shared: true, volume: 0.5, pitch: 1.0 },
+  underwaterExit: { set: 'underwaterExit', shared: true, volume: 0.3, pitch: 1.0 },
+  lavaAmbient: { set: 'lavaAmbient', shared: true, volume: 0.4, pitch: 1.0, vary: 0.2 },
+  lavaPop: { set: 'lavaPop', shared: true, volume: 0.4, pitch: 1.0, vary: 0.3 },
+  // The bubble leaving the air meter. A HUD sound, so flat and dry.
+  breath: { set: 'breath', shared: true, volume: 0.5, pitch: 1.0, vary: 0.1 },
 }
 
 // Minecraft's LivingEntity.getFallDamageSound: more than 4 half-hearts of fall
@@ -454,8 +485,39 @@ const LAND_MIN_SPEED = 3
 const POSITIONAL_VOICES = 16
 const FLAT_VOICES = 8
 
+/*
+ * Swimming. Vanilla's Entity.playSwimSound fires on a distance travelled
+ * rather than on a clock -- `nextStep` at 0.35 of a block-move -- which comes
+ * out at roughly one stroke every six ticks at swim speed. A clock is close
+ * enough here and does not need the odometer footsteps already own.
+ */
+const SWIM_INTERVAL = 0.3
+
+/* block.water.ambient is a random one-shot, not a loop. Vanilla picks its gap
+ * out of the same ambient scheduler every other block sound uses; this is a
+ * plain uniform, which sounds the same and is one line. */
+const ambientGap = () => 2 + Math.random() * 6
+
+/*
+ * How loud the underwater bed sits. Vanilla's ambient.underwater.loop is 0.65,
+ * and the synthesised stand-in below is quieter because it is broadband and
+ * never stops -- a filtered noise bed at the same number is a hiss you notice.
+ */
+const BED_VOLUME = 0.5
+const SYNTH_BED_VOLUME = 0.28
+
+/* Two seconds of white noise. Same trick as rainAudio.js, and deliberately
+ * NOT imported from it: that module owns the rain graph, and reaching into it
+ * for a buffer helper would make the two dispose together. */
+function noiseBuffer(ctx, seconds = 2) {
+  const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * seconds), ctx.sampleRate)
+  const d = buf.getChannelData(0)
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1
+  return buf
+}
+
 export function installSounds(noa, deps = {}) {
-  const { interaction, movement, survival } = deps
+  const { interaction, movement, survival, fluids } = deps
 
   let ctx = null
   let master = null
@@ -551,6 +613,79 @@ export function installSounds(noa, deps = {}) {
       flat.push({ gain })
     }
     return true
+  }
+
+  /* ------------------------------------------------------------------ *
+   * The underwater bed.
+   *
+   * A LOOP, so it cannot go through play(): every voice in the pools above is
+   * a one-shot fired and forgotten, and an AudioBufferSourceNode cannot be
+   * restarted once stopped. The pattern is rainAudio.js's -- one source
+   * started once and never stopped, with the gain as the switch, ramped
+   * rather than snapped.
+   *
+   * WHAT A FREE OR CE BUILD SOUNDS LIKE. `npm run build:deploy` runs
+   * `sounds:free`, and sounds-src/free/ has no water sample of any kind --
+   * there is no CC0 recording of Minecraft's underwater ambience and there is
+   * not going to be one. So the bed is SYNTHESISED when the manifest has no
+   * `underwaterLoop`: white noise through a 260 Hz lowpass, which is what a
+   * few feet of water does to every sound above it. It is a dull, wide,
+   * pressureless rumble with no detail in it -- noticeably emptier than
+   * Mojang's recording, which has current and creak and distant movement in
+   * it, but unmistakably "your head is under water" rather than silence.
+   *
+   * Rejected: shipping an unattributed sample, which is the one thing
+   * sounds-src/free/NOTICE.txt exists to prevent. Rejected too: leaving a
+   * deploy silent under water, which is what happens today and is a
+   * regression against the vanilla build rather than a neutral gap.
+   *
+   * On a deploy the one-shots -- splash, swim, the enter/exit gulps -- are
+   * simply absent, because FREE has no mapping for them. That is the existing
+   * behaviour for any set the free build does not carry, and it stays visible
+   * rather than being papered over with a `fallback` to something that is not
+   * water.
+   * ------------------------------------------------------------------ */
+  let bedGain = null
+  let bedSynthetic = false
+
+  function buildBed() {
+    if (bedGain) return true
+    if (!ctx || ctx.state !== 'running') return false
+    bedGain = ctx.createGain()
+    bedGain.gain.value = 0
+
+    const loopPath = manifest?.sets?.underwaterLoop?.[0]
+    const loopBuf = loopPath && buffers.get(loopPath)
+    const src = ctx.createBufferSource()
+    src.loop = true
+
+    if (loopBuf) {
+      src.buffer = loopBuf
+      src.connect(bedGain)
+    } else {
+      bedSynthetic = true
+      src.buffer = noiseBuffer(ctx)
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.frequency.value = 260
+      // Flat, no resonance: a peak at the cutoff makes noise whistle, and
+      // water has no pitch in it.
+      lp.Q.value = 0.4
+      src.connect(lp).connect(bedGain)
+    }
+    bedGain.connect(master)
+    src.start()
+    return true
+  }
+
+  function setUnderwaterBed(on) {
+    // Don't build a graph just to play silence at somebody who is dry.
+    if (!on && !bedGain) return
+    if (!buildBed()) return
+    const target = on ? (bedSynthetic ? SYNTH_BED_VOLUME : BED_VOLUME) : 0
+    // setTargetAtTime, not a ramp: this is called every tick and a ramp
+    // scheduled every tick fights the one before it.
+    bedGain.gain.setTargetAtTime(target, ctx.currentTime, 0.12)
   }
 
   /*
@@ -814,6 +949,110 @@ export function installSounds(noa, deps = {}) {
   document.addEventListener('mousedown', onUiClick, true)
   unsubscribe.push(() => document.removeEventListener('mousedown', onUiClick, true))
 
+  /* ------------------------------------------------------------------ *
+   * Water.
+   *
+   * All of it hangs off fluids.js's sensor rather than off events, because
+   * fluids.js has none to offer -- and adding some would mean editing a file
+   * this change does not own. `feet` and `eyes` are already separated there
+   * for exactly the reason this needs them separated: the splash is your body
+   * hitting the water and follows the FEET; everything that sounds like being
+   * submerged follows the EYES. Chest-deep in a pond you splash and you do
+   * not get the ambience.
+   * ------------------------------------------------------------------ */
+  if (fluids) {
+    const body = () => noa.ents.getPhysics(noa.playerEntity)?.body
+
+    let wasFeet = null
+    let wasEyes = null
+    let sinceSwim = 0
+    let untilAmbient = ambientGap()
+    let untilLavaPop = 0
+    let lastBubbles = null
+
+    const onFluidTick = (dtMs) => {
+      const dt = dtMs / 1000
+      const feet = fluids.feet
+      const eyes = fluids.eyes
+
+      /* ---- hitting the water ---- */
+      if (feet === 'water' && wasFeet !== 'water') {
+        /*
+         * Vanilla splits the splash on how hard you arrived:
+         * entity.player.splash.high_speed is the one you get for diving in,
+         * and the plain splash is the one you get for walking in. The real
+         * rule is Entity.getFluidFallingAdjustedMovement's fall distance;
+         * vertical speed is what this world can actually measure, and 8 b/s
+         * is about a two-block drop.
+         */
+        const vy = body()?.velocity[1] ?? 0
+        play(vy < -8 ? 'splashHigh' : 'splash')
+      }
+
+      /* ---- going under, and coming back up ---- */
+      if (eyes === 'water' && wasEyes !== 'water') play('underwaterEnter')
+      if (eyes !== 'water' && wasEyes === 'water') play('underwaterExit')
+      // The bed is an EAR STATE, not a thing in the world, so it is flat and
+      // it follows the eyes rather than the body.
+      setUnderwaterBed(eyes === 'water')
+
+      /* ---- swimming ---- */
+      const b = body()
+      const moving = b && Math.hypot(b.velocity[0], b.velocity[2]) > 0.8
+      if ((feet === 'water' || eyes === 'water') && moving) {
+        sinceSwim += dt
+        if (sinceSwim >= SWIM_INTERVAL) { sinceSwim = 0; play('swim') }
+      } else {
+        // Reset rather than freeze, so pushing off after treading water
+        // starts a stroke instead of finishing a half-elapsed one.
+        sinceSwim = SWIM_INTERVAL
+      }
+
+      /* ---- the ambience under it all ---- */
+      if (eyes === 'water') {
+        untilAmbient -= dt
+        if (untilAmbient <= 0) { untilAmbient = ambientGap(); play('waterAmbient') }
+      } else {
+        untilAmbient = ambientGap()
+      }
+
+      /* ---- lava ---- */
+      if (feet === 'lava') {
+        untilLavaPop -= dt
+        if (untilLavaPop <= 0) {
+          untilLavaPop = 0.5 + Math.random() * 2.5
+          // block.lava.pop is the crackle and block.lava.ambient is the roar.
+          // Vanilla fires pop from the block and ambient from the fluid; both
+          // are flat here because you are standing in it.
+          play(Math.random() < 0.7 ? 'lavaPop' : 'lavaAmbient')
+        }
+      } else {
+        untilLavaPop = 0
+      }
+
+      /*
+       * The air meter losing a bubble. Watched rather than subscribed to:
+       * survival.js emits nothing for it, and the HUD draws ten bubbles off
+       * the same clamped counter, so counting them here is reading exactly
+       * what the player can see. Only on the way DOWN -- refilling is silent
+       * in vanilla too.
+       */
+      if (survival && eyes === 'water') {
+        const bubbles = Math.ceil((survival.air * MC.AIR_BUBBLES) / MC.AIR_TICKS)
+        if (lastBubbles !== null && bubbles < lastBubbles) play('breath')
+        lastBubbles = bubbles
+      } else {
+        lastBubbles = null
+      }
+
+      wasFeet = feet
+      wasEyes = eyes
+    }
+
+    noa.on('tick', onFluidTick)
+    unsubscribe.push(() => noa.off('tick', onFluidTick))
+  }
+
   if (movement) {
     // Non-positional: it's your own feet. A panner would put them a fraction of
     // a block below the listener and pan them as you look down.
@@ -838,6 +1077,16 @@ export function installSounds(noa, deps = {}) {
     groups: SOUND_GROUPS,
     ruleForKey: soundRuleForKey,
     unmapped: unmappedBlocks,
+    /*
+     * The underwater bed, for the console and for the test suite. `synthetic`
+     * is the one that matters: it says whether this build is playing Mojang's
+     * recording or the filtered-noise stand-in, which is the difference
+     * between a local run and a deploy and is otherwise unanswerable from
+     * outside the audio graph.
+     */
+    get underwaterBed() {
+      return { running: !!bedGain, synthetic: bedSynthetic, gain: bedGain?.gain.value ?? 0 }
+    },
     /** 'off' until the gesture gate fires, then the real AudioContext state. */
     get state() { return ctx ? ctx.state : 'off' },
     get context() { return ctx },

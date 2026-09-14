@@ -2,6 +2,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { test, expect } from './fixtures.js'
+import { armAudio } from './helpers/audio.js'
 import {
   MAX_X, MAX_Z, MIN_X, MIN_Z, look, teleport, waitFrames, waitTicks,
 } from './helpers/world.js'
@@ -297,5 +298,94 @@ test.describe('under water', () => {
     })
     expect(culling, 'water has no terrain material -- nothing meshed it').not.toBeNull()
     expect(culling.backFaceCulling).toBe(false)
+  })
+  /* ------------------------------------------------------------------ *
+   * Sound.
+   *
+   * These assert against the AUDIO GRAPH, not against sounds.lastPlayed --
+   * see helpers/audio.js for why. A manifest entry that never fetched and a
+   * sample that failed to decode both leave lastPlayed looking perfect.
+   * ------------------------------------------------------------------ */
+
+  test('the sound build carries the water sets, or says it does not', async ({ page }) => {
+    const sets = await page.evaluate(() => window.game.sounds.manifest?.sets ?? {})
+    if (!sets.underwaterLoop) {
+      /*
+       * The free set, which is what a deploy runs. There is no CC0 recording
+       * of Minecraft's underwater ambience, so sounds.js synthesises the bed
+       * out of lowpassed noise instead of shipping an unattributed sample.
+       * Asserted rather than skipped, so "a deploy is silent under water"
+       * cannot come back quietly.
+       */
+      const bed = await page.evaluate(() => window.game.sounds.underwaterBed)
+      expect(bed.synthetic).toBe(true)
+      return
+    }
+    // Vanilla. Eighteen swim variants is the game's own count -- swimming
+    // fires one every few ticks and six would read as a loop.
+    expect(sets.swim).toHaveLength(18)
+    expect(sets.splash.length).toBeGreaterThan(1)
+    expect(sets.underwaterEnter).toHaveLength(3)
+    expect(sets.underwaterExit).toHaveLength(3)
+    expect(sets.waterAmbient).toBeTruthy()
+    expect(sets.lavaPop).toBeTruthy()
+  })
+
+  test('hitting the water splashes, and going under starts the bed', async ({ page }) => {
+    const audio = await armAudio(page)
+    try {
+      const ocean = await findOcean(page)
+      // Dry first, so the feet and eyes transitions are real transitions.
+      await teleport(page, ocean.x + 0.5, ocean.surfaceY + 4, ocean.z + 0.5)
+      await pin(page, ocean.x + 0.5, ocean.surfaceY + 4, ocean.z + 0.5)
+      await waitTicks(page, 3)
+      await audio.clear()
+
+      await submerge(page, ocean)
+      await waitTicks(page, 6)
+      const heard = (await audio.drain()).map((r) => r.name)
+
+      const synthetic = await page.evaluate(() =>
+        window.game.sounds.underwaterBed.synthetic)
+      if (synthetic) {
+        // Nothing to hear on a free build but the generated bed, which has no
+        // fingerprint in the manifest and so comes back as `unknown:`.
+        expect(await page.evaluate(() => window.game.sounds.underwaterBed.running))
+          .toBe(true)
+        return
+      }
+
+      expect(heard.some((n) => n.startsWith('liquid/splash')),
+        `no splash in ${JSON.stringify(heard)}`).toBe(true)
+      expect(heard.some((n) => n.startsWith('ambient/underwater/enter')),
+        `no gulp going under in ${JSON.stringify(heard)}`).toBe(true)
+      /*
+       * The bed is asserted on its GAIN, not on a captured start(). Its source
+       * node is started once and never stopped -- an AudioBufferSourceNode
+       * cannot be restarted -- so in a full-suite run an earlier spec has
+       * already dived and the start is long gone from the capture. The gain
+       * IS the switch, which makes it the honest thing to test.
+       */
+      await waitTicks(page, 10)
+      const bed = await page.evaluate(() => window.game.sounds.underwaterBed)
+      expect(bed.running).toBe(true)
+      expect(bed.synthetic, 'a vanilla build should be playing the real loop')
+        .toBe(false)
+      expect(bed.gain, 'the underwater bed is silent while submerged')
+        .toBeGreaterThan(0.05)
+
+      // ---- and coming back up
+      await audio.clear()
+      await teleport(page, ocean.x + 0.5, ocean.surfaceY + 4, ocean.z + 0.5)
+      await pin(page, ocean.x + 0.5, ocean.surfaceY + 4, ocean.z + 0.5)
+      await waitTicks(page, 20)
+      const out = (await audio.drain()).map((r) => r.name)
+      expect(out.some((n) => n.startsWith('ambient/underwater/exit')),
+        `no gulp surfacing in ${JSON.stringify(out)}`).toBe(true)
+      expect(await page.evaluate(() => window.game.sounds.underwaterBed.gain),
+        'the bed is still playing in open air').toBeLessThan(0.05)
+    } finally {
+      await audio.dispose()
+    }
   })
 })
