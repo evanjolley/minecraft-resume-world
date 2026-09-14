@@ -74,9 +74,19 @@ test.describe('sounds', () => {
       expect(state.errors).toEqual([])
       expect(state.decoded, 'the manifest lists samples the client never decoded')
         .toBe(names.length)
-      // The non-block half. Missing here means `npm run sounds` was run against
-      // a build of this script that predates the player sounds.
-      expect(state.sets).toEqual(['fallBig', 'fallSmall', 'hurt', 'pickup', 'uiClick'])
+      /*
+       * The non-block half. Missing here means `npm run sounds` was run against
+       * a build of this script that predates the player sounds.
+       *
+       * `arrayContaining`, not equality. This asserted the exact set until the
+       * water work added ten more (`splash`, `swim`, the underwater bed), and an
+       * exact list turns every future sound family into a failing test in a file
+       * that has nothing to do with it. What this test is actually for is
+       * catching a stale `npm run sounds` -- that these five are PRESENT. It was
+       * never for pinning the total, and a list nobody owns is a list that rots.
+       */
+      expect(state.sets).toEqual(
+        expect.arrayContaining(['fallBig', 'fallSmall', 'hurt', 'pickup', 'uiClick']))
     })
 
   test('two samples sharing a fingerprint would make every name below a guess',
