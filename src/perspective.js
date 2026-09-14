@@ -67,6 +67,7 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
   const localId = roster?.local?.id ?? null
   const nametag = roster
     ? createNametag(noa, {
+      // The name, undecorated. A rank is a chat format, not a nameplate.
       text: roster.displayNameOf(localId), height: MC.PLAYER_HEIGHT, name: 'nametag-local',
     })
     : null

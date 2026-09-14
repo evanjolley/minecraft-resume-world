@@ -158,11 +158,8 @@ export function installChat(noa, {
    * The one way anything gets into chat. A network transport calls this with
    * whatever the server sent; `send` below calls it for local echo.
    *
-   * `from` is a roster entry, and passing one switches the line to vanilla's
-   * player-chat format -- `chat.type.text` is literally `<%s> %s`, where the
-   * first %s is the team-formatted display name. That is why `[Admin]` ends
-   * up INSIDE the angle brackets rather than in front of them: on a real
-   * server the prefix is part of the name, not part of the message.
+   * `from` is a roster entry, and passing one switches the line to the
+   * player-chat format below.
    *
    * @param {{ text: string, kind?: 'chat'|'system'|'join'|'error',
    *           from?: { name: string, prefix?: { text: string, color: number } } }} msg
@@ -174,9 +171,33 @@ export function installChat(noa, {
     el.dataset.kind = kind
     const body = String(text).slice(0, MAX_LENGTH)
     if (from) {
-      el.append('<')
+      /*
+       * THE CHAT FORMAT: `[Admin] <Evan> hi`, `<Bob> hi there`.
+       *
+       * Vanilla is `chat.type.text`, literally `<%s> %s`, and the brackets
+       * stay. A rank goes in FRONT of them, in its own colour, and ordinary
+       * speakers simply have no rank -- so `<Bob> hi there` is byte for byte
+       * what singleplayer Minecraft renders, which is the point.
+       *
+       * REJECTED, and actually written and reverted rather than argued
+       * about: `[Admin] Evan: message`. That is EssentialsX's convention --
+       * its shipped config.yml defaults to `<{DISPLAYNAME}> {MESSAGE}` and
+       * its commented prefix examples switch to `{PREFIX} {NICKNAME}: ...`,
+       * so real ranked servers do drop the brackets. The evidence is right
+       * and the conclusion was wrong for THIS world: that format makes a
+       * world look like a plugin stack, and this one is meant to look like
+       * Minecraft. A rank in front of vanilla's brackets gets "there is an
+       * op here" across without reformatting everyone else's chat.
+       *
+       * WHAT THE BRACKETS ARE, which is the rule worth keeping: they belong
+       * to the CHAT LINE, not to the name. That is why a death message reads
+       * `Bob was slain by Evan` -- no brackets, no rank -- and why the rank
+       * is not concatenated into the name in identity.js. Decoration lives
+       * with the thing doing the decorating; system messages take the bare
+       * name and get one.
+       */
       if (from.prefix) el.appendChild(styled(from.prefix.text, from.prefix.color))
-      el.append(`${from.name}> ${body}`)
+      el.append(`<${from.name}> ${body}`)
     } else {
       el.textContent = body
     }

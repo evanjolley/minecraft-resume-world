@@ -157,7 +157,38 @@ export function createNametag(noa, { text = '', height = 1.8, name = 'nametag' }
      */
     material.opacityTexture = texture
     material.emissiveTexture = texture
-    material.emissiveColor = new Color3(1, 1, 1)
+    /*
+     * THE TWO LINES THAT MADE THIS LOOK WRONG, and they are both a colour
+     * being ADDED where you would assume it was multiplied.
+     *
+     * emissiveColor was white. In Babylon's default fragment shader the
+     * emissive texture is not a modulation, it is a sum:
+     *
+     *     vec3 emissiveColor = vEmissiveColor;
+     *     #ifdef EMISSIVE
+     *       emissiveColor += texture2D(emissiveSampler, ...).rgb * vEmissiveInfos.y;
+     *
+     * so a white emissiveColor pins every pixel of the quad to white before
+     * the texture is even sampled, and the texture can only ever add. The
+     * background box is BLACK at 63/255 in the canvas, and it was coming out
+     * WHITE at 63/255 on screen -- a pale haze that brightened the terrain
+     * behind the name instead of the dark plate that dims it. The alpha
+     * channel comes from opacityTexture and was always right, so the tag had
+     * vanilla's exact geometry, spacing and see-through behaviour and still
+     * read as not-quite-Minecraft. The colour has to come from the texture,
+     * which means the constant has to be zero. crackOverlay.js has the same
+     * line for the same reason.
+     *
+     * And ambientColor: noa's makeStandardMaterial leaves it white, and
+     * Babylon adds that term too (finalDiffuse gets + vAmbientColor) even
+     * with disableLighting on -- which with no diffuseTexture means the whole
+     * quad picks up scene.ambientColor, a 0.46 grey. It was INVISIBLE while
+     * emissiveColor was white, because line 287's clamp was already saturated
+     * at 1.0; zeroing emissive alone would have swapped a white box for a
+     * grey one. Same line as crackOverlay.js, particles.js and sky.js.
+     */
+    material.emissiveColor = new Color3(0, 0, 0)
+    material.ambientColor = new Color3(0, 0, 0)
     material.diffuseColor = new Color3(0, 0, 0)
     material.specularColor = new Color3(0, 0, 0)
     material.disableLighting = true

@@ -82,15 +82,33 @@ export function createRoster({ storage = globalThis.localStorage } = {}) {
   const emit = (entry) => { for (const fn of listeners) fn(entry, api) }
 
   /*
-   * Scoreboard-team formatting, which is how a real server gets `[Admin]` in
-   * front of a name. Vanilla's PlayerTeam.formatNameForTeam concatenates
-   * prefix + name + suffix and applies the team colour, and it applies in
-   * BOTH places a name appears -- the chat line and the nameplate above the
-   * head. Keeping it here rather than in chat.js is what makes those two
-   * agree by construction instead of by coincidence.
+   * A NAME IS A NAME. `[Admin]` is not part of it.
+   *
+   * This used to concatenate `entry.prefix.text + entry.name` and hand the
+   * result to everything -- the chat line, the floating nameplate, the
+   * command feedback -- and that one string being reused is how `[Admin]`
+   * ended up above Evan's head, where no chat rank belongs. So the rank stays
+   * on the entry as data and NOBODY here composes it. chat.js applies it,
+   * because a rank is part of a CHAT FORMAT (see the format note there), and
+   * chat is the only place a format exists.
+   *
+   * Two mechanisms get a tag in front of a name on a real server, and it is
+   * worth writing down which one this is:
+   *
+   *   - A SCOREBOARD TEAM prefix. PlayerTeam.formatNameForTeam builds
+   *     prefix + name + suffix, Player.getDisplayName() returns it, and
+   *     EntityRenderer.render passes getDisplayName() to renderNameTag -- so
+   *     a team prefix really does show above the head as well as in chat.
+   *   - A CHAT PLUGIN prefix. EssentialsX/LuckPerms rewriting the chat format
+   *     string. It is on the chat line and nowhere else, because nothing has
+   *     touched the entity's display name.
+   *
+   * This world's `[Admin]` is the second kind, which is the one people
+   * picture. Rejected: the team reading. It is equally faithful to some
+   * server, it is not the look being asked for, and it is the one that makes
+   * this function a place where two concerns can silently merge again.
    */
-  const displayName = (entry) =>
-    entry ? `${entry.prefix?.text ?? ''}${entry.name}` : ''
+  const displayName = (entry) => (entry ? entry.name : '')
 
   const api = {
     /**
@@ -156,7 +174,7 @@ export function createRoster({ storage = globalThis.localStorage } = {}) {
     },
 
     displayName,
-    /** Convenience: the formatted name for an id, or '' if it is gone. */
+    /** Convenience: the name for an id, or '' if it is gone. Undecorated. */
     displayNameOf(id) { return displayName(entries.get(id)) },
 
     /**

@@ -186,11 +186,12 @@ const roster = createRoster()
 roster.add({ id: LOCAL_ID, name: GUEST_NAME, local: true, persist: true })
 
 /*
- * `[Admin]` is a scoreboard team prefix, which is how a real server puts a tag
- * in front of a name -- and vanilla applies team formatting to the chat line
- * AND to the nameplate, so declaring it once here gets both. Dark red is
- * vanilla's `dark_red` (0xAA0000), the colour an admin team conventionally
- * gets.
+ * `[Admin]` is a CHAT RANK. It lives in the chat line's format and nowhere
+ * else, so it renders as `[Admin] <Evan> ...` in chat and does NOT appear
+ * above his head -- see chat.js for the format and for the one that was
+ * tried and reverted, and identity.js for why the roster refuses to
+ * concatenate it onto the name. Dark red is vanilla's `dark_red` (0xAA0000),
+ * the colour an admin rank conventionally gets.
  */
 roster.add({
   id: EVAN_ID, name: 'Evan', kind: 'npc',

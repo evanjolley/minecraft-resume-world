@@ -23,14 +23,25 @@ const NEAR_EVAN = [3.5, SURFACE_Y, 0.5]
  * capture-phase keydown, the input lock, the transport, the NPC hand-off.
  */
 async function chatSay(page, text) {
+  const before = await lineCount(page)
   await page.keyboard.press('KeyT')
   await page.waitForFunction(() => window.game.chat.isOpen, null, { timeout: 5000 })
   await page.keyboard.type(text)
   await page.keyboard.press('Enter')
   await page.waitForFunction(() => !window.game.chat.isOpen, null, { timeout: 5000 })
-  // The agent loop is async -- the stub still awaits, exactly as a fetch will.
-  await waitTicks(page, 3)
+  /*
+   * Wait for the REPLY, not for a fixed number of ticks. He deliberately
+   * takes a beat before answering (see LATENCY_MS in aiEvan.js), so a tick
+   * count here would be a race that got slower to fail the moment the real
+   * backend landed. Two lines: your own echo, then his.
+   */
+  await page.waitForFunction(
+    (n) => document.querySelectorAll('#chat-lines .chat-line').length > n + 1,
+    before, { timeout: 15000 })
 }
+
+const lineCount = (page) => page.evaluate(
+  () => document.querySelectorAll('#chat-lines .chat-line').length)
 
 const chatLines = (page) => page.evaluate(() =>
   [...document.querySelectorAll('#chat-lines .chat-line')].map((el) => el.textContent))
@@ -67,25 +78,116 @@ test('a visitor arrives as Guest, and the name is a roster entry not a string',
     expect(who).toEqual({ name: 'Guest', local: true, display: 'Guest' })
   })
 
-test('Evan is standing in the world under an [Admin] nameplate', async ({ page }) => {
-  const evan = await page.evaluate(() => {
-    const { roster, aiEvan, EVAN_ID, EVAN_POS } = window.game
-    return {
-      display: roster.displayNameOf(EVAN_ID),
-      kind: roster.get(EVAN_ID).kind,
-      tag: aiEvan.nametag.text,
-      pos: EVAN_POS,
-      // Two meshes, because vanilla draws the tag twice -- see nametag.js.
-      meshes: aiEvan.nametag.meshes.length,
-    }
+test('Evan stands under a plain nameplate and talks with an [Admin] tag',
+  async ({ page }) => {
+    const evan = await page.evaluate(() => {
+      const { roster, aiEvan, EVAN_ID, EVAN_POS } = window.game
+      return {
+        display: roster.displayNameOf(EVAN_ID),
+        rank: roster.get(EVAN_ID).prefix.text,
+        kind: roster.get(EVAN_ID).kind,
+        tag: aiEvan.nametag.text,
+        pos: EVAN_POS,
+        // Two meshes, because vanilla draws the tag twice -- see nametag.js.
+        meshes: aiEvan.nametag.meshes.length,
+      }
+    })
+    expect(evan.kind).toBe('npc')
+    expect(evan.meshes).toBe(2)
+    expect(evan.pos[1]).toBe(SURFACE_Y)
+
+    /*
+     * The rank is not part of his NAME -- it is a chat format, so the roster
+     * and the nameplate both answer `Evan` and the rank sits on the entry
+     * waiting for chat.js. The test below asserts the other half, that it
+     * does reach the chat line, because "nowhere" and "not on the nameplate"
+     * are different bugs and only one of them is a fix.
+     */
+    expect(evan.tag).toBe('Evan')
+    expect(evan.display).toBe('Evan')
+    // The rank exists -- as data on the entry that only chat.js reads.
+    expect(evan.rank).toBe('[Admin] ')
   })
-  expect(evan.display).toBe('[Admin] Evan')
-  expect(evan.kind).toBe('npc')
-  // The nameplate carries the team prefix, exactly as the chat line does.
-  expect(evan.tag).toBe('[Admin] Evan')
-  expect(evan.meshes).toBe(2)
-  expect(evan.pos[1]).toBe(SURFACE_Y)
-})
+
+test('the rank is on the chat line, in the server format, and nowhere else',
+  async ({ page }) => {
+    await teleport(page, ...NEAR_EVAN)
+    await settleOnGround(page)
+    await waitTicks(page, 3)
+    await chatSay(page, 'my name is Robin')
+
+    const lines = await chatLines(page)
+
+    /*
+     * BOTH SPEAKERS, because the format is not a special case for the one
+     * with a rank -- an unranked player has an EMPTY prefix, not a different
+     * line shape. Asserting only Evan would pass just as happily if the
+     * player kept vanilla's angle brackets.
+     */
+    /*
+     * ALL THREE FORMS, because each one can regress without the others
+     * noticing. A ranked speaker is `[Admin] <Evan> ...`; an unranked one is
+     * vanilla's bare `<Guest> ...` with no rank and no colon; and a SYSTEM
+     * line -- death, join, leave, command output -- takes the undecorated
+     * name and gets neither. Asserting only Evan's line would pass just as
+     * happily if every player on the server had grown a rank.
+     */
+    expect(lines.some((l) => l.startsWith('[Admin] <Evan> '))).toBe(true)
+    // Echoed before he had renamed you, so this line is still Guest's -- and
+    // Guest is exactly the unranked case worth asserting.
+    expect(lines.some((l) => l.startsWith('<Guest> my name is Robin'))).toBe(true)
+    expect(lines.some((l) => l.startsWith('[Admin] <Guest>'))).toBe(false)
+
+    // The rank is red. It is a separate span precisely so it can be.
+    const rankColor = await page.evaluate(() => {
+      const line = [...document.querySelectorAll('#chat-lines .chat-line')]
+        .find((el) => el.textContent.startsWith('[Admin] <Evan> '))
+      return getComputedStyle(line.querySelector('span')).color
+    })
+    expect(rankColor).toBe('rgb(170, 0, 0)')
+
+    /*
+     * A system line, through the same call main.js makes. `Evan joined the
+     * game` -- the bare name, which is the same rule that makes a death
+     * message read `Bob was slain by Evan`.
+     */
+    await page.evaluate(() => window.game.chat
+      .announceJoin(window.game.roster.displayNameOf(window.game.EVAN_ID)))
+    const joined = (await chatLines(page)).at(-1)
+    expect(joined).toBe('Evan joined the game')
+
+    /*
+     * ...and none of that reached a NAME. The nameplate is the name alone,
+     * and so is what the roster answers when anything asks who he is -- which
+     * is what /kill and /tp quote.
+     */
+    const names = await page.evaluate(() => {
+      const { roster, aiEvan, EVAN_ID, LOCAL_ID } = window.game
+      return {
+        tag: aiEvan.nametag.text,
+        evan: roster.displayNameOf(EVAN_ID),
+        you: roster.displayNameOf(LOCAL_ID),
+        rank: roster.get(EVAN_ID).prefix.text,
+      }
+    })
+    expect(names.tag).toBe('Evan')
+    expect(names.evan).toBe('Evan')
+    expect(names.you).toBe('Robin')
+    // The rank still exists -- it is just data on the entry that only chat reads.
+    expect(names.rank).toBe('[Admin] ')
+
+    /*
+     * The rename path too, because the nameplate is redrawn from a roster
+     * event and that is a SECOND place the name and the rank could get wired
+     * together. Your own tag has no rank to gain, so Evan is the one that can
+     * regress.
+     */
+    await page.evaluate(() => window.game.roster.setName(window.game.EVAN_ID, 'Ev'))
+    expect(await page.evaluate(() => window.game.aiEvan.nametag.text)).toBe('Ev')
+    expect(await page.evaluate(() => window.game.roster.displayNameOf(window.game.EVAN_ID)))
+      .toBe('Ev')
+    await page.evaluate(() => window.game.roster.setName(window.game.EVAN_ID, 'Evan'))
+  })
 
 test('the nameplate sits 2.3 blocks up and faces the camera', async ({ page }) => {
   await teleport(page, ...NEAR_EVAN)
@@ -152,9 +254,9 @@ test('walking up to Evan starts a conversation, and he asks for your name',
     expect(await page.evaluate(() => window.game.aiEvan.talking)).toBe(true)
     const lines = await chatLines(page)
     const greeting = lines[lines.length - 1]
-    // Vanilla's chat.type.text is `<%s> %s`, with the team prefix inside the
-    // brackets because on a real server it is part of the display name.
-    expect(greeting.startsWith('<[Admin] Evan> ')).toBe(true)
+    // Vanilla's `<%s> %s` with the rank in front of it. See chat.js for the
+    // format that was tried and reverted.
+    expect(greeting.startsWith('[Admin] <Evan> ')).toBe(true)
     expect(greeting).toContain('What should I call you?')
 
     // And it did not take the player prisoner to do it.
@@ -204,6 +306,29 @@ test('telling Evan your name renames you THROUGH A TOOL CALL', async ({ page }) 
   const lines = await chatLines(page)
   expect(lines.some((l) => l.startsWith('<Casey> what do you do'))).toBe(true)
   expect(lines.some((l) => l.includes('Casey! Good to meet you'))).toBe(true)
+})
+
+test('the name can come first, last, or on its own', async ({ page }) => {
+  await teleport(page, ...NEAR_EVAN)
+  await settleOnGround(page)
+  await waitTicks(page, 3)
+
+  /*
+   * "plop is my name" is the ordering that used to fall straight through to
+   * "Didn't catch a name in there" -- the stub only knew the name-behind
+   * phrasings. Driven through chat rather than by calling parseName, because
+   * what broke was the CONVERSATION, and a unit test on the regex would have
+   * been green while the screenshot was not.
+   */
+  await chatSay(page, 'Casey is my name')
+
+  const msgs = await transcript(page)
+  const calls = msgs.filter((m) => m.role === 'assistant' && Array.isArray(m.content))
+    .flatMap((m) => m.content).filter((b) => b.type === 'tool_use')
+  expect(calls.map((c) => c.name)).toEqual(['set_player_name'])
+  expect(calls[0].input).toEqual({ name: 'Casey' })
+  expect(await page.evaluate(() => window.game.roster.get(window.game.LOCAL_ID).name))
+    .toBe('Casey')
 })
 
 test('a greeting is not a name -- he asks again and you stay Guest',
@@ -276,6 +401,84 @@ test('the name you gave him survives a reload', async ({ page }) => {
     .toBe('Jordan')
   expect(await page.evaluate(() => window.game.perspective.nametag.text)).toBe('Jordan')
 })
+
+test('he waits a beat before answering, the way a real backend will',
+  async ({ page }) => {
+    await teleport(page, ...NEAR_EVAN)
+    await settleOnGround(page)
+    await waitTicks(page, 3)
+
+    const before = await lineCount(page)
+    await page.keyboard.press('KeyT')
+    await page.waitForFunction(() => window.game.chat.isOpen, null, { timeout: 5000 })
+    await page.keyboard.type('my name is Sam')
+    await page.keyboard.press('Enter')
+
+    /*
+     * YOUR line is local echo and lands at once -- that is the control. If
+     * this waited on Evan instead, a broken delay and a broken chat box would
+     * look the same from here.
+     */
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('#chat-lines .chat-line').length > n,
+      before, { timeout: 5000 })
+    const sent = Date.now()
+
+    // Nothing from him yet. A model round trip has not had time to happen.
+    await page.waitForTimeout(300)
+    expect(await lineCount(page)).toBe(before + 1)
+
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('#chat-lines .chat-line').length > n + 1,
+      before, { timeout: 15000 })
+    const waited = Date.now() - sent
+
+    /*
+     * Bounded on both sides. The floor is the point of the feature; the
+     * ceiling is what stops a delay that is secretly broken-and-slow from
+     * passing. Deliberately loose against LATENCY_MS (900-2100) because this
+     * runs on software GL and the keystroke-to-send path is not free.
+     */
+    expect(waited).toBeGreaterThan(500)
+    expect(waited).toBeLessThan(8000)
+  })
+
+test('he admits there is no model rather than answering with coordinates',
+  async ({ page }) => {
+    await teleport(page, ...NEAR_EVAN)
+    await settleOnGround(page)
+    await waitTicks(page, 3)
+    await chatSay(page, 'my name is Sam')
+
+    /*
+     * THE SCREENSHOT THAT STARTED THIS. "where does Evan work" contains the
+     * word "where", the stub's only read tool reports your position, and so a
+     * question about a career came back as "you're at 2, 136, -1". Whatever
+     * he says now, it must not be a coordinate readout.
+     */
+    await chatSay(page, 'where does Evan work')
+    let lines = await chatLines(page)
+    expect(lines[lines.length - 1]).not.toContain('blocks from me')
+    expect(lines[lines.length - 1]).toContain('for a living')
+
+    // And something genuinely outside the script is refused in character,
+    // by saying what is actually true: there is nothing behind him yet.
+    await chatSay(page, 'what is your favourite colour')
+    lines = await chatLines(page)
+    expect(lines[lines.length - 1]).toContain('no model behind this Evan yet')
+
+    // Neither of those was worth a tool call. get_player_state is for
+    // questions about where YOU are, and neither of these was one.
+    const msgs = await transcript(page)
+    const calls = msgs.filter((m) => m.role === 'assistant' && Array.isArray(m.content))
+      .flatMap((m) => m.content).filter((b) => b.type === 'tool_use')
+    expect(calls.map((c) => c.name)).toEqual(['set_player_name'])
+
+    // The tool still fires for the question it is actually for.
+    await chatSay(page, 'where am I')
+    lines = await chatLines(page)
+    expect(lines[lines.length - 1]).toContain('blocks from me')
+  })
 
 /*
  * EVIDENCE, not assertions. Nametags are the one part of this slice no number

@@ -87,6 +87,14 @@ export function installNPC(noa, {
   const local = [0, 0, 0]
   const toLocal = () => noa.globalToLocal(position, null, local)
 
+  /*
+   * The NAME, with nothing in front of it. `[Admin]` is a chat rank and it
+   * belongs to chat.js's line format -- see identity.js for which of
+   * Minecraft's two prefix mechanisms this is, and why the composition does
+   * not happen in the roster, where both callers could have shared it. The
+   * spec asserts the split both ways, because one string serving both is
+   * exactly how the rank got above his head the first time.
+   */
   const nametag = createNametag(noa, {
     text: roster.displayName(entry), height: MC.PLAYER_HEIGHT, name: `nametag-${id}`,
   })
@@ -103,8 +111,8 @@ export function installNPC(noa, {
     : null
 
   /** Everything this character says goes through here, so it always looks the
-   *  same in chat: vanilla's `<%s> %s`, with the team prefix inside the
-   *  brackets exactly as PlayerTeam.formatNameForTeam puts it. */
+   *  same in chat. The entry carries his rank; chat.js is what turns an entry
+   *  into `[Admin] <Evan> ...`, and this file never formats a name. */
   const say = (text) => chat.addMessage({ text, from: entry })
 
   const handle = (ev) => {

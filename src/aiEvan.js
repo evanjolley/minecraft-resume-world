@@ -105,17 +105,34 @@ export function createEvanTools(world) {
 export const LINES = {
   greet: 'Hey! I\'m Evan -- well, a Minecraft-shaped version of him. What should I call you?',
   reask: 'Didn\'t catch a name in there. What should I call you?',
-  welcome: (name) => `${name}! Good to meet you. Ask me about my work, or about this island.`,
+  welcome: (name) => `${name}! Good to meet you. Ask me about my work, or about this place.`,
   rejected: (why) => `Hm -- ${why}`,
   booking:
     'Booking time with the real me isn\'t wired up yet -- that\'s the next thing '
     + 'I get a tool for. For now, evanjjolley@gmail.com reaches him.',
   work:
-    'I build things that talk to models for a living, and I built this island '
+    'I build things that talk to models for a living, and I built this place '
     + 'so the resume would be somewhere you could stand.',
+  /*
+   * The refusal, and the most important line in this table.
+   *
+   * It says there is no model, out loud, because the alternative is worse in
+   * a specific way: this stub has two tools and one of them reports your
+   * coordinates, so an unscoped question used to fall through to
+   * get_player_state and answer "where does Evan work" with a position
+   * readout. Confidently wrong reads as broken; "I do not know that yet"
+   * reads as unfinished, which is what it is.
+   *
+   * It names the stub rather than pretending to be a shy person, because the
+   * one thing this slice is actually demonstrating is the seam -- and a
+   * visitor who is told there is no brain behind it yet understands what
+   * they are looking at. The day a real model lands, this LINE goes and the
+   * model does its own refusing.
+   */
   fallback:
-    'I only know a few things so far -- try asking where you are, about my work, '
-    + 'or about booking time.',
+    'That one is past me. There is no model behind this Evan yet, just a short '
+    + 'script -- ask me where you are, about my work, or about booking time, and '
+    + 'the script has an answer.',
   located: (s) =>
     `You're at ${s.position.map(Math.round).join(', ')}, ${Math.round(s.distanceToEvan)} `
     + `blocks from me, looking at ${s.lookingAt ?? 'thin air'}.`,
@@ -124,15 +141,39 @@ export const LINES = {
 /*
  * Pulling a name out of a sentence.
  *
- * This is the one piece of this file that is honestly doing a model's job, so
- * it is worth saying what it will and will not survive: the patterns below
- * cover how people actually answer "what should I call you" ("Evan", "I'm
- * Evan", "my name's Evan", "call me Evan") and nothing else. A real model
- * handles "everyone calls me Ev but it's Evan on the passport" and this
- * cannot, which is precisely the kind of thing this slice is not trying to
- * fake.
+ * THROWAWAY, and worth saying so loudly because it is the one piece of this
+ * file that looks like it wants to grow. Name extraction from a sentence is
+ * free the moment there is a model behind the seam -- a model handles
+ * "everyone calls me Ev but it's Evan on the passport" without being told,
+ * and these four regexes never will. They exist so the DEMO does not look
+ * broken while there is no model, and they get deleted whole on the day one
+ * lands. Do not extend this; if it is missing a case, that case is an
+ * argument for wiring up the backend, not for a fifth pattern.
+ *
+ * The bar is the orderings a person actually uses in answer to "what should
+ * I call you": the name on its own, the name in front ("plop is my name"),
+ * the name behind ("my name is plop", "call me plop"), and any of those
+ * wrapped in politeness ("hi, plop!").
  */
-const INTRO = /(?:my name'?s?\s+is|my name'?s|i\s*am|i'?m|call me|it'?s|this is|name'?s)\s+([A-Za-z0-9_]{1,16})/i
+
+/*
+ * Politeness either side of the answer, stripped before anything is matched
+ * so the patterns below only have to know one shape each. Note what this
+ * buys and what it costs: "hi, plop" becomes a name, and "hi" on its own
+ * becomes the empty string and is correctly still NOT a name -- the refusal
+ * has to survive this, which is why NOT_A_NAME stays as well.
+ */
+const FILLER = new RegExp(
+  '^(?:(?:hi|hey|hello|yo|sup|ok|okay|well|so|um|uh|just|sure|please|thanks)\\b[\\s,.!-]*)+'
+  + '|[\\s,.!]*(?:thanks|thank you|please|mate|man|dude)[\\s.!]*$', 'gi')
+
+/** The name behind the phrase. "my name is plop", "i'm plop", "call me plop". */
+const INTRO =
+  /(?:(?:my|the)?\s*name'?s?(?:\s+is)?|i\s*am|i'?m|call me|it'?s|it is|this is)\s+([A-Za-z0-9_]{1,16})/i
+
+/** The name in FRONT of it. "plop is my name", "plop here" -- the ordering
+ *  that the intro patterns cannot see, and the one he was caught missing. */
+const OUTRO = /^([A-Za-z0-9_]{1,16})\s+(?:is\s+my\s+name|here)\b/i
 
 /*
  * A single bare word is a name -- unless it is one of these, which is how
@@ -148,16 +189,28 @@ const NOT_A_NAME = new Set([
 /** Capitalise only if they gave it to us flat -- never touch "McKay". */
 const titleCase = (s) => (s === s.toLowerCase() ? s[0].toUpperCase() + s.slice(1) : s)
 
+/** A single bare word, with whatever punctuation they put after it. */
+const BARE = /^([A-Za-z0-9_]{1,16})[.!?]*$/
+
 export function parseName(text) {
-  const said = String(text ?? '').trim()
-  const intro = INTRO.exec(said)
-  if (intro) return titleCase(intro[1])
-  const bare = /^([A-Za-z0-9_]{1,16})[.!]?$/.exec(said)
-  if (bare && !NOT_A_NAME.has(bare[1].toLowerCase())) return titleCase(bare[1])
-  return null
+  // FILLER is /g, so `replace` runs it from 0 and leaves lastIndex reset --
+  // the trap that makes a shared global regex return alternate answers.
+  const said = String(text ?? '').trim().replace(FILLER, '').trim()
+  const named = (m) => (m && !NOT_A_NAME.has(m[1].toLowerCase()) ? titleCase(m[1]) : null)
+  return named(INTRO.exec(said)) ?? named(OUTRO.exec(said)) ?? named(BARE.exec(said))
 }
 
-const ASKS_LOCATION = /\b(where|position|coord|standing|looking at|what is this|what's this)\b/i
+/*
+ * ASKS ABOUT *YOU*, not about anything with the word "where" in it.
+ *
+ * get_player_state reports the VISITOR's position, so the intent it answers
+ * is second-person. The first version of this was `\bwhere\b` and it ate
+ * "where does Evan work" -- a question about a career, answered with a
+ * coordinate readout. The subject is what makes the difference, so the
+ * subject is in the pattern.
+ */
+const ASKS_LOCATION =
+  /\b(where\s+(?:am|are)\s+(?:i|we)|where\s+i\s+am|my\s+(?:position|coord\w*|location)|am\s+i\s+standing|(?:what|which)\s+(?:block\s+)?am\s+i\s+looking\s+at|what\s+is\s+this\s+block|what's\s+this\s+block)\b/i
 const ASKS_BOOKING = /\b(book|meet|meeting|schedule|call|calendar|chat|talk to|hire|time with)\b/i
 const ASKS_WORK = /\b(work|job|resume|cv|career|do you do|built|experience|portfolio)\b/i
 
@@ -165,6 +218,54 @@ const ASKS_WORK = /\b(work|job|resume|cv|career|do you do|built|experience|portf
 let nextId = 0
 const toolUse = (name, input) =>
   ({ type: 'tool_use', id: `stub_${++nextId}`, name, input })
+
+/* ------------------------------------------------------------------ *
+ * Latency
+ * ------------------------------------------------------------------ */
+
+/*
+ * HE HAS TO TAKE A MOMENT.
+ *
+ * A reply that lands in the same frame as your Enter key reads as a lookup
+ * table, which is exactly what this is and exactly what it must not look
+ * like. So the stub waits.
+ *
+ * WHAT THE WAIT IS MODELLING, because that decides where it lives. It is not
+ * pacing and it is not a flourish -- it is the round trip that agent.js's
+ * `backend` will really have once it is a fetch to the Worker and a call to
+ * /v1/messages. Sonnet-class first-token latency on a short prompt is around
+ * a second, longer under load, and it VARIES, which is why this is a range
+ * and not a constant: a fixed 1500 ms is its own kind of uncanny, because
+ * nothing that thinks takes the same time twice.
+ *
+ * WHERE IT LIVES IS THE WHOLE DESIGN. Inside the stub backend, not in npc.js
+ * and not in chat.js, so that the artificial wait is DELETED BY THE SWAP --
+ * `backend: stubBackend` becomes `backend: fetchAgent` and the fake latency
+ * leaves with the fake brain. A setTimeout in npc.js would have looked
+ * identical today and would then have stacked a second and a half on top of
+ * a real model's second and a half, and nobody would have gone looking for
+ * it in the NPC file.
+ *
+ * It also falls out of this that a turn WITH A TOOL CALL takes longer than
+ * one without: agent.js calls the backend once to get the tool_use and again
+ * to narrate the result, so two waits, which is the real shape too.
+ *
+ * Rejected: a typing indicator. Minecraft has no such thing -- there is no
+ * "someone is typing" in vanilla chat, and npc.js already turned down a
+ * thinking indicator for tool calls on the grounds that inventing UI for
+ * model latency is a different piece of work (docs/FUTURE.md section 2).
+ * Adding a spinner here would contradict that decision from the other side,
+ * and it would be the one bit of this conversation that could not exist on a
+ * real server. A pause before someone talks is in-fiction; a typing bubble
+ * is a chat app.
+ */
+const LATENCY_MS = { min: 900, max: 2100 }
+
+/** One sample of the wait. Exported so a spec can assert on the range. */
+export const stubLatency = (random = Math.random) =>
+  LATENCY_MS.min + random() * (LATENCY_MS.max - LATENCY_MS.min)
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
  * The stub backend. Same signature as a /v1/messages call -- see agent.js.
@@ -175,7 +276,19 @@ const toolUse = (name, input) =>
  * the loop would quietly stop working the day it was swapped out. Everything
  * it knows, it knows from the transcript, exactly like the thing replacing it.
  */
-export async function stubBackend({ messages }) {
+export async function stubBackend(request) {
+  await sleep(stubLatency())
+  return replyTo(request)
+}
+
+/**
+ * The same thing with the wait taken out, for tests and for the console.
+ *
+ * Exported so a spec can assert on what he SAYS without paying a second and
+ * a half per line -- and so the latency can be tested as its own thing,
+ * rather than every assertion in the file becoming a timing assertion.
+ */
+export function replyTo({ messages }) {
   const last = messages[messages.length - 1]
 
   /*
