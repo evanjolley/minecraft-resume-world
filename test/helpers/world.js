@@ -626,6 +626,28 @@ export async function chatCommand(page, text) {
 export const visibleCommands = (page) =>
   page.evaluate(() => window.game.chat.visibleCommands)
 
+/**
+ * What the local player is currently called, formatted exactly as anything
+ * that prints a name would print it -- team prefix included.
+ *
+ * READ, not pinned, and that is deliberate. The block ids and the OP
+ * passphrase above are duplicated on purpose so a renumbering breaks this
+ * suite instead of being silently followed; those are FIDELITY CONSTANTS,
+ * facts about the world that the tests are asserting. A display name is not
+ * one of them. It is world state -- it starts as `Guest`, an NPC can rename
+ * you mid-session through a tool call, and a returning visitor loads a name
+ * out of localStorage. A spec for `/kill` is asserting that the command
+ * reports killing THE PLAYER; which player that is, is not its claim to make.
+ * Hardcoding `'Evan'` here is what broke these four tests when the default
+ * changed, so please do not "fix" this back into a string literal.
+ *
+ * This is not a tautology, because it is not the same read the command does:
+ * the command formats a message and this reads the roster, so a command that
+ * prints the wrong name still fails. (Verified by breaking one on purpose.)
+ */
+export const playerName = (page) =>
+  page.evaluate(() => window.game.roster.displayNameOf(window.game.LOCAL_ID))
+
 export const isOperator = (page) =>
   page.evaluate(() => window.game.authority.isOperator())
 

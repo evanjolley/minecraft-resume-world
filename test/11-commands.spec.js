@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.js'
 import {
   ID, SURFACE_Y, OP_PASSPHRASE, chatCommand, visibleCommands, isOperator,
-  gamemode, grantOp, getBlock, position, waitTicks, reloadWorld,
+  gamemode, grantOp, getBlock, position, waitTicks, reloadWorld, playerName,
 } from './helpers/world.js'
 
 /* Vanilla's rejection, both lines of it. Anything a non-operator types that
@@ -67,7 +67,7 @@ test.describe('the command line', () => {
 
   test('/kill is open to everyone and kills only the caller', async ({ page }) => {
     const out = await chatCommand(page, '/kill')
-    expect(systemIn(out)).toEqual(['Killed Evan'])
+    expect(systemIn(out)).toEqual([`Killed ${await playerName(page)}`])
     expect(await page.evaluate(() => window.game.survival.dead)).toBe(true)
     await expect(page.locator('#death')).toBeVisible()
   })
@@ -193,7 +193,7 @@ test.describe('operator commands, opped', () => {
      * The ground at (6, -6) is grass at y=138, so 160 is a 22-block drop.
      */
     const out = await chatCommand(page, '/tp 6 160 -6')
-    expect(systemIn(out)).toEqual(['Teleported Evan to 6, 160, -6'])
+    expect(systemIn(out)).toEqual([`Teleported ${await playerName(page)} to 6, 160, -6`])
     const [x, y, z] = await position(page)
     expect(x).toBeCloseTo(6, 1)
     expect(z).toBeCloseTo(-6, 1)
@@ -213,7 +213,7 @@ test.describe('operator commands, opped', () => {
   test('/give fills a slot, and rejects an item that does not exist',
     async ({ page }) => {
       const out = await chatCommand(page, '/give diamond_ore 7')
-      expect(systemIn(out)).toEqual(['Gave 7 [Diamond Ore] to Evan'])
+      expect(systemIn(out)).toEqual([`Gave 7 [Diamond Ore] to ${await playerName(page)}`])
       expect(await invCount(page, 16)).toBe(7)
 
       const bad = await chatCommand(page, '/give unobtainium 1')
@@ -224,7 +224,7 @@ test.describe('operator commands, opped', () => {
   // block-only lookup could never hand one over.
   test('/give works for an item that is not a block', async ({ page }) => {
     const out = await chatCommand(page, '/give iron_pickaxe 1')
-    expect(systemIn(out)).toEqual(['Gave 1 [Iron Pickaxe] to Evan'])
+    expect(systemIn(out)).toEqual([`Gave 1 [Iron Pickaxe] to ${await playerName(page)}`])
   })
 
   test('/setblock and /fill change the world', async ({ page, terrain }) => {
