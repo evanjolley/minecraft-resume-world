@@ -10,6 +10,7 @@ import { MC } from './physics.js'
 import { cachedItemGeometry, displayFor, itemTexture, itemTextureUrl, loadItemGeometry } from './itemModel.js'
 import { createFirstPersonArm } from './playerModel.js'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
+import { trackEntityLight } from './entityLight.js'
 
 /*
  * The first-person hand and held block.
@@ -146,13 +147,15 @@ export function createItemMesh(noa, name) {
   mat.alphaCutOff = 0.5
   mat.specularColor = new Color3(0, 0, 0)
   /*
-   * Same emissive floor createSkinMaterial uses, and for the same reason: this
+   * Same entity shading createSkinMaterial uses, and for the same reason: this
    * scene has one directional light, so a rim quad facing away from it falls to
    * pure black and a diamond axe grows a matte stripe down one edge. Minecraft
    * lights held items with a fixed pair of lights that never let a face go
-   * fully dark; this is the cheap equivalent.
+   * fully dark -- and its floor is a FRACTION of the light level, so the axe
+   * has to dim at dusk along with the hand holding it. This was the same flat
+   * 0.45 the skin had, and had the same bug; entityLight.js owns it now.
    */
-  mat.emissiveColor = new Color3(0.45, 0.45, 0.45)
+  trackEntityLight(mat)
   mesh.material = mat
   mesh.isPickable = false
   mesh.rotationQuaternion = new Quaternion()

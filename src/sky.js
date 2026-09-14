@@ -4,6 +4,7 @@ import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { MC } from './physics.js'
+import { setEntityLight } from './entityLight.js'
 
 /*
  * Clouds, sun and moon, and the way the sky answers the weather.
@@ -495,6 +496,17 @@ export function installSky(noa) {
       light.direction.set(-eastWest, -Math.max(elevation, 0.15), -0.3)
     }
     scene_.ambientColor.set(level * 0.5, level * 0.5, level * 0.5)
+    /*
+     * The same number, pushed at every entity material -- player, NPCs, held
+     * items. Terrain gets it for free through light.intensity and the scene
+     * ambient above; entities do not, because they carry an emissive floor to
+     * keep faces turned away from the one directional light off pure black,
+     * and a floor that does not move is a model that never gets dark. That is
+     * exactly the bug this call fixes. See entityLight.js for why the floor
+     * has to exist and why it belongs there rather than as a constant at each
+     * material's construction site.
+     */
+    setEntityLight(level)
 
     /*
      * Cloud colour, Minecraft's Level.getCloudColor: white, tinted by the

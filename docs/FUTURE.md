@@ -942,6 +942,23 @@ the lesson that produced the gap, and the parts of those two features
 - **Passive ambient animals.** Deliberately NOT hostile mobs (see below), but
   a couple of wandering chickens would make the island feel alive for a
   fraction of the cost. The model infrastructure now exists.
+- **Block light on entities, which needs a light engine noa does not have.**
+  Entities now follow the day/night cycle — `src/entityLight.js` drives every
+  skin and held-item material from the same `level` sky.js gives the sun, so a
+  model darkens with the ground it stands on. That is only HALF of what vanilla
+  does. Minecraft lights an entity from `max(skyLight * daylight, blockLight)`
+  at its position; this has the daylight term and no block term, because noa
+  ships no light propagation at all — ambient occlusion and one directional
+  vector, with no per-voxel value to read. The same gap is why the F3 screen
+  has no Client/Server Light lines. So the current model is **right outdoors
+  and wrong in a cave**: go underground at noon and you stay lit as if you were
+  standing in the open, and a torch does nothing to you. Deliberately not
+  papered over with a "can this entity see the sky" raycast — that darkens
+  anyone standing in a doorway, and a wrong lighting model is harder to spot
+  and harder to remove later than an absent one. The real fix is a flood-fill
+  light engine over the voxel data, which is a large piece of work that also
+  buys torches that light terrain, and is worth doing only once caves or
+  interiors are somewhere a visitor actually spends time.
 
 ## Someday
 

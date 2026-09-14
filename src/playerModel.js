@@ -3,6 +3,7 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Vector4 } from '@babylonjs/core/Maths/math.vector'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
+import { trackEntityLight } from './entityLight.js'
 
 /*
  * The Minecraft player model, UV-mapped to a standard 64x64 skin.
@@ -213,13 +214,18 @@ export function createSkinMaterial(noa, url, name = 'skin', onError = null) {
   mat.diffuseTexture = tex
   mat.specularColor = new Color3(0, 0, 0)
   /*
-   * The skin is also fed to emissive at partial strength. noa's scene is lit
-   * by a single directional light, so faces angled away from it fall to pure
-   * black -- which is what the model did at first. Minecraft's entity
-   * shading never goes fully dark, and this floor reproduces that.
+   * Day/night, and the floor that stops a face angled away from the one
+   * directional light going pure black.
+   *
+   * This used to be `emissiveTexture = tex` plus a flat 0.45 emissiveColor,
+   * and it was wrong twice over: Babylon ADDS those two, so the sum ran past
+   * the shader's clamp and the model rendered fully unlit -- bright at
+   * midnight, unchanged by the sky. entityLight.js owns the number now and
+   * scales it by the same `level` the sun light runs on, which is what
+   * Minecraft's own entity shader does (its floor is a fraction of the light
+   * level, never a constant). Read the comment there before touching this.
    */
-  mat.emissiveTexture = tex
-  mat.emissiveColor = new Color3(0.45, 0.45, 0.45)
+  trackEntityLight(mat)
   return mat
 }
 
