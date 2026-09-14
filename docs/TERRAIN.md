@@ -71,6 +71,44 @@ Each is normalised against a target that means "clearly good enough" and
 clipped there, so a spectacular score on one axis cannot buy a window out of
 being bad on the others.
 
+## The patch that was chosen, and the ones that were not
+
+Ten seeds, 512x512 blocks generated around the origin each, every 128x128
+window on a 16-block stride scored. Best two windows per seed:
+
+| seed | corner | score | biomes | relief | trees | peak | biomes present |
+|---|---|---|---|---|---|---|---|
+| **12345** | **112,-32** | **97.3** | **4** | **112** | **9%** | **168** | **dark_forest 76%, frozen_peaks 13%, ocean 7%, lush_caves 2%** |
+| 12345 | 96,-32 | 96.9 | 4 | 113 | 8% | 168 | dark_forest 74%, ocean 15%, frozen_peaks 8% |
+| 8675309 | 0,64 | 84.1 | 4 | 59 | 2% | 118 | forest 77%, old_growth_birch 15%, ocean, beach |
+| 987654321 | -160,128 | 84.0 | 4 | 28 | 10% | 106 | dark_forest 79%, river 11%, birch_forest 6% |
+| 2151901553968352745 | -144,-16 | 83.1 | 4 | 60 | 2% | 139 | forest 59%, swamp 17%, windswept_hills 17% |
+| 8675309 | -176,-160 | 82.7 | 4 | 68 | 1% | 134 | forest 61%, meadow 28%, river 9% |
+| 0 | 48,96 | 71.4 | 4 | 42 | 0% | 105 | plains 71%, savanna 14%, river 11% |
+| 4400 | 96,-192 | 67.7 | 3 | 55 | 1% | 113 | plains 50%, forest 44%, river 6% |
+| 1 | 128,96 | 64.9 | 5 | 22 | 2% | 74 | forest 56%, stony_shore, beach, river, ocean |
+| 3257840388504953787 | 16,128 | 64.0 | 4 | 28 | 0% | 61 | ocean 46%, lukewarm_ocean 22%, deep_ocean 17% |
+| -4172144997902289642 | 32,-128 | 59.0 | 4 | 18 | 0% | 61 | lukewarm_ocean 70%, deep_lukewarm 23% |
+| 1669320484 | 0,112 | 58.5 | 5 | 17 | 0% | 81 | plains 82%, ice_spikes 8%, river, frozen_river |
+
+**Seed 12345 at (112, -32) wins on all three axes at once**, which none of the
+others do. 112 blocks of relief against a field where 60 is the next best, a
+dark forest dense enough to put a log in 9% of columns, and a frozen peak
+rising to y=168. It is the only candidate that is simultaneously a nexus, a
+forest, and a mountain -- the three things the brief asked for in descending
+order of preference, delivered together rather than traded off.
+
+Worth noticing in that table: **the seeds with public reputations lost.** The
+four widely-circulated seeds produced the four worst windows, three of them
+mostly ocean. 12345 and 987654321 are arbitrary numbers. This is the version
+drift described above, and it is the argument for scoring rather than
+trusting a list.
+
+The runner-up to be honest about is 987654321 at (-160, 128): denser forest,
+more biome balance, and only 28 blocks of relief -- a rolling wood with no
+mountain. If the mountain turns out to dominate the view unpleasantly, that
+is the one to try next.
+
 ## Why the data is small
 
 128 x 128 x 384 is 6.3 million voxels. At a byte each that is 6.3MB against a
@@ -108,6 +146,19 @@ appearing twice does not.
     npm run terrain:scan     score every window, print the table
     npm run terrain          extract the chosen patch into public/terrain/
     npm run terrain:blocks   print the block mapping report
+
+### Measured size
+
+958KB raw, **404KB gzipped**, from a 56-key palette at 29.4 runs per column.
+The vertical trim keeps 250 of 384 layers -- bedrock at -64 up to y=185,
+eight above the highest block at 177.
+
+That is comfortably under the 1MB gzipped line, but it is not free: the
+bundle today is 324KB gzipped, so this patch is **larger than the entire rest
+of the site**. If that proves too much, the cheapest cut by far is the
+vertical range, not the encoding. Everything below roughly y=0 is deepslate,
+ore and cave, none of which a visitor walking the surface will ever see, and
+dropping it would remove about a third of the layers.
 
 `public/terrain/` is generated and gitignored. **See the open licensing
 question in DEPLOYMENT.md before assuming it can ship.**

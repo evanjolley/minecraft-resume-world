@@ -35,9 +35,19 @@ export const PENDING_KEYS = new Set(['water', 'lava'])
 const RENAMES = {
   grass_block: 'grass',
   oak_planks: 'planks',
-  // Vanilla splits "stone that has been mined" from "stone"; the engine has
-  // both, but several generated blocks only exist under the longer name.
-  cobweb: null,
+  /*
+   * Infested blocks are visually identical to the block they imitate -- that
+   * is their whole point. The silverfish inside is an entity the engine has
+   * no concept of, so mapping them to the plain block loses nothing a player
+   * could see, where dropping them to air would punch holes in a mountain.
+   */
+  infested_stone: 'stone',
+  infested_cobblestone: 'cobblestone',
+  infested_deepslate: 'deepslate',
+  infested_stone_bricks: 'stone_bricks',
+  infested_mossy_stone_bricks: 'mossy_stone_bricks',
+  infested_cracked_stone_bricks: 'cracked_stone_bricks',
+  infested_chiseled_stone_bricks: 'chiseled_stone_bricks',
 }
 
 /*
@@ -51,6 +61,7 @@ export const CROSS_PLANTS = new Set([
   'bamboo', 'bamboo_sapling', 'sweet_berry_bush', 'cactus', 'lily_pad',
   'dandelion', 'poppy', 'blue_orchid', 'allium', 'azure_bluet', 'cornflower',
   'lily_of_the_valley', 'oxeye_daisy', 'wither_rose', 'torchflower',
+  'pitcher_plant',
   'red_tulip', 'orange_tulip', 'white_tulip', 'pink_tulip', 'sunflower',
   'lilac', 'rose_bush', 'peony', 'pitcher_plant', 'pink_petals',
   'oak_sapling', 'spruce_sapling', 'birch_sapling', 'jungle_sapling',
@@ -59,14 +70,14 @@ export const CROSS_PLANTS = new Set([
   'warped_roots', 'nether_sprouts', 'twisting_vines', 'twisting_vines_plant',
   'weeping_vines', 'weeping_vines_plant', 'cave_vines', 'cave_vines_plant',
   'hanging_roots', 'big_dripleaf', 'big_dripleaf_stem', 'small_dripleaf',
-  'spore_blossom', 'azalea', 'flowering_azalea', 'moss_carpet',
+  'spore_blossom', 'azalea', 'flowering_azalea',
   'wheat', 'carrots', 'potatoes', 'beetroots', 'pumpkin_stem', 'melon_stem',
   'attached_pumpkin_stem', 'attached_melon_stem', 'nether_wart', 'cocoa',
   'dead_bush', 'fire', 'soul_fire', 'torch', 'wall_torch', 'soul_torch',
   'lantern', 'sea_pickle', 'turtle_egg', 'frogspawn', 'sculk_vein',
   'dripstone', 'pointed_dripstone', 'amethyst_cluster',
   'small_amethyst_bud', 'medium_amethyst_bud', 'large_amethyst_bud',
-  'snow', 'cobweb', 'tripwire', 'rail', 'powered_rail', 'detector_rail',
+  'cobweb', 'tripwire', 'rail', 'powered_rail', 'detector_rail',
   'activator_rail', 'ladder', 'chain', 'end_rod', 'lightning_rod',
   'scaffolding', 'conduit', 'bell', 'flower_pot', 'decorated_pot',
 ])
@@ -104,7 +115,22 @@ export const NON_CUBE_STRUCTURE = new Set([
   'anvil', 'grindstone', 'stonecutter', 'lectern', 'composter',
   'campfire', 'soul_campfire', 'candle', 'skeleton_skull', 'player_head',
   'carpet', 'white_carpet', 'light_gray_carpet', 'brown_carpet',
-  'end_portal_frame', 'spawner', 'infested_stone', 'infested_cobblestone',
+  'end_portal_frame', 'spawner',
+  /*
+   * Thin ground layers. They read like full blocks in a palette and are not:
+   * each one is a few pixels tall and sits ON a block rather than being one.
+   * leaf_litter is the one that matters -- it is new in 1.21 and covers a
+   * dark forest floor by the thousand, so mistaking it for a cube puts a
+   * solid brown slab over the forest, and mistaking it for "needs a new
+   * block" sends someone off to make a texture for something that cannot be
+   * rendered anyway.
+   */
+  'leaf_litter', 'pink_petals', 'moss_carpet', 'snow',
+  /*
+   * Sculk sensor and shrieker are block-height but not cubes -- both have
+   * inset, non-full models with their own top geometry.
+   */
+  'sculk_sensor', 'calibrated_sculk_sensor', 'sculk_shrieker',
   'piston_head', 'moving_piston', 'bubble_column', 'structure_void',
   'pitcher_crop', 'chiseled_bookshelf_occupied',
 ])

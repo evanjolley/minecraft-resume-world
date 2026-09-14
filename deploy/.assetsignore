@@ -14,3 +14,13 @@
 # marker reads "free". That is strictly stronger than refusing a directory,
 # because it fails on a Mojang-sourced build AND on a silent one, where the
 # old rule quietly passed for both.
+
+# Terrain, for a reason that is NOT settled the way the two above are.
+#
+# public/terrain/ holds a patch of real Minecraft terrain -- the output of
+# Mojang's world generator, not their artwork. Whether that is theirs to
+# withhold is an open question (docs/DEPLOYMENT.md), and this is the
+# conservative default while it stays open. gitignore alone does not cover
+# it: vite copies public/ into dist/ wholesale, so the data reaches the
+# deploy artifact without ever being committed. Verified -- it did.
+terrain/

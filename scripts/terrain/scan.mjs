@@ -13,9 +13,13 @@
  *           which a single one-column spike or a lake bottom will happily
  *           max out. A hill and a mountain differ by the bulk of the
  *           distribution, not by their extremes.
- *   trees   share of columns whose surface has a log within a few blocks.
- *           Leaves are excluded from the test: leaf canopy overhangs count
- *           the same tree many times and makes a sparse wood look dense.
+ *   trees   share of columns containing a log. Leaves are excluded: canopy
+ *           overhangs count one tree many times and make a sparse wood look
+ *           dense. Note what this measures -- a tree trunk is one to four
+ *           columns standing in a five-by-five clearing, so even thick forest
+ *           only puts a log in about a tenth of columns. The first target
+ *           here was a quarter, which no real terrain can reach, and it
+ *           quietly turned tree cover into a term that was always near zero.
  *
  * Each is normalised against a target that represents "clearly good enough"
  * and clipped at 1, so a window with a 200-block cliff cannot buy its way out
@@ -117,7 +121,7 @@ export function scoreWindow(s, ox, oz) {
   const score =
     n(solid.length, 4) * 50 +        // four distinct biomes is a real nexus
     n(relief, 60) * 30 +             // 60 blocks of relief is a mountain
-    n(treePct, 0.25) * 20            // a quarter of columns wooded is a forest
+    n(treePct, 0.10) * 20            // a tenth of columns wooded is dense forest
 
   return {
     score, relief, treePct, waterPct,

@@ -29,7 +29,27 @@ const REQUIRED = [
   ['sounds', 'free', 'Mojang audio from a local Minecraft install'],
 ]
 
+/*
+ * Directories that must not ship at all, and why that is a different rule
+ * from the markers above. Textures and sounds have a redistributable source,
+ * so the question is WHICH source built them. Terrain has no cleared source:
+ * it is the output of Mojang's world generator and nobody has established
+ * whether that may be republished (docs/DEPLOYMENT.md carries the question).
+ * Until someone does, the answer is that it does not leave this machine.
+ *
+ * This is not belt-and-braces over .assetsignore. That file governs what
+ * wrangler uploads; this governs what the build is allowed to produce, and
+ * only one of them fails loudly.
+ */
+const FORBIDDEN = [
+  ['terrain', 'generated Minecraft terrain, licence unresolved -- see docs/DEPLOYMENT.md'],
+]
+
 const problems = []
+for (const [dir, why] of FORBIDDEN) {
+  if (existsSync(join(DIST, dir))) problems.push(`dist/${dir}/ exists: ${why}`)
+}
+
 for (const [dir, allowed, otherwise] of REQUIRED) {
   const marker = join(DIST, dir, '.source')
   if (!existsSync(marker)) {
@@ -50,4 +70,4 @@ if (problems.length) {
   process.exit(1)
 }
 
-console.log('deploy assets: textures=ce, sounds=free -- redistributable')
+console.log('deploy assets: textures=ce, sounds=free, no terrain -- redistributable')
