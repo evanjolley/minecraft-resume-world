@@ -20,10 +20,17 @@ import { shotRegion } from './helpers/shots.js'
  * look at it flat. That is far enough to be outside the 1-block pickup reach
  * and close enough to be inside the 5-block dig reach, and breaking it also
  * clears the path for the walk-over.
+ *
+ * "East" now means x = -3 rather than x = +3, and that is not a change of mind
+ * about the rig -- it is the same three columns of the same Minecraft world,
+ * reached from the other side. The terrain asset used to be mirrored in X
+ * (scripts/terrain/extract.mjs, MIRROR_X) and is not any more, so the flat
+ * grass shelf this rig needs moved with it. At +3 the ground is now a block
+ * lower and a resting drop sits at 135.125, which is what caught this.
  */
 
 /** Eye level, two and a half blocks east: outside pickup reach, inside dig reach. */
-const TARGET = [3, SURFACE_Y + 1, 0]
+const TARGET = [-3, SURFACE_Y + 1, 0]
 
 
 const invCount = (page, id) => page.evaluate((want) => window.game.inventory.slots
@@ -68,7 +75,7 @@ async function mineUntilGone(page, pos) {
 async function aimAtTarget(page, terrain, id = ID.dirt) {
   await terrain.keep(TARGET, TARGET)
   await setBlock(page, id, ...TARGET)
-  await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
+  await aim(page, { heading: HEADING.eastMinusX, pitch: 0 })
   expect(await targetedBlock(page)).toMatchObject({ position: TARGET })
 }
 
@@ -137,8 +144,9 @@ test.describe('dropped items', () => {
     expect(await invCount(page, ID.dirt)).toBe(0)
     expect(await floorTotal(page, ID.dirt)).toBe(1)
 
-    // Forward is east, because `aim` left the camera pointing that way and
-    // noa's movement is camera-relative. Breaking the target cleared the path.
+    // Forward is east (which is -X here), because `aim` left the camera
+    // pointing that way and noa's movement is camera-relative. Breaking the
+    // target cleared the path.
     await tapKey(page, 'KeyW', 900)
     await waitTicks(page, 3)
 
@@ -354,12 +362,12 @@ test.describe('dropped items', () => {
      * Nothing is broken to produce these -- a block left standing in front of
      * the camera fills the frame and hides the thing being photographed.
      */
-    await aim(page, { heading: HEADING.westPlusX, pitch: 0.25 })
+    await aim(page, { heading: HEADING.eastMinusX, pitch: 0.25 })
     await page.evaluate(([y]) => {
       const d = window.game.drops
-      d.spawn(1, 1, [3.4, y + 1.4, -0.4], [0, 0, 0])
-      d.spawn(4, 1, [3.0, y + 1.4, 0.6], [0, 0, 0])
-      d.spawn(5, 1, [2.4, y + 1.4, 0.1], [0, 0, 0])
+      d.spawn(1, 1, [-3.4, y + 1.4, -0.4], [0, 0, 0])
+      d.spawn(4, 1, [-3.0, y + 1.4, 0.6], [0, 0, 0])
+      d.spawn(5, 1, [-2.4, y + 1.4, 0.1], [0, 0, 0])
     }, [SURFACE_Y])
     await waitTicks(page, 3)
     await shotRegion(page, 'drops-air', 'centre')

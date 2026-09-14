@@ -14,26 +14,45 @@ test.describe('world generation', () => {
       /*
        * REWRITTEN, not relaxed. This used to assert an 80x80 island with open
        * void past its rim. The world is now a 128x128 cut of real Minecraft
-       * terrain with the spawn column at the origin, so it runs -40..87 on x
+       * terrain with the spawn column at the origin, so it runs -87..40 on x
        * and -56..71 on z -- deliberately not symmetric, and the asymmetry is
        * asserted because it is the thing a stale mental model gets wrong.
+       *
+       * (It ran -40..87 until the terrain asset stopped being mirrored in X.
+       * Same patch, same spawn column, reached from the other end.)
        *
        * What is NOT relaxed: one block past each edge is still checked, and it
        * is now the barrier rather than air. Off by one here and either you can
        * walk into the void or the wall eats a column of real terrain.
+       *
+       * ASKED OF THE GENERATOR, not of noa.getBlock, for the reason the strata
+       * test below spells out at length: getBlock answers 0 for a chunk that is
+       * not resident, and 0 is also air. The far corner is 87 blocks out, past
+       * noa's horizontal load range from spawn, so the old getBlock version of
+       * this went from "there is a wall there" to "there is nothing loaded
+       * there" the moment the world's long axis flipped -- and the in-patch
+       * half of the check had been passing vacuously for the same reason.
+       * `voxelAt` asks what the world IS, resident or not.
        */
+      const gen = (x, y, z) =>
+        page.evaluate(([a, b, c]) => window.game.voxelAt(a, b, c), [x, y, z])
+
       for (const [x, z] of [[MIN_X, 0], [MAX_X, 0], [0, MIN_Z], [0, MAX_Z]]) {
-        expect(await getBlock(page, x, SURFACE_Y - 1, z),
+        expect(await gen(x, SURFACE_Y - 1, z),
           `inside the patch at (${x}, ${z})`).not.toBe(ID.barrier)
       }
 
-      expect(await getBlock(page, MIN_X - 1, SURFACE_Y - 1, 0)).toBe(ID.barrier)
-      expect(await getBlock(page, MAX_X + 1, SURFACE_Y - 1, 0)).toBe(ID.barrier)
-      expect(await getBlock(page, 0, SURFACE_Y - 1, MIN_Z - 1)).toBe(ID.barrier)
-      expect(await getBlock(page, 0, SURFACE_Y - 1, MAX_Z + 1)).toBe(ID.barrier)
+      expect(await gen(MIN_X - 1, SURFACE_Y - 1, 0)).toBe(ID.barrier)
+      expect(await gen(MAX_X + 1, SURFACE_Y - 1, 0)).toBe(ID.barrier)
+      expect(await gen(0, SURFACE_Y - 1, MIN_Z - 1)).toBe(ID.barrier)
+      expect(await gen(0, SURFACE_Y - 1, MAX_Z + 1)).toBe(ID.barrier)
 
       // The corner, which is where a "and" that should be an "or" shows up.
-      expect(await getBlock(page, MIN_X - 1, SURFACE_Y - 1, MIN_Z - 1)).toBe(ID.barrier)
+      expect(await gen(MIN_X - 1, SURFACE_Y - 1, MIN_Z - 1)).toBe(ID.barrier)
+
+      // ...and the wall is really standing in the world, not only in the
+      // generator: the near edge is inside the load range, so noa agrees.
+      expect(await getBlock(page, MAX_X + 1, SURFACE_Y - 1, 0)).toBe(ID.barrier)
     })
 
   test('the barrier is solid but draws nothing and cannot be targeted',
