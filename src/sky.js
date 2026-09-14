@@ -122,6 +122,12 @@ function skyColorFor(elevation) {
  *          The offset is added to the X texture COORDINATE, so the pattern
  *          moves the opposite way to the number going up.
  *
+ *          West is +X HERE, which is the opposite of Minecraft and is not a
+ *          choice this file gets to make: Babylon's scene is left-handed, so
+ *          facing +Z puts +X on your right, and Minecraft facing south puts
+ *          west on your right. The long version is the compass note in
+ *          debugScreen.js. See CLOUD_DRIFT below.
+ *
  * Face shading is Minecraft's too, and it is the tell that a cloud is solid:
  * top 1.0, underside 0.7, north and south 0.8, east and west 0.9. Those last
  * two are the way round that reads wrong -- the shader's faceColors array in
@@ -132,7 +138,17 @@ const CLOUD_HEIGHT = 192.33
 const CLOUD_CELL = 12
 const CLOUD_DEPTH = 4
 const CLOUD_ALPHA = 0.8
-const CLOUD_DRIFT = -0.6   // negative X: clouds always float west
+/*
+ * Positive X, because clouds always float west and west is +X here.
+ *
+ * It was -0.6 until the terrain asset stopped being mirrored in X
+ * (scripts/terrain/extract.mjs, MIRROR_X). That is worth being precise about,
+ * because the sign was not wrong before and is not a typo now: while the
+ * terrain was a mirror image of the save it came from, Minecraft's west WAS
+ * -X in this world, and the clouds drifted over the ground correctly. The flip
+ * corrected the ground and left the sky behind, so the sky follows.
+ */
+const CLOUD_DRIFT = 0.6
 
 const SHADE_TOP = 1.0
 const SHADE_BOTTOM = 0.7
@@ -448,13 +464,27 @@ export function installSky(noa) {
 
     time = (time + secs * MC.TICKS_PER_SECOND) % TICKS_PER_DAY
 
-    // t=0 sunrise in the east, 6000 overhead, 12000 west, 18000 below.
+    /*
+     * t=0 sunrise in the east, 6000 overhead, 12000 west, 18000 below.
+     *
+     * `sunX` is NEGATIVE cosine, and that minus sign is the whole of "the sun
+     * rises in the east". East is -X in this engine -- Babylon's scene is
+     * left-handed, see the compass note in debugScreen.js -- so dawn puts the
+     * sun at -1 and dusk at +1.
+     *
+     * It was a plain cosine until the terrain asset stopped being mirrored in
+     * X, and it was RIGHT then: the world was a mirror image of the save, so
+     * Minecraft's east was +X and the sun rose over the correct side of the
+     * ground. Flipping the terrain fixed the ground and left the sky rising in
+     * the west. The sun is the one thing in this world a player can navigate
+     * by, so it is worth more than the minus sign it costs.
+     */
     const angle = (time / TICKS_PER_DAY) * Math.PI * 2
     const elevation = Math.sin(angle)
-    const eastWest = Math.cos(angle)
+    const sunX = -Math.cos(angle)
 
-    place(sun.mesh, eastWest, elevation, 0, p[0], p[1], p[2])
-    place(moon.mesh, -eastWest, -elevation, 0, p[0], p[1], p[2])
+    place(sun.mesh, sunX, elevation, 0, p[0], p[1], p[2])
+    place(moon.mesh, -sunX, -elevation, 0, p[0], p[1], p[2])
     // Hide whichever one is below the horizon so it can't shine through the
     // island from underneath.
     sun.mesh.setEnabled(elevation > -0.15)
@@ -493,7 +523,7 @@ export function installSky(noa) {
     const level = Math.max((0.18 + daylight * 0.82) * storm, flash)
     if (light) {
       light.intensity = level
-      light.direction.set(-eastWest, -Math.max(elevation, 0.15), -0.3)
+      light.direction.set(-sunX, -Math.max(elevation, 0.15), -0.3)
     }
     scene_.ambientColor.set(level * 0.5, level * 0.5, level * 0.5)
     /*
@@ -553,7 +583,12 @@ export function installSky(noa) {
      * minutes.
      */
     drift += secs * CLOUD_DRIFT
+    // Wrapped in both directions rather than only the one CLOUD_DRIFT happens
+    // to move today. The sign of the drift changed once already (see
+    // CLOUD_DRIFT) and a one-sided wrap is a bug that takes eight minutes of
+    // real time to appear.
     if (drift < -CLOUD_PERIOD_BLOCKS / 2) drift += CLOUD_PERIOD_BLOCKS
+    if (drift > CLOUD_PERIOD_BLOCKS / 2) drift -= CLOUD_PERIOD_BLOCKS
     global[0] = p[0] + drift
     global[1] = CLOUD_HEIGHT
     global[2] = p[2]

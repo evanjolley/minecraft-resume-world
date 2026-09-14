@@ -85,8 +85,17 @@ test.describe('day/night cycle', () => {
  * of one that does not.
  */
 test.describe('cloud layer', () => {
-  /** Minecraft's 0.6 blocks/sec, west. */
-  const DRIFT = -0.6
+  /*
+   * Minecraft's 0.6 blocks/sec, west -- and west is +X here, so the sign is
+   * positive. It read -0.6 while the terrain asset was mirrored in X, when
+   * Minecraft's west genuinely was -X in this world; the extractor stopped
+   * mirroring and src/sky.js turned the sky around to follow the ground.
+   *
+   * THE RATE IS UNCHANGED. Every magnitude and tolerance below is the number
+   * it always was; only the directions they are compared against moved, and
+   * they moved because the world did.
+   */
+  const DRIFT = 0.6
 
   /**
    * The layer's world position minus the player's, sampled every tick. The
@@ -136,20 +145,22 @@ test.describe('cloud layer', () => {
 
       // Per-tick: one tick of drift is 0.02 blocks. 0.1 is five of those, so
       // this passes through a stalled tick and still fails a 12-block step by
-      // two orders of magnitude.
+      // two orders of magnitude. The bounds are the same two numbers they
+      // always were, reflected with the drift: the layer may never move
+      // BACKWARDS by even 0.005, and may never lurch forwards by 0.1.
       let worst = 0
       for (let i = 1; i < out.length; i++) {
         const step = out[i][0] - out[i - 1][0]
         if (Math.abs(step) > Math.abs(worst)) worst = step
       }
-      expect(worst, `worst per-tick step was ${worst.toFixed(4)} blocks`).toBeLessThan(0.005)
-      expect(worst, `worst per-tick step was ${worst.toFixed(4)} blocks`).toBeGreaterThan(-0.1)
+      expect(worst, `worst per-tick step was ${worst.toFixed(4)} blocks`).toBeGreaterThan(-0.005)
+      expect(worst, `worst per-tick step was ${worst.toFixed(4)} blocks`).toBeLessThan(0.1)
 
       // And the sum of those steps is still Minecraft's drift rate, so a layer
-      // that simply froze to the player cannot pass.
+      // that simply froze to the player cannot pass. Same +/-20% window.
       const rate = (out[out.length - 1][0] - out[0][0]) / secs
-      expect(rate, `drifted at ${rate.toFixed(3)} b/s`).toBeGreaterThan(DRIFT * 1.2)
-      expect(rate, `drifted at ${rate.toFixed(3)} b/s`).toBeLessThan(DRIFT * 0.8)
+      expect(rate, `drifted at ${rate.toFixed(3)} b/s`).toBeLessThan(DRIFT * 1.2)
+      expect(rate, `drifted at ${rate.toFixed(3)} b/s`).toBeGreaterThan(DRIFT * 0.8)
 
       // Z is pure tracking: nothing drifts north or south.
       const dz = Math.max(...out.map(o => Math.abs(o[1])))
