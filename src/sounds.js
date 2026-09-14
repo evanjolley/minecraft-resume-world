@@ -1,4 +1,4 @@
-import { BLOCK_BY_ID } from './blocks.js'
+import { BLOCK_BY_ID, BLOCK_TYPES } from './blocks.js'
 
 /*
  * Minecraft's block sounds, played through Web Audio.
@@ -29,40 +29,324 @@ import { BLOCK_BY_ID } from './blocks.js'
  * install time. Everything before that point is safe to call and does nothing.
  */
 
-/*
- * Block key -> Minecraft SoundType family.
+/* ------------------------------------------------------------------ *
+ * SoundType families.
  *
- * DIRT IS GRAVEL. That looks like a bug and isn't: `Blocks.DIRT` is declared
- * with `SoundType.GRAVEL` in Minecraft, so dirt crunches rather than rustles.
- * Only the grass BLOCK gets SoundType.GRASS.
+ * Minecraft never gives a block its own sound. It gives it a SoundType, and a
+ * SoundType is a (volume, pitch) pair plus a set of events, shared by every
+ * block declared with it. So the job here is two tables, not one: which family
+ * a block belongs to (GROUP_RULES), and what that family does to the mix
+ * (SOUND_GROUPS). Neither one knows which files exist -- the manifest owns
+ * that -- which is what lets the same mapping serve the vanilla build and the
+ * six-family free set.
  *
- * Everything absent falls through to stone, which is right for all three
- * stone variants, cobblestone, bedrock and every ore -- and is also the least
- * wrong default for whatever gets added to blocks.js later.
+ * `from` is the family to play when the build did not extract this one. It is
+ * load-bearing in both directions: the free set has six families total, and
+ * even the vanilla build only extracts the families this world walks on. A
+ * sculk block on a free build plays stone -- which is exactly what it played
+ * before this table existed. The mapping is complete; the extraction is a dial.
+ *
+ * WHERE THE NUMBERS COME FROM. `minecraft/sounds.json` in your own asset
+ * index (1.21.8, index 26) carries the per-sample volume and pitch of every
+ * event, and it is the citation for every non-1.0 below: block.mud.step is
+ * volume 0.5, block.packed_mud.step is 0.3 at pitch 0.95, block.mud_bricks.*
+ * is 0.5, block.azalea_leaves.step is 0.85. Everything unmarked plays at 1.0
+ * there.
+ *
+ * The two exceptions live in SoundType rather than in sounds.json, and both
+ * matter more than anything in the paragraph above. block.metal.step IS
+ * step/stone1-6 and block.glass.step IS step/stone1-6 -- identical files. The
+ * only thing that makes an iron block ring rather than thud is
+ * SoundType.METAL's 1.5 pitch, and glass differs from stone only on break.
+ * Reading sounds.json alone would have made both of them "stone" and called it
+ * accurate.
  */
-const GROUP_BY_KEY = {
-  grass: 'grass',
-  dirt: 'gravel',
-  gravel: 'gravel',
-  planks: 'wood',
+export const SOUND_GROUPS = {
+  /* The six the build has always produced, from both sources. */
+  stone: { volume: 1.0, pitch: 1.0 },
+  // SoundType.GRASS's own volume, which multiplies sounds.json's 1.0. This
+  // predates the mapping work and is kept: grass IS the quiet one.
+  grass: { volume: 0.6, pitch: 1.0 },
+  wood: { volume: 1.0, pitch: 1.0 },
+  gravel: { volume: 1.0, pitch: 1.0 },
+  sand: { volume: 1.0, pitch: 1.0 },
+  snow: { volume: 1.0, pitch: 1.0 },
+
+  /* Extracted by the vanilla build, because the terrain patch is made of them. */
+  deepslate: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  tuff: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  moss: { volume: 1.0, pitch: 1.0, from: 'grass' },
+  sculk: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  calcite: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  amethyst: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  basalt: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  cloth: { volume: 1.0, pitch: 1.0, from: 'grass' },
+
+  /*
+   * Mapped but not extracted: every one of these resolves through `from`
+   * today. They are here rather than folded into their fallback because the
+   * mapping is the thing that has to stay true -- the day `npm run sounds`
+   * grows a family, the blocks that belong to it are already named.
+   */
+  metal: { volume: 1.0, pitch: 1.5, from: 'stone' },   // SoundType.METAL
+  glass: { volume: 1.0, pitch: 1.0, from: 'stone' },   // stone steps, glass break
+  copper: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  dripstone: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  netherrack: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  nether_bricks: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  nether_ore: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  netherite: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  bone_block: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  froglight: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  resin: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  coral: { volume: 1.0, pitch: 1.0, from: 'stone' },
+  nether_wood: { volume: 1.0, pitch: 1.0, from: 'wood' },
+  cherry_wood: { volume: 1.0, pitch: 1.0, from: 'wood' },
+  bamboo_wood: { volume: 1.0, pitch: 1.0, from: 'wood' },
+  stem: { volume: 1.0, pitch: 1.0, from: 'wood' },
+  cherry_leaves: { volume: 1.0, pitch: 1.0, from: 'grass' },
+  nylium: { volume: 1.0, pitch: 1.0, from: 'grass' },
+  netherwart: { volume: 1.0, pitch: 1.0, from: 'grass' },
+  shroomlight: { volume: 1.0, pitch: 1.0, from: 'grass' },
+  sponge: { volume: 1.0, pitch: 1.0, from: 'grass' },
+  honey: { volume: 1.0, pitch: 1.0, from: 'grass' },
+  slime: { volume: 1.0, pitch: 1.0, from: 'grass' },
+  rooted_dirt: { volume: 1.0, pitch: 1.0, from: 'gravel' },
+  soul_sand: { volume: 1.0, pitch: 1.0, from: 'sand' },
+  soul_soil: { volume: 1.0, pitch: 1.0, from: 'sand' },
+  mud: { volume: 0.5, pitch: 1.0, from: 'gravel' },
+  packed_mud: { volume: 0.3, pitch: 0.95, from: 'stone' },
+  mud_bricks: { volume: 0.5, pitch: 1.0, from: 'stone' },
 }
+
 const DEFAULT_GROUP = 'stone'
 
-/** The SoundType family for a block id, or null for air. */
+/*
+ * Block key -> family, by RULE rather than by row.
+ *
+ * The old table had four entries and let 634 blocks fall through to stone,
+ * which was fine for a hand-built island of six block types and is why the
+ * 128x128 Minecraft patch came out sounding like a quarry: leaves, logs, moss,
+ * sculk, deepslate, tuff, snow and packed ice were all stone.
+ *
+ * Rules, not rows, because blocks.js GENERATES most of its palette --
+ * `woodSet()` makes six rows per wood, `dyed()` sixteen per colour family,
+ * `nonCubeSet()` ten per stone -- and anything hand-listed against a generated
+ * palette is wrong one commit after it is written. Every rule here keys on the
+ * same naming convention those generators use.
+ *
+ * ORDER IS THE WHOLE DESIGN. First match wins, so the specific families come
+ * before the general ones: cherry before wood, nylium before nether, deepslate
+ * before ore. Read it top to bottom as "is it this? no, then is it this?".
+ *
+ * DIRT IS GRAVEL. That looks like a bug and isn't: `Blocks.DIRT` is declared
+ * with SoundType.GRAVEL, so dirt crunches rather than rustles. Only the grass
+ * BLOCK gets SoundType.GRASS.
+ *
+ * `null` is a deliberate silence, not a gap -- see the fluids rule.
+ *
+ * Rejected: deriving the family from the block's texture name, which would
+ * have covered the non-cube families for free (a slab carries its source
+ * cube's `all`). It reads the wrong thing: `oak_wood` is textured `oak_log`
+ * and `smooth_quartz` is textured `quartz_block_bottom`, so the texture is a
+ * statement about pixels and the key is the statement about material.
+ *
+ * Rejected: adding a `sound:` field to blocks.js, which would be the most
+ * direct expression of this and is another agent's file to change. If this
+ * table ever needs a block that its name cannot classify, that is the fix.
+ */
+const GROUP_RULES = [
+  /*
+   * Fluids and the world wall first, because "water" contains no clue and
+   * every later rule would be a coin flip on it.
+   *
+   * Vanilla fluids have no step or dig sound at all -- swimming and splashing
+   * are their own events, wired in fluids.js, not a SoundType -- so this is a
+   * silence that means silence. play() reads null as "nothing to play here".
+   */
+  [/^(water|lava)$/, null, 'fluids have no SoundType'],
+  // The invisible wall around the patch. You can stand on top of it, so it
+  // needs a sound; vanilla's barrier declares no SoundType and inherits stone.
+  [/^barrier$/, 'stone', 'vanilla barrier inherits SoundType.STONE'],
+
+  /* ---- foliage, before anything that matches a wood name ---- */
+  [/^cherry_leaves$/, 'cherry_leaves', 'SoundType.CHERRY_LEAVES'],
+  // Every other leaf in the palette is SoundType.GRASS -- which is the fix for
+  // "walking on leaves sounds like stone". Azalea leaves have their own family
+  // in vanilla; this world has no azalea.
+  [/_leaves$/, 'grass', 'SoundType.GRASS'],
+
+  /* ---- the nether, before the wood and stone rules eat it ---- */
+  [/nylium$/, 'nylium', 'SoundType.NYLIUM'],
+  [/wart_block$/, 'netherwart', 'SoundType.WART_BLOCK'],
+  [/^shroomlight$/, 'shroomlight', 'SoundType.SHROOMLIGHT'],
+  [/^(stripped_)?(crimson|warped)_/, 'nether_wood', 'SoundType.NETHER_WOOD'],
+  [/^netherrack$/, 'netherrack', 'SoundType.NETHERRACK'],
+  [/nether_brick/, 'nether_bricks', 'SoundType.NETHER_BRICKS'],
+  // Nether ores and gilded blackstone share block/nether_ore in sounds.json.
+  [/^(nether_gold_ore|nether_quartz_ore|gilded_blackstone)$/, 'nether_ore', 'SoundType.NETHER_ORE'],
+  [/^soul_sand$/, 'soul_sand', 'SoundType.SOUL_SAND'],
+  [/^soul_soil$/, 'soul_soil', 'SoundType.SOUL_SOIL'],
+  [/^ancient_debris$/, 'basalt', 'block.ancient_debris.step IS block/basalt/step*'],
+  [/basalt$/, 'basalt', 'SoundType.BASALT'],
+  [/^netherite_block$/, 'netherite', 'SoundType.NETHERITE_BLOCK'],
+  [/^bone_block$/, 'bone_block', 'SoundType.BONE_BLOCK'],
+  [/^glowstone$/, 'glass', 'SoundType.GLASS'],
+  [/froglight$/, 'froglight', 'SoundType.FROGLIGHT'],
+  [/^resin/, 'resin', 'SoundType.RESIN / RESIN_BRICKS'],
+
+  /* ---- the deep dark, before the ore and brick rules ---- */
+  // Deepslate ores are SoundType.DEEPSLATE, not SoundType.STONE, so this has
+  // to beat the ore rule below. Vanilla splits DEEPSLATE_BRICKS and
+  // DEEPSLATE_TILES off as their own SoundTypes; folded here, because those
+  // two are step-and-place variations on the same recordings and the build
+  // extracts one deepslate family.
+  [/deepslate/, 'deepslate', 'SoundType.DEEPSLATE'],
+  // Same fold for SCULK_CATALYST, which is its own SoundType over the same
+  // block/sculk samples.
+  [/^sculk/, 'sculk', 'SoundType.SCULK'],
+  [/^moss_block$/, 'moss', 'SoundType.MOSS'],
+  [/tuff/, 'tuff', 'SoundType.TUFF / TUFF_BRICKS'],
+  [/^calcite$/, 'calcite', 'SoundType.CALCITE'],
+  [/amethyst/, 'amethyst', 'SoundType.AMETHYST'],
+  [/^dripstone_block$/, 'dripstone', 'SoundType.DRIPSTONE_BLOCK'],
+
+  /* ---- ground ---- */
+  [/^grass$/, 'grass', 'SoundType.GRASS -- the grass BLOCK, and only it'],
+  [/^rooted_dirt$/, 'rooted_dirt', 'SoundType.ROOTED_DIRT'],
+  // Dirt, podzol, mycelium, clay and gravel are all SoundType.GRAVEL.
+  [/^(dirt|coarse_dirt|podzol|mycelium|clay|gravel)$/, 'gravel', 'SoundType.GRAVEL'],
+  [/^(sand|red_sand)$/, 'sand', 'SoundType.SAND'],
+  // Concrete powder is SAND; set concrete is STONE, and the rule below it.
+  [/_concrete_powder$/, 'sand', 'SoundType.SAND'],
+  [/^mud$/, 'mud', 'SoundType.MUD'],
+  [/^packed_mud$/, 'packed_mud', 'SoundType.PACKED_MUD'],
+  [/^mud_bricks$/, 'mud_bricks', 'SoundType.MUD_BRICKS'],
+  [/^snow_block$/, 'snow', 'SoundType.SNOW'],
+  // ICE IS GLASS. All three ices are SoundType.GLASS, which steps on stone --
+  // so this changes nothing today and stops being a lie the day glass breaks
+  // get their own samples.
+  [/^(ice|packed_ice|blue_ice)$/, 'glass', 'SoundType.GLASS'],
+
+  /* ---- wood, in order of specificity ---- */
+  [/^(stripped_)?cherry_/, 'cherry_wood', 'SoundType.CHERRY_WOOD'],
+  [/bamboo/, 'bamboo_wood', 'SoundType.BAMBOO_WOOD'],
+  [/mushroom/, 'wood', 'SoundType.WOOD'],
+  [/^(planks|melon|pumpkin|carved_pumpkin|jack_o_lantern|bookshelf|chiseled_bookshelf|crafting_table|note_block|jukebox|barrel|loom|cartography_table|fletching_table|smithing_table|beehive|bee_nest)$/,
+    'wood', 'SoundType.WOOD'],
+  [/_(planks|log|wood|stem|hyphae)$/, 'wood', 'SoundType.WOOD'],
+  // The marker rule. Slabs and stairs are not classified by the words "slab"
+  // and "stairs" -- they fall through to the stripper below, which re-runs
+  // these rules against the family name the source cube carries.
+  [/_(slab|slab_top|stairs)$|_stairs_/, null, 'HANDLED BY THE NON-CUBE STRIPPER'],
+
+  /* ---- soft things ---- */
+  [/_wool$/, 'cloth', 'SoundType.WOOL -- step/cloth, dig/cloth'],
+  [/^(hay_block|dried_kelp_block|tnt|target)$/, 'grass', 'SoundType.GRASS'],
+  [/^honeycomb_block$/, 'coral', 'SoundType.CORAL_BLOCK'],
+  [/^honey_block$/, 'honey', 'SoundType.HONEY_BLOCK'],
+  [/^slime_block$/, 'slime', 'SoundType.SLIME_BLOCK -- the slime mob samples'],
+  [/sponge$/, 'sponge', 'SoundType.SPONGE / WET_SPONGE'],
+  [/glass$/, 'glass', 'SoundType.GLASS'],
+  [/^(redstone_lamp|sea_lantern)$/, 'glass', 'SoundType.GLASS'],
+
+  /* ---- metal ---- */
+  // The six mineral blocks are METAL; coal and the three RAW blocks are STONE,
+  // which is why this names them one by one instead of matching `_block$`.
+  [/^(iron|gold|diamond|emerald|lapis|redstone)_block$/, 'metal', 'SoundType.METAL'],
+  // Every copper block, cut, chiseled, oxidised, bulb or grate. COPPER_BULB
+  // and COPPER_GRATE are separate SoundTypes over the same block/copper
+  // samples; folded.
+  // Copper ORE is stone, and so are the three raw-metal blocks -- so those
+  // leave before the copper rule sees them.
+  [/^(copper_ore|raw_copper_block)$/, 'stone', 'SoundType.STONE'],
+  [/copper/, 'copper', 'SoundType.COPPER'],
+
+  /*
+   * Stone last, and deliberately enumerated rather than left as a catch-all.
+   *
+   * A trailing `[/./, 'stone']` would make this table impossible to be wrong
+   * about -- and impossible to notice being wrong, which is the failure this
+   * whole change exists to fix. Anything that reaches the end of these rules
+   * unmatched is REPORTED (see unmappedBlocks below), and the sound build and
+   * test/12-sounds.spec.js both fail on a non-empty report.
+   */
+  [/stone|cobble|brick|sandstone|quartz|purpur|prismarine|terracotta|concrete|obsidian|magma_block|andesite|diorite|granite|_ore$|^(coal|iron|gold|diamond|emerald|lapis|redstone|copper)_block$|^raw_\w+_block$|^(furnace|blast_furnace|smoker|piston|sticky_piston|dispenser|dropper|observer|bedrock|lodestone|respawn_anchor)$/,
+    'stone', 'SoundType.STONE'],
+]
+
+/*
+ * The non-cube families, which blocks.js generates ten rows at a time from one
+ * source cube: `<prefix>_slab`, `<prefix>_slab_top`, `<prefix>_stairs` and
+ * seven more stair states. They take the SOURCE block's family, the same way
+ * nonCubeSet() already gives them the source's texture and hardness.
+ *
+ * Stripping the suffix and re-running the rules is what makes that automatic:
+ * `cherry_stairs_north_top` -> `cherry` -> cherry_wood, `deepslate_brick_slab`
+ * -> `deepslate_brick` -> deepslate. No family list, so a new one inherits its
+ * sound the day it is declared.
+ */
+const NON_CUBE_SUFFIX = /_(slab|slab_top|stairs)$|_stairs_(north|south|east|west)_(top|bottom)$/
+
+/** The family for a block key, or null for a deliberate silence. */
+function ruleFor(key) {
+  for (const [pattern, group, why] of GROUP_RULES) {
+    if (!pattern.test(key)) continue
+    // The non-cube marker rule: fall through to the stripped key rather than
+    // answering, so a slab is never classified by the word "slab".
+    if (why === 'HANDLED BY THE NON-CUBE STRIPPER') break
+    return { group, why }
+  }
+  const stripped = key.replace(NON_CUBE_SUFFIX, '')
+  if (stripped !== key) {
+    /*
+     * A non-cube family's prefix is one of two things. Usually it is a
+     * material name the rules above already answer -- `deepslate_brick`,
+     * `smooth_sandstone`, `purpur`. For the eight wood families it is the bare
+     * wood (`oak`, `cherry`), which names no block at all, so it is asked
+     * again as `<wood>_planks` -- which is exactly the cube nonCubeSet() built
+     * it from.
+     */
+    const inherited = ruleFor(stripped) ?? ruleFor(`${stripped}_planks`)
+    if (inherited) return { group: inherited.group, why: `${inherited.why} (from ${stripped})` }
+  }
+  return null
+}
+
+/*
+ * Resolved once at module load for the whole palette, not per footstep. 638
+ * regex walks is nothing at import and would be a per-frame cost during a
+ * mining burst.
+ */
+const RULE_BY_KEY = new Map(BLOCK_TYPES.map(b => [b.key, ruleFor(b.key)]))
+
+/** Which rule claimed a block key, as { group, why }, or null if none did. */
+export const soundRuleForKey = (key) => RULE_BY_KEY.get(key) ?? null
+
+/**
+ * Every registered block no rule claims.
+ *
+ * This is the whole point of enumerating stone instead of catching all: an
+ * unmapped block is a name, in a list, at build time and in the test suite --
+ * not a block that silently sounds like a rock. The sound build fails on it
+ * and so does test/12-sounds.spec.js.
+ */
+export const unmappedBlocks = () =>
+  BLOCK_TYPES.filter(b => !RULE_BY_KEY.get(b.key)).map(b => b.key)
+
+/** The SoundType family for a block id, or null for air and for fluids. */
 function groupForBlock(id) {
   if (!id) return null
   const def = BLOCK_BY_ID.get(id)
   if (!def) return null
-  return GROUP_BY_KEY[def.key] ?? DEFAULT_GROUP
+  const rule = RULE_BY_KEY.get(def.key)
+  // A block with no rule still makes a noise -- silence would be a worse bug
+  // than a wrong one, and unmappedBlocks() is what makes this visible instead
+  // of permanent.
+  if (!rule) return DEFAULT_GROUP
+  return rule.group
 }
 
-/*
- * Minecraft's per-family volume. Grass is the quiet one at 0.6; everything
- * else in this palette is 1.0. Sand and snow are here because the build script
- * extracts them and a future block palette will want them, not because
- * anything places them today.
- */
-const GROUP_VOLUME = { grass: 0.6, gravel: 1.0, wood: 1.0, stone: 1.0, sand: 1.0, snow: 1.0 }
 
 /*
  * Event -> which sample set, and Minecraft's mix for it.
@@ -306,8 +590,33 @@ export function installSounds(noa, deps = {}) {
       const paths = manifest.sets?.[set]
       return paths?.length ? pick(paths) : null
     }
-    const count = manifest.groups[group]?.[set]
-    return count ? `${set}/${group}${1 + Math.floor(Math.random() * count)}` : null
+    const built = builtGroup(group)
+    const count = built && manifest.groups[built]?.[set]
+    return count ? `${set}/${built}${1 + Math.floor(Math.random() * count)}` : null
+  }
+
+  /*
+   * A family -> the family whose samples this build actually produced.
+   *
+   * Walks SOUND_GROUPS' `from` chain until it lands on something the manifest
+   * carries. Two things depend on it: the free set, which has six families and
+   * would otherwise play silence for the other thirty, and families like metal
+   * and glass which have no samples of their own in ANY build -- vanilla's
+   * block.metal.step IS step/stone1-6.
+   *
+   * Only the SAMPLES fall back. The mix stays with the family the block was
+   * actually mapped to, which is the entire reason an iron block rings: it
+   * plays stone's recording at SoundType.METAL's 1.5 pitch.
+   */
+  function builtGroup(group) {
+    let g = group
+    // Bounded rather than a visited-set, because the chains are two or three
+    // links and a cycle here is a typo in SOUND_GROUPS, not a runtime state.
+    for (let i = 0; g && i < 8; i++) {
+      if (manifest.groups?.[g]) return g
+      g = SOUND_GROUPS[g]?.from
+    }
+    return null
   }
 
   const local = [0, 0, 0]
@@ -346,10 +655,15 @@ export function installSounds(noa, deps = {}) {
     // Minecraft pitches by resampling, so playbackRate is the faithful knob --
     // a lower pitch is genuinely a longer sound, which is why the mining tick
     // at 0.5 reads as a heavy thunk rather than a clipped one.
+    // The family's own (volume, pitch) -- Minecraft's SoundType pair --
+    // multiplied into the event's. Taken from the MAPPED family, not from
+    // whichever one's samples the build fell back to.
+    const family = (group && SOUND_GROUPS[group]) || { volume: 1, pitch: 1 }
+    const pitch = mix.pitch * family.pitch
     src.playbackRate.value = mix.vary
-      ? mix.pitch * (1 + (Math.random() - Math.random()) * mix.vary)
-      : mix.pitch
-    voice.gain.gain.value = mix.volume * (group ? GROUP_VOLUME[group] ?? 1 : 1)
+      ? pitch * (1 + (Math.random() - Math.random()) * mix.vary)
+      : pitch
+    voice.gain.gain.value = mix.volume * family.volume
 
     if (worldPos) {
       /*
@@ -374,7 +688,7 @@ export function installSounds(noa, deps = {}) {
     // Sources are garbage once played; dropping the connection keeps a
     // stopped node from pinning the pooled gain in the graph.
     src.onended = () => { try { src.disconnect() } catch { /* already gone */ } }
-    lastPlayed = { event, set, name }
+    lastPlayed = { event, set, name, group }
     return true
   }
 
@@ -515,6 +829,15 @@ export function installSounds(noa, deps = {}) {
   return {
     play,
     groupForBlock,
+    /*
+     * The mapping itself, for the console and for the test suite. `unmapped`
+     * is the one that matters: it is the same list scripts/build-sounds.mjs
+     * refuses to build against, asked at runtime, so a block added after the
+     * last sound build still gets caught.
+     */
+    groups: SOUND_GROUPS,
+    ruleForKey: soundRuleForKey,
+    unmapped: unmappedBlocks,
     /** 'off' until the gesture gate fires, then the real AudioContext state. */
     get state() { return ctx ? ctx.state : 'off' },
     get context() { return ctx },

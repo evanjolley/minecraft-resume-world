@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures.js'
 import {
-  ID, SURFACE_Y, aim, setBlock, teleport, settleOnGround, waitTicks,
+  ID, SURFACE_Y, aim, getBlock, setBlock, teleport, settleOnGround, waitTicks,
   useGamemode, DROP_X, DROP_Z, standOnBedrock,
 } from './helpers/world.js'
 import { armAudio } from './helpers/audio.js'
@@ -82,15 +82,21 @@ test.describe('sounds', () => {
   test('two samples sharing a fingerprint would make every name below a guess',
     async () => {
       /*
-       * The classification the rest of this file depends on. The ONE
-       * unavoidable collision is snow: step/snowN.ogg and dig/snowN.ogg are
-       * different files with different asset hashes that decode to
-       * bit-identical PCM -- vanilla ships one recording twice. Nothing here
-       * touches snow, since no snow exists in this world.
+       * The classification the rest of this file depends on. Two families
+       * collide, and both are vanilla shipping ONE recording under two names:
+       * step/snowN.ogg and dig/snowN.ogg are different files with different
+       * asset hashes that decode to bit-identical PCM, and wool -- extracted
+       * under its pre-1.13 asset name `cloth` -- does exactly the same.
+       *
+       * Nothing below names a snow or wool sample, so the ambiguity costs
+       * nothing; what would cost is a THIRD family joining them unnoticed,
+       * which is why this is pinned rather than filtered.
        */
       expect(await audio.collisions()).toEqual([
         'step/snow1|dig/snow1', 'step/snow2|dig/snow2',
         'step/snow3|dig/snow3', 'step/snow4|dig/snow4',
+        'step/cloth1|dig/cloth1', 'step/cloth2|dig/cloth2',
+        'step/cloth3|dig/cloth3', 'step/cloth4|dig/cloth4',
       ])
     })
 
@@ -247,6 +253,134 @@ test.describe('sounds', () => {
     expect(hits.every(h => h.name.startsWith('step/stone'))).toBe(true)
     expect(hits[0].gain).toBeCloseTo(HIT_GAIN, 5)
     expect(await page.evaluate(() => window.noa.getBlock(0, -64, 0))).toBe(ID.bedrock)
+  })
+
+  /* ---- which block sounds like what ---- */
+
+  test('every block in the world sounds like stone', async ({ page }) => {
+    /*
+     * It very nearly did. The mapping was four entries -- grass, dirt, gravel,
+     * planks -- with everything else falling through to a stone default, which
+     * was fine for a hand-built island of six block types and wrong the moment
+     * the world became 128x128 of real Minecraft terrain.
+     *
+     * This asserts the table covers the palette BY CONSTRUCTION rather than
+     * listing what it should contain: a block src/sounds.js cannot classify
+     * appears in `unmapped`, and the sound build refuses to run with a
+     * non-empty one.
+     */
+    expect(await page.evaluate(() => window.game.sounds.unmapped())).toEqual([])
+  })
+
+  test('the terrain is full of blocks nothing has a sound for', async ({ page }) => {
+    /*
+     * The palette the importer actually wrote, read from the terrain file
+     * rather than restated here -- so re-importing a patch with a block type
+     * nobody mapped fails THIS test rather than quietly sounding like a
+     * quarry. `null` is a deliberate silence (water, lava); a missing rule is
+     * not.
+     */
+    const { fallbacks, silent, families } = await page.evaluate(async () => {
+      const palette = (await (await fetch('/terrain/terrain.json')).json()).palette
+      const rules = palette.filter(k => k !== 'air')
+        .map(key => [key, window.game.sounds.ruleForKey(key)])
+      return {
+        fallbacks: rules.filter(([, r]) => !r).map(([k]) => k),
+        silent: rules.filter(([, r]) => r && r.group === null).map(([k]) => k),
+        families: [...new Set(rules.filter(([, r]) => r?.group).map(([, r]) => r.group))].sort(),
+      }
+    })
+
+    expect(fallbacks, 'terrain blocks with no SoundType family').toEqual([])
+    // The only two the patch contains that vanilla gives no step sound at all.
+    expect(silent).toEqual(['water', 'lava'])
+    // Not an exhaustive list -- the point is that the patch is NOT all stone.
+    expect(families).toEqual(expect.arrayContaining(
+      ['deepslate', 'grass', 'gravel', 'moss', 'sculk', 'snow', 'tuff', 'wood']))
+  })
+
+  test('leaves are classified as stone, like every other surprise',
+    async ({ page }) => {
+      /*
+       * The four that read as bugs and are Minecraft, checked at the mapping
+       * rather than by listening:
+       *   - leaves are SoundType.GRASS, which is the "leaves sound like stone"
+       *     report in one line
+       *   - dirt and clay are GRAVEL, not GRASS
+       *   - all three ices are GLASS, which STEPS on stone samples
+       *   - deepslate ores are DEEPSLATE, not STONE
+       */
+      const group = (key) => page.evaluate(k => window.game.sounds.ruleForKey(k)?.group, key)
+
+      expect(await group('oak_leaves')).toBe('grass')
+      expect(await group('dark_oak_leaves')).toBe('grass')
+      expect(await group('clay')).toBe('gravel')
+      expect(await group('dirt')).toBe('gravel')
+      expect(await group('packed_ice')).toBe('glass')
+      expect(await group('deepslate_diamond_ore')).toBe('deepslate')
+      expect(await group('moss_block')).toBe('moss')
+      expect(await group('white_wool')).toBe('cloth')
+      // Generated families, which is the half a hand-written table loses
+      // first: a stair is ten rows blocks.js makes from one cube.
+      expect(await group('cherry_stairs_north_top')).toBe('cherry_wood')
+      expect(await group('deepslate_brick_slab')).toBe('deepslate')
+    })
+
+  test('landing on leaves thuds like landing on rock', async ({ page }) => {
+    /*
+     * The mapping asserted through the actual graph: a real fall onto a real
+     * leaf block, captured as whichever sample started.
+     *
+     * The drop column rather than spawn, for the reason helpers/world.js
+     * gives -- spawn is under a dark forest canopy. Two blocks is enough to
+     * beat LAND_MIN_SPEED and nowhere near fall damage, so nothing else fires.
+     */
+    const leaves = await page.evaluate(() => window.game.itemId('oak_leaves'))
+    const ground = [4, SURFACE_Y - 1, 0]
+    const was = await getBlock(page, ...ground)
+    await setBlock(page, leaves, ...ground)
+
+    try {
+      await teleport(page, DROP_X, SURFACE_Y + 2, DROP_Z)
+      await audio.clear()
+      await settleOnGround(page)
+      await waitTicks(page, 2)
+
+      const rec = await audio.drain()
+      const names = rec.map(r => r.name)
+
+      expect(names.some(n => n.startsWith('step/grass')),
+        `landing on leaves played ${names.join(', ') || 'nothing'}`).toBe(true)
+      expect(names.some(n => n.startsWith('step/stone'))).toBe(false)
+      // land's 0.55 times SoundType.GRASS's 0.6. Grass is the quiet family.
+      expect(rec.find(r => r.name.startsWith('step/grass')).gain)
+        .toBeCloseTo(0.55 * 0.6, 5)
+    } finally {
+      await setBlock(page, was, ...ground)
+    }
+  })
+
+  test('an iron block breaks at the same pitch as a stone one', async ({ page }) => {
+    /*
+     * SoundType.METAL is the clearest case for keeping the family's mix
+     * separate from its samples: block.metal.step IS step/stone1-6 and
+     * block.metal.break IS dig/stone1-4 -- identical files -- and the only
+     * thing that makes metal ring rather than thud is METAL's 1.5 pitch.
+     * Fold the family into "stone" and the ring is gone with no sample
+     * missing to show for it.
+     */
+    const [iron, stone] = await page.evaluate(() =>
+      [window.game.itemId('iron_block'), window.game.itemId('stone')])
+
+    await page.evaluate(id => window.game.sounds.play('break', id, [0, 0, 0]), iron)
+    await page.evaluate(id => window.game.sounds.play('break', id, [0, 0, 0]), stone)
+    const [metal, rock] = await audio.drain()
+
+    expect(metal.name).toMatch(/^dig\/stone[0-9]$/)
+    expect(rock.name).toMatch(/^dig\/stone[0-9]$/)
+    // break's 0.8 pitch, times the family's.
+    expect(metal.rate).toBeCloseTo(0.8 * 1.5, 5)
+    expect(rock.rate).toBeCloseTo(0.8, 5)
   })
 
   test('clicking a GUI button gives no feedback', async ({ page }) => {

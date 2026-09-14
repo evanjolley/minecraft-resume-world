@@ -64,6 +64,9 @@ import {
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
+// The block -> SoundType mapping, imported rather than restated: there is one
+// table, and this script is the thing that can prove it covers the palette.
+import { SOUND_GROUPS, unmappedBlocks } from '../src/sounds.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC = join(ROOT, 'public')
@@ -111,6 +114,45 @@ if (source !== 'free' && source !== 'vanilla') {
  */
 const GROUPS = ['grass', 'stone', 'wood', 'gravel', 'sand', 'snow']
 const KINDS = ['step', 'dig']
+
+/*
+ * The families only a vanilla install can supply, added when the world stopped
+ * being a hand-built island of six block types and became a 128x128 patch of
+ * real Minecraft terrain. Every one of these is in that patch: walking on
+ * deepslate, tuff, moss or sculk played stone before this table existed.
+ *
+ * Two shapes, because Minecraft has two asset layouts and never finished
+ * migrating. The six above live in the ORIGINAL flat tree (`step/grass1.ogg`),
+ * and so does wool, under its pre-1.13 name `cloth`. Everything added since
+ * 1.16 lives under `block/<family>/step1.ogg` with breaks called `break`
+ * rather than `dig`. `flat`/`dir` is which of the two a family uses; the
+ * emitted name is the same either way, so the manifest contract is unchanged.
+ *
+ * NOT the whole SoundType list. src/sounds.js maps every block to its real
+ * family -- about forty of them -- and the ones absent here resolve through
+ * that table's `from` chain to the nearest family that IS built. Extracting
+ * all forty would roughly quadruple the sample count, and test/helpers/audio.js
+ * decodes and fingerprints every sample in the manifest once per run. These
+ * are the families the terrain actually walks on, plus wool, which is sixteen
+ * blocks in the inventory and is one flat copy away.
+ *
+ * Rejected: reading the file lists out of `minecraft/sounds.json` (it is in
+ * the asset index, and it is where sounds.js's volume numbers are cited from)
+ * instead of naming directories here. It would be more faithful -- it knows
+ * that block.ancient_debris.step IS block/basalt/step* -- and it would make
+ * the build depend on parsing a second format for a handful of paths that
+ * have not moved since 1.16.
+ */
+const VANILLA_ONLY = {
+  cloth: { flat: 'cloth' },      // SoundType.WOOL. Renamed in-game, not on disk.
+  deepslate: { dir: 'deepslate' },
+  tuff: { dir: 'tuff' },
+  moss: { dir: 'moss' },
+  sculk: { dir: 'sculk' },
+  calcite: { dir: 'calcite' },
+  amethyst: { dir: 'amethyst' },
+  basalt: { dir: 'basalt' },
+}
 
 /*
  * The sounds with no block behind them: sample set -> the asset paths vanilla's
@@ -386,11 +428,27 @@ function fromVanilla() {
     return existsSync(blob) ? blob : null
   }
 
+  /*
+   * `source(kind, i)` is the only thing that differs between a flat family and
+   * a modern one, so the counting loop is written once. It still counts upward
+   * until a miss rather than trusting a number: the counts are not uniform
+   * (grass has six steps, gravel four, sand five, amethyst fourteen) and an
+   * index entry is not a promise the launcher has fetched the file.
+   */
+  const families = [
+    ...GROUPS.map(g => [g, (kind, i) => `${kind}/${g}${i}`]),
+    ...Object.entries(VANILLA_ONLY).map(([g, where]) => [g, where.flat
+      ? (kind, i) => `${kind}/${where.flat}${i}`
+      // `dig` is this project's name for the set; on disk the modern layout
+      // calls the same recordings `break`.
+      : (kind, i) => `block/${where.dir}/${kind === 'dig' ? 'break' : 'step'}${i}`]),
+  ]
+
   for (const kind of KINDS) {
-    for (const group of GROUPS) {
+    for (const [group, source] of families) {
       let n = 0
       for (let i = 1; i <= MAX_VARIANTS; i++) {
-        const blob = blobFor(`minecraft/sounds/${kind}/${group}${i}.ogg`)
+        const blob = blobFor(`minecraft/sounds/${source(kind, i)}.ogg`)
         // The numbering is contiguous, so the first gap IS the end of the
         // group. Continuing past it would let a hole in the middle go
         // unnoticed.
@@ -473,6 +531,44 @@ for (const [set, paths] of Object.entries(manifest.sets)) {
   console.log(`  ${set.padEnd(9)} x${paths.length}  ${paths.join(' ')}`)
 }
 if (missing.length) console.log(`  no sample for: ${missing.join(', ')}`)
+
+/*
+ * The drift check, and the reason this import exists.
+ *
+ * A block src/sounds.js cannot classify does not crash and does not go silent
+ * -- it plays stone, the way all 634 unmapped blocks did before that table
+ * was written. Which is precisely why it has to fail HERE: the symptom is a
+ * world that sounds slightly wrong, and nobody files that as a bug.
+ *
+ * Fatal rather than a warning. The world was shipped for weeks with leaves
+ * that sounded like flagstone because nothing anywhere said so out loud.
+ */
+const unmapped = unmappedBlocks()
+if (unmapped.length) {
+  throw new Error(
+    `${unmapped.length} block(s) in blocks.js have no SoundType family in ` +
+    `src/sounds.js and would play stone: ${unmapped.join(', ')}`)
+}
+
+/*
+ * Every family a block can be mapped to has to END somewhere this build
+ * produced, or those blocks are silent rather than approximate. Walking the
+ * `from` chain here is what lets sounds.js name families the build has never
+ * heard of (metal, glass, honey) without that being a bug waiting to happen.
+ */
+const unreachable = Object.keys(SOUND_GROUPS).filter(group => {
+  let g = group
+  for (let i = 0; g && i < 8; i++) {
+    if (manifest.groups[g]) return false
+    g = SOUND_GROUPS[g].from
+  }
+  return true
+})
+if (unreachable.length) {
+  throw new Error(`sound families with no built samples to fall back to: ${unreachable.join(', ')}`)
+}
+console.log(`  ${Object.keys(SOUND_GROUPS).length} SoundType families mapped, ` +
+  `${Object.keys(manifest.groups).length} built, 0 blocks unmapped`)
 
 if (source === 'vanilla') {
   console.log('\n  These are Mojang assets. Fine on your own machine; do NOT')
