@@ -178,8 +178,8 @@ function paintRow(icons, value, layer = 'fill', suffix = '') {
  *   1. For 20 ticks after damage, the hearts you just lost keep being drawn
  *      in a washed-out variant and the containers switch to their white
  *      outline, both toggling on and off every 3 ticks.
- *   2. Below 4 half-hearts, every heart jitters one pixel down or not, a new
- *      draw of the coin each tick.
+ *   2. At 4 half-hearts or less -- two hearts -- every heart jitters one pixel
+ *      down or not, a fresh draw of the coin each tick.
  *   3. A regeneration wave -- deliberately absent, see REGEN below.
  *
  * The lagging value in (1) is the point of the whole effect: vanilla holds
@@ -188,7 +188,7 @@ function paintRow(icons, value, layer = 'fill', suffix = '') {
  * ------------------------------------------------------------------ */
 
 /*
- * Vanilla's own names for these, so the code above can be read against the
+ * Vanilla's own names for these, so the code below can be read against the
  * decompile: healthUpdateCounter (BLINK_TICKS), the /3 %2 alternation, and
  * the 1000 ms after which lastPlayerHealth catches up.
  *
@@ -202,6 +202,10 @@ function paintRow(icons, value, layer = 'fill', suffix = '') {
  */
 export const BLINK_TICKS = 20
 const BLINK_HALF_PERIOD = 3
+const SETTLE_MS = 1000
+const TICK_MS = 50
+/** `if (i <= 4)` -- ceil(health) in HALF hearts, so two hearts, not five. */
+const JITTER_BELOW = 4
 
 /**
  * Is the flash lit, with `left` ticks still to run on the counter?
@@ -217,10 +221,6 @@ const BLINK_HALF_PERIOD = 3
  */
 export const heartFlashOn = (left) =>
   left > 0 && Math.floor(left / BLINK_HALF_PERIOD) % 2 === 1
-const SETTLE_MS = 1000
-const TICK_MS = 50
-/** `if (i <= 4)` -- ceil(health) in HALF hearts, so two hearts, not five. */
-const JITTER_BELOW = 4
 
 /*
  * java.util.Random, forty-eight bits of it, because the jitter is not "some
