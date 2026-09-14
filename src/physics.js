@@ -148,6 +148,14 @@ export const MC = {
 // Calibrated, not derived. See the comment at its use site.
 const JUMP_IMPULSE = 9.585
 
+/*
+ * The fastest a sprint jump can launch you: a steady sprint plus one boost.
+ * Derived from the two table entries either side of it, and the ceiling the
+ * boost is clamped to. See the long comment at its use site for why a chain
+ * of hops needs a ceiling at all.
+ */
+const SPRINT_JUMP_LAUNCH = MC.SPRINT_SPEED + MC.SPRINT_JUMP_BOOST
+
 export function installPhysics(noa) {
   // noa's global gravity, not the engine option, so the number stays next to
   // the comment explaining where it came from.
@@ -469,6 +477,54 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
      * step earlier in this very tick (entity systems run before the tick
      * event), so the boost lands on exactly the ticks an impulse does -- once
      * per ground contact, because the next tick is airborne.
+     *
+     * THAT EQUIVALENCE WAS RE-VERIFIED against noa 0.33 while chasing the
+     * hill-jolt below, because it is the thing everyone suspects first and it
+     * is not the bug. receivesInputs (order 20) copies inputs.jump into
+     * move.jumping, movement (order 30) reads it in the same tick, and its
+     * grounded branch clears _isJumping before testing it -- so every grounded
+     * tick with space held starts a brand new noa jump, exactly when this
+     * fires. Traced over staircases of every pitch from 45 degrees to 1-in-5:
+     * the longest run of consecutive grounded-with-jump ticks was 1, every
+     * time. There is nothing to de-duplicate.
+     *
+     * THE CLAMP IS THE FIX, and the jolt is a compounding bug, not a
+     * double-fire one. The boost is an unconditional `+= 4 b/s` on a velocity
+     * that is only ever brought back down by air drag, and air drag needs the
+     * whole hop to do it: a flat-ground hop lands 15 ticks later at 5.60, so
+     * the launch is always 5.60 + 4 = 9.60 and the cycle is a closed loop.
+     * CLIMBING SHORTENS THE HOP. You land on a tread a block higher, a third
+     * of the way through the arc, still carrying 6.05 -- and the next boost
+     * takes you to 10.05, which lands you higher again at 6.28, then 10.28,
+     * then 10.39. Measured on a stone staircase, and the excess over the flat
+     * launch is exactly the jolt: a hop that is visibly faster than the hop
+     * before it, only on a slope, which is precisely the report. The same
+     * mechanism runs away outright in a 2-block-high pocket, where the hop is
+     * six ticks and the chain reached 39 b/s -- seven times sprint speed.
+     *
+     * Minecraft has no clamp and does not need one: its horizontal air drag
+     * is 0.91 per tick, three times fiercer than what noa's movement component
+     * manages against a capped push, so a vanilla chain is back at sprint
+     * speed before the next jump however early it lands. This is that outcome
+     * stated directly. The ceiling is SPRINT_SPEED + SPRINT_JUMP_BOOST -- what
+     * one sprint jump from a steady sprint gives you, both numbers already in
+     * the table -- so it is derived, not tuned, and on flat ground it is a
+     * no-op: the launch there measures 9.605 against a ceiling of 9.612.
+     *
+     * Rejected: Minecraft's own LivingEntity.noJumpDelay, ten ticks of jump
+     * cooldown, which bounds the contact rate at the source and is the more
+     * faithful rule. Ten Minecraft ticks is 0.5 s and noa's flat-ground hop
+     * cycle is fifteen 30 Hz ticks, which is also 0.5 s -- the cooldown would
+     * expire on the exact tick the player lands, so whether hop two keeps its
+     * boost would come down to float residue in the countdown. The regression
+     * guard for the bunny-hop fix is "a boost on every hop"; a rule that
+     * decides that by a rounding error is not worth its extra fidelity.
+     *
+     * Rejected: raising drag to Minecraft's 0.91 so the chain converges on its
+     * own. That is the real difference, but drag is what the flat-ground
+     * 7.34 b/s average is balanced on, and MC.SPRINT_JUMP_BOOST and
+     * JUMP_IMPULSE are both calibrated against it. Changing it re-opens three
+     * numbers to fix one.
      */
     const body = noa.ents.getPhysics(noa.playerEntity).body
     // Not while flying: space is climb there, not jump, and a flier can sit
@@ -480,6 +536,20 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
       const h = move.heading
       body.velocity[0] += Math.sin(h) * MC.SPRINT_JUMP_BOOST
       body.velocity[2] += Math.cos(h) * MC.SPRINT_JUMP_BOOST
+
+      /*
+       * Scaled, not truncated per axis. The boost goes in along the heading
+       * and the velocity being clamped may point somewhere else entirely --
+       * strafing, or coming off a wall -- so clamping x and z independently
+       * would rotate the player's direction of travel as a side effect. One
+       * scalar on both keeps the direction and only takes the magnitude down.
+       */
+      const speed = Math.hypot(body.velocity[0], body.velocity[2])
+      if (speed > SPRINT_JUMP_LAUNCH) {
+        const k = SPRINT_JUMP_LAUNCH / speed
+        body.velocity[0] *= k
+        body.velocity[2] *= k
+      }
     }
 
     if (sneaking) preventWalkingOffEdge(noa)
