@@ -10,13 +10,13 @@ them.
 
 Minecraft-accurate physics, survival HUD and inventory from Minecraft's own
 sprites, mining and placing, day/night on Minecraft's clock, a skinned player
-model with F5 perspectives and crouch, chat, block and damage sounds,
-break/landing/sprint particles, rain and thunder, Fancy 3D clouds, extruded
-item models so tools are visible in hand, shift-click, game modes behind an
-OP-gated authority, crafting (2x2 and 3x3), armor and an offhand, a 355-block
-cube palette on a paged texture atlas plus 280 slabs and stairs for 28
-material families with real sub-voxel collision, and a **208-test browser
-suite** across 19 spec files.
+model with F5 perspectives and crouch, chat, block and damage sounds mapped
+family by family across the whole palette, break/landing/sprint particles,
+rain and thunder, Fancy 3D clouds, extruded item models so tools are visible
+in hand, shift-click, game modes behind an OP-gated authority, crafting (2x2
+and 3x3), armor and an offhand, a 355-block cube palette on a paged texture
+atlas plus 280 slabs and stairs for 28 material families with real sub-voxel
+collision, and a **215-test browser suite** across 20 spec files.
 
 Four things landed since this file was last honest, and they are the reason
 several sections below now read differently:
@@ -47,11 +47,47 @@ measurement helper was fixed twice, the second time to count ticks the engine
 ran rather than seconds the laptop burned, which is what made the numbers in
 `README.md` reproducible.
 
-**In flight at the time of writing:** two concurrent changes this file has not
-seen the results of, one to `src/physics.js` and its specs, one to
-`src/sounds.js` and the sound build. Anything below that turns on a physics
-constant or a sound count is stated as of `dfee897` and should be re-checked
-against whatever those landed.
+Two more have landed since, the pair this file last recorded as in flight.
+
+- **Every block has its own sound now.** `src/sounds.js` carried four mappings
+  — grass, dirt, gravel, planks — and a stone default for the other 634, which
+  was honest when the world was six block types and stopped being honest the
+  day it became a patch of real terrain. Leaves, logs, moss, sculk, deepslate,
+  snow and packed ice all sounded like flagstone. It is ordered rules now,
+  matched against the naming conventions `blocks.js` already generates from,
+  so every one of the 638 registered blocks resolves — into 41 SoundType
+  families, plus a deliberate null for water and lava, which have their own
+  events in `fluids.js`. Slabs and stairs inherit from the cube they were
+  built out of, so a new non-cube family is mapped the day it is declared. The
+  part that keeps it true is that stone is enumerated rather than left as a
+  catch-all: `unmappedBlocks()` names anything no rule claims, and both
+  `scripts/build-sounds.mjs` and `test/12-sounds.spec.js` refuse to pass while
+  that list is non-empty. A world that sounds slightly wrong is not something
+  anyone files as a bug, so it has to fail at build time instead.
+- **The sprint-jump jolt on slopes is fixed.** Sprint-jumping uphill jolted
+  you forward, and the obvious suspect — the boost firing more than once per
+  ground contact, since `S.jump && grounded` is a level and not a rising edge
+  — was traced tick by tick over staircases and is not it. noa clears
+  `_isJumping` in its own grounded branch before testing it, so one ground
+  contact is exactly one boost. The boost COMPOUNDS instead: it is an
+  unconditional +4 b/s that only air drag takes back, and taking it back needs
+  a whole hop. Climbing cuts the hop short — you land on a tread a block
+  higher, still carrying speed — so the next boost stacks on the remainder.
+  Flat ground closes the loop at 9.60 every hop; a staircase escalates 10.05
+  → 10.28 → 10.39, and a two-block-high pocket reached 39 b/s. The launch is
+  clamped to `SPRINT_SPEED + SPRINT_JUMP_BOOST` = 9.612, which is what one
+  sprint jump from a steady sprint gives you — read off the table rather than
+  tuned, and bit-identical to the old build on the flat.
+  `test/20-slope-jump.spec.js` builds the staircase the world does not have.
+
+One thing worth separating from that first bullet, because it is a different
+fix wearing the same symptom: the local sound build is on the **vanilla** set
+rather than the free substitutes (`public/sounds/.source` reads `vanilla`),
+which is what put the grass footsteps back and restored the two hurt samples
+the free set is missing. That build now extracts 149 samples across 14
+families where it extracted 62 across 6. None of it changes the deployed
+build, which is still the free set and still sounds as it did, minus the
+leaves-are-stone bug — see `docs/DEPLOYMENT.md`.
 
 ## Next, in the order I'd take them
 
@@ -105,7 +141,10 @@ on effort.
    exactly this and inflates its own `maxSpeed` to compensate — the correction
    exists in this codebase, in one place, and `physics.js` does not use it.
    Held back deliberately: it changes a calibrated constant, so it is Evan's
-   call whether the suite's measured numbers should move.
+   call whether the suite's measured numbers should move. The sprint-jump
+   clamp landed in this same file and deliberately did not touch it — the
+   clamp states a ceiling the existing constants already imply, where this
+   would move the constants themselves.
 6. **Spawn is under a closed canopy and can see none of what it was picked
    for.** `pickSpawn` in `scripts/build-terrain.mjs` scored candidate columns
    on biomes and peak height "in sight", and the manifest duly records four
@@ -120,6 +159,19 @@ on effort.
    test and re-run the spawn pick, which touches no game code; the alternative
    is to clear a glade by hand once the island has a layout, which has to
    happen anyway.
+
+   **And the patch itself is not settled.** Evan has said he does not love
+   this terrain and may want to revisit it, and the machinery makes that
+   cheap: `docs/TERRAIN.md` records the runner-up, seed 987654321 at
+   (-160, 128) — denser forest, better biome balance, 28 blocks of relief and
+   no mountain — and swapping to it is one `npm run terrain` away. The only
+   hand-maintained consequences are three constants at the top of
+   `island.js` — `PATCH_ORIGIN_X`, `PATCH_ORIGIN_Z` and `SURFACE_Y`, which
+   the scan prints and which nothing else duplicates, since the twelve spec
+   files that care import `SURFACE_Y` rather than writing 136. So do not read
+   the spawn problem as "fix the pick". Read it as: the pick and the patch
+   are both still open, and both are cheap while the island is empty. They
+   stop being cheap the moment content is authored onto specific blocks.
 7. **A credits surface — blocks deployment, not optional.** Confirmed still
    accurate. Pixel Perfection CE is CC BY-SA 4.0, Monocraft is SIL OFL 1.1,
    and the sound set is a mix of CC0, CC BY and CC BY-SA; all of them except
@@ -177,6 +229,11 @@ decision.
    sidestep in `DEPLOYMENT.md` — an original generator tuned to look like the
    scored patch — is the version of this with no licence question at all, and
    it is a real project rather than an afternoon.
+
+   The related question to settle in the same sitting is **which patch**. Evan
+   has said he does not love this terrain, and both the re-pick and the
+   re-score of spawn (item 6) cost one pipeline run and three constants while
+   the island is empty, and cost a rebuild of the island once it is not.
 2. **Content on the island.** Blocked on nothing technical, and it is the
    whole point. Everything else on this list makes the world more elaborate;
    only this makes it worth visiting. The authoring story is in "Also worth

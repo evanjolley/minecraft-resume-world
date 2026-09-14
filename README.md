@@ -62,7 +62,20 @@ a web server do.
     npm run sounds           # rebuild whichever of those is already installed
 
 `sounds:vanilla` is the higher-fidelity build the same way `textures:vanilla`
-is, and for the same reason it can never be committed or deployed.
+is, and for the same reason it can never be committed or deployed. It is also
+a wider one now: it extracts 149 samples across 14 sound families where the
+free set produces 42 across 6.
+
+Which sound a block makes is decided in `src/sounds.js`, by ordered rules
+against block names rather than a table of rows -- `blocks.js` generates most
+of its 638 blocks, so a hand-written table would be wrong one commit after it
+was written. Every block resolves to one of Minecraft's SoundType families,
+slabs and stairs inherit from the cube they were built from, and stone is
+enumerated rather than left as a catch-all: a block no rule claims fails the
+sound build and fails `test/12-sounds.spec.js` instead of quietly sounding
+like rock. Families the installed set does not carry fall back through a
+`from` chain to one it does, which is how the free set plays six families
+without any block going silent.
 
 ## Minecraft fidelity
 
@@ -155,7 +168,7 @@ reading a resume plot shouldn't starve while doing it.
 Not yet done: resume content (the whole point -- the world is still empty),
 multiplayer presence, and deployment.
 
-The browser suite is 208 tests across 19 spec files, run with `npm test`. It
+The browser suite is 215 tests across 20 spec files, run with `npm test`. It
 drives a real Chromium against a real engine rather than mocking noa, which is
 why it takes minutes rather than seconds and why it catches the things that
 only go wrong once Babylon is involved.

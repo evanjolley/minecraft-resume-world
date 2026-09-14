@@ -188,7 +188,11 @@ breaking.
 ### Coverage, honestly
 
 The free set is 42 files and 402KB committed, producing 42 samples and 441KB
-built. Vanilla produces 62. Where they differ:
+built. Vanilla now produces 149, across 14 families rather than 6 -- the block
+-> SoundType mapping in `src/sounds.js` stopped being four rows and a stone
+default, and the vanilla build grew the eight families the terrain is actually
+made of (deepslate, tuff, moss, sculk, calcite, amethyst, basalt, plus wool).
+Where the two sets differ, on the six families they share:
 
 | | vanilla | free |
 |---|---|---|
@@ -196,6 +200,15 @@ built. Vanilla produces 62. Where they differ:
 | `dig` variants | 4 per group | 3/3/3/3/2/4 |
 | `hurt` | 3 samples | **1** |
 | everything else | 1 each | 1 each |
+
+**The free set did not shrink and did not change what it plays.** The eight new
+families exist only in a vanilla build; a block mapped to one the build did not
+produce resolves through `SOUND_GROUPS`' `from` chain to the nearest family
+that it did, and the build fails if any family cannot reach one. So a free
+deploy still plays six families and still sounds as it did -- minus the bug it
+shared with vanilla, where leaves, logs, moss and packed ice all played stone.
+Only the SAMPLES fall back; the volume and pitch stay with the mapped family,
+which is why an iron block rings rather than thudding.
 
 Fewer footstep variants is audible as more repetition and nothing worse. The
 single hurt sample is the one real gap: `sounds.js` applies vanilla's
@@ -431,8 +444,8 @@ From a clean `git clone` of `main` into an empty directory, on Node 24:
   22 UI sprites present. The 917-file, 1,928,929-byte figure predates both
   `dist/sounds/` and the terrain work; re-measure rather than quote it.
 - `npm run test` — the whole suite, `test/12-sounds.spec.js` included. That
-  file could not run at all before the free sound set existed. 208 tests
-  across 19 spec files at `dfee897`.
+  file could not run at all before the free sound set existed. 215 tests
+  across 20 spec files at `4db014f`.
 - `wrangler deploy --dry-run` — config parses, asset directory resolves,
   993 entries read, no bindings. Nothing was uploaded and no account was
   authenticated.
