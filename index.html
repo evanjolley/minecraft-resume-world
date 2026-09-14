@@ -95,7 +95,12 @@
        and removes it entirely at zero points -- hud.js does the removing. */
     #armor-row { display: flex; width: 100%; }
     .icon-slot { position: absolute; top: 0; }
-    .icon-slot .fill { z-index: 1; }
+    /* Three layers in one 9x9 cell, bottom to top: the container, the pale
+       "you just lost this" heart, the live heart. hud.js sets `top` on the
+       slot during the low-health jitter -- it writes 0 the rest of the time,
+       so the resting row is still exactly this rule's `top: 0`. */
+    .icon-slot .blink { z-index: 1; }
+    .icon-slot .fill { z-index: 2; }
     #xp-row { position: relative; display: flex; align-items: center;
       justify-content: center; }
     #xp-bar { position: relative; background-repeat: no-repeat; background-size: 100% 100%;

@@ -596,7 +596,42 @@ async function uiFromAtlases(dir) {
       await sharp(file).extract({ left, top, width, height }).png().toFile(ui(name))
     }
   }
+  await deriveBlinkHearts()
   console.log(`  sliced ${Object.values(UI_ATLAS_CROPS).reduce((n, c) => n + Object.keys(c).length, 0)} UI sprites from atlases`)
+}
+
+/*
+ * The damage-flash hearts, for the atlas path only.
+ *
+ * Legacy icons.png HAS slots for them -- u=25 for the blinking container, 70
+ * and 79 for the pale full and half heart, which is where 1.8's
+ * `16 + k3 * 9` and `j6 + 54 / + 63` land. CE fills all three with a byte-for-
+ * byte copy of the unhighlighted sprite (checked: the 9x9 crops hash equal),
+ * so slicing them would build a flash you cannot see. They are derived here
+ * instead.
+ *
+ * One formula for all three: lerp every opaque pixel 60% toward white. That is
+ * not a guess -- it reproduces vanilla's blinking heart red exactly
+ * (19 -> 161, and 255 stays 255). Where it falls short is the container, whose
+ * black outline vanilla replaces with pure white and this lands on grey. A
+ * second hand-tuned rule for one sprite in a fallback path was not worth it;
+ * grey on black still reads as a flash.
+ */
+async function deriveBlinkHearts() {
+  for (const [from, to] of [
+    ['heart_empty', 'heart_empty_blink'],
+    ['heart_full', 'heart_full_blink'],
+    ['heart_half', 'heart_half_blink'],
+  ]) {
+    const img = sharp(ui(from)).ensureAlpha()
+    const { data, info } = await img.raw().toBuffer({ resolveWithObject: true })
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] === 0) continue
+      for (let c = 0; c < 3; c++) data[i + c] = Math.round(data[i + c] + (255 - data[i + c]) * 0.6)
+    }
+    await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+      .png().toFile(ui(to))
+  }
 }
 
 async function uiFromVanilla(jar, tmp) {
@@ -605,6 +640,15 @@ async function uiFromVanilla(jar, tmp) {
     hotbar: 'gui/sprites/hud/hotbar', hotbar_selection: 'gui/sprites/hud/hotbar_selection',
     heart_full: 'gui/sprites/hud/heart/full', heart_half: 'gui/sprites/hud/heart/half',
     heart_empty: 'gui/sprites/hud/heart/container',
+    /*
+     * The damage flash. Vanilla ships these as real art, not as a tint: the
+     * container's outline is white instead of black, and the heart is a washed
+     * red (255,19,19 -> 255,161,161). Extracting them is why the flash reads
+     * as Minecraft's rather than as a CSS filter's.
+     */
+    heart_empty_blink: 'gui/sprites/hud/heart/container_blinking',
+    heart_full_blink: 'gui/sprites/hud/heart/full_blinking',
+    heart_half_blink: 'gui/sprites/hud/heart/half_blinking',
     food_full: 'gui/sprites/hud/food_full', food_half: 'gui/sprites/hud/food_half',
     food_empty: 'gui/sprites/hud/food_empty',
     xp_bg: 'gui/sprites/hud/experience_bar_background',

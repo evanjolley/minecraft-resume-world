@@ -115,7 +115,7 @@ function spriteEl(src, w, h) {
  * how you get a player who looks dead and isn't. Minecraft rounds the icon
  * up for exactly this reason.
  */
-function iconRow(container, count, kind, rightToLeft) {
+function iconRow(container, count, kind, rightToLeft, withBlink = false) {
   const icons = []
   for (let i = 0; i < count; i++) {
     const wrap = document.createElement('div')
@@ -126,28 +126,186 @@ function iconRow(container, count, kind, rightToLeft) {
     wrap.style.left = px(rightToLeft ? (count - 1 - i) * 8 : i * 8)
 
     const empty = spriteEl(`/ui/${kind}_empty.png`, 9, 9)
+    /*
+     * The pale "blinking" heart, drawn BETWEEN the container and the live
+     * heart. Only the health row asks for it. It is a third layer rather than
+     * a swap of `fill`'s image because vanilla genuinely draws two hearts in
+     * the same 9x9 cell during the flash -- the lagging one underneath and the
+     * live one on top -- and the live one has to win where both exist.
+     */
+    const blink = withBlink ? spriteEl(`/ui/${kind}_full_blink.png`, 9, 9) : null
+    if (blink) { blink.classList.add('blink'); blink.style.opacity = '0' }
     const fill = spriteEl(`/ui/${kind}_full.png`, 9, 9)
     fill.classList.add('fill')
-    wrap.append(empty, fill)
+    wrap.append(empty, ...(blink ? [blink] : []), fill)
     container.appendChild(wrap)
-    icons.push({ fill, kind })
+    icons.push({ wrap, empty, blink, fill, kind })
   }
   return icons
 }
 
-function paintRow(icons, value) {
-  icons.forEach(({ fill, kind }, i) => {
+/**
+ * @param layer   which sprite in the cell to paint -- 'fill' is the live row,
+ *   'blink' the pale one underneath it.
+ * @param suffix  sprite-name suffix, so the same full/half/empty decision
+ *   drives `heart_full.png` and `heart_full_blink.png` from one place.
+ */
+function paintRow(icons, value, layer = 'fill', suffix = '') {
+  icons.forEach((icon, i) => {
+    const el = icon[layer]
+    if (!el) return
     const points = value - i * 2
     if (points >= 2) {
-      fill.style.backgroundImage = `url(/ui/${kind}_full.png)`
-      fill.style.opacity = '1'
+      el.style.backgroundImage = `url(/ui/${icon.kind}_full${suffix}.png)`
+      el.style.opacity = '1'
     } else if (points > 0) {
-      fill.style.backgroundImage = `url(/ui/${kind}_half.png)`
-      fill.style.opacity = '1'
+      el.style.backgroundImage = `url(/ui/${icon.kind}_half${suffix}.png)`
+      el.style.opacity = '1'
     } else {
-      fill.style.opacity = '0'
+      el.style.opacity = '0'
     }
   })
+}
+
+/* ------------------------------------------------------------------ *
+ * The damage animation, from Gui.renderPlayerStats.
+ *
+ * Losing health without any of this reads as a number going down. Three
+ * separate things in vanilla make a hit read as a hit, and all three are
+ * driven by ONE integer -- Minecraft's tick counter -- which is why they are
+ * in one place here:
+ *
+ *   1. For 20 ticks after damage, the hearts you just lost keep being drawn
+ *      in a washed-out variant and the containers switch to their white
+ *      outline, both toggling on and off every 3 ticks.
+ *   2. Below 4 half-hearts, every heart jitters one pixel down or not, a new
+ *      draw of the coin each tick.
+ *   3. A regeneration wave -- deliberately absent, see REGEN below.
+ *
+ * The lagging value in (1) is the point of the whole effect: vanilla holds
+ * the PRE-hit health for a second and flashes those hearts, so you see what
+ * you lost rather than just what you have left.
+ * ------------------------------------------------------------------ */
+
+/*
+ * Vanilla's own names for these, so the code above can be read against the
+ * decompile: healthUpdateCounter (BLINK_TICKS), the /3 %2 alternation, and
+ * the 1000 ms after which lastPlayerHealth catches up.
+ *
+ * NOT implemented: vanilla's `else if (i > playerHealth && hurtResistantTime
+ * > 0)` branch, which blinks for 10 ticks when you are HEALED during
+ * invulnerability frames. That gate is the whole point of it -- it fires for
+ * an instant-health potion landing on top of a hit, not for ordinary regen --
+ * and this world has neither potions nor i-frames. Adding the branch without
+ * the gate would make the four-second food regen flash the bar, which vanilla
+ * never does.
+ */
+export const BLINK_TICKS = 20
+const BLINK_HALF_PERIOD = 3
+
+/**
+ * Is the flash lit, with `left` ticks still to run on the counter?
+ *
+ * Pulled out as a pure function of one integer because that is exactly what it
+ * is, and because it is the only part of this animation whose timing a test
+ * can pin honestly: the DOM only changes as fast as the page renders, and the
+ * headless browser the suite runs in manages about seven frames a second --
+ * far too coarse to measure a 150 ms pulse off the screen.
+ *
+ * Over the 20 ticks it yields three three-tick pulses, at 17..15, 11..9 and
+ * 5..3. Call it 150-300 ms, 450-600 ms and 750-900 ms after the hit.
+ */
+export const heartFlashOn = (left) =>
+  left > 0 && Math.floor(left / BLINK_HALF_PERIOD) % 2 === 1
+const SETTLE_MS = 1000
+const TICK_MS = 50
+/** `if (i <= 4)` -- ceil(health) in HALF hearts, so two hearts, not five. */
+const JITTER_BELOW = 4
+
+/*
+ * java.util.Random, forty-eight bits of it, because the jitter is not "some
+ * noise" -- it is `rand.setSeed(updateCounter * 312871)` then one nextInt(2)
+ * per heart, drawn high index to low. Reseeding from the tick is what makes
+ * the row change once per TICK rather than once per rendered frame, and a
+ * Math.random() per heart per frame is visibly faster and mushier than the
+ * real thing.
+ *
+ * Two details that look like typos and are not. The seed is an INT
+ * multiplication in Java, so it wraps at 2^31 (hence Math.imul) and is then
+ * sign-extended into a long. And nextInt(2) on a power of two reduces to the
+ * top bit of next(31), which is bit 47 of the state -- no rejection loop.
+ */
+const LCG_MULT = 0x5DEECE66Dn
+const LCG_MASK = (1n << 48n) - 1n
+
+function tickCoinFlips(tick) {
+  let s = (BigInt.asUintN(64, BigInt(Math.imul(tick, 312871))) ^ LCG_MULT) & LCG_MASK
+  return () => {
+    s = (s * LCG_MULT + 0xBn) & LCG_MASK
+    return Number((s >> 47n) & 1n)
+  }
+}
+
+/**
+ * Builds the per-tick painter for the health row. Closes over the three
+ * pieces of state vanilla keeps as fields on Gui.
+ *
+ * @returns (health, tick, nowMs) -> void
+ */
+function heartAnimation(hearts) {
+  let displayHealth = MAX_HEALTH   // vanilla lastPlayerHealth: the lagging one
+  let prevHealth = MAX_HEALTH      // vanilla playerHealth: strictly last frame
+  let blinkUntilTick = -1          // vanilla healthUpdateCounter
+  /*
+   * -Infinity, not 0. Vanilla's lastSystemTime starts at 0 against a
+   * wall-clock millisecond count, so its `now - lastSystemTime > 1000` is true
+   * from the first frame and displayHealth simply tracks health until
+   * something hits you. performance.now() starts near zero instead, so a
+   * literal 0 here would hold displayHealth stale for the first second of the
+   * page -- during boot, where a fall onto the island is entirely possible.
+   */
+  let settledAt = -Infinity
+
+  return (health, tick, nowMs) => {
+    const h = Math.ceil(health)
+
+    /*
+     * Read the flag BEFORE updating the counter, exactly as vanilla does. It
+     * means the frame that takes the hit is not yet blinking; the flash starts
+     * on the next one. Computing it after would make the first half-period
+     * one tick short.
+     */
+    const blinking = heartFlashOn(blinkUntilTick - tick)
+
+    if (h < prevHealth) {
+      settledAt = nowMs
+      blinkUntilTick = tick + BLINK_TICKS
+    }
+    if (nowMs - settledAt > SETTLE_MS) {
+      displayHealth = h
+      settledAt = nowMs
+    }
+    prevHealth = h
+
+    // The containers. Vanilla swaps the sprite, it does not tint.
+    const container = `url(/ui/heart_empty${blinking ? '_blink' : ''}.png)`
+    for (const icon of hearts) icon.empty.style.backgroundImage = container
+
+    // The hearts you had a moment ago, pale, under the ones you have now.
+    paintRow(hearts, blinking ? displayHealth : 0, 'blink', '_blink')
+
+    /*
+     * The jitter. Applied as an inline `top` in GUI pixels, which is zero at
+     * rest -- the row's resting position is the stylesheet's `top: 0` either
+     * way, so nothing here can shift the HUD grid when the animation is off.
+     * Descending, because that is the order vanilla draws in and therefore the
+     * order it consumes the random sequence in.
+     */
+    const flip = tickCoinFlips(tick)
+    for (let i = hearts.length - 1; i >= 0; i--) {
+      hearts[i].wrap.style.top = px(h <= JITTER_BELOW ? flip() : 0)
+    }
+  }
 }
 
 /*
@@ -301,7 +459,7 @@ export function installHUD(noa, { inventory, survival }) {
   heartsEl.style.height = hungerEl.style.height = px(9)
   heartsEl.style.width = hungerEl.style.width = px(9 + 8 * (MAX_HEALTH / 2 - 1))
 
-  const hearts = iconRow(heartsEl, MAX_HEALTH / 2, 'heart', false)
+  const hearts = iconRow(heartsEl, MAX_HEALTH / 2, 'heart', false, true)
   // Minecraft fills the food bar from the right edge inward.
   const food = iconRow(hungerEl, MAX_FOOD / 2, 'food', true)
 
@@ -317,8 +475,40 @@ export function installHUD(noa, { inventory, survival }) {
 
   const paintAir = airRow(hud)
 
+  /*
+   * REGEN: vanilla's travelling bob (`if (i6 == l2) j4 -= 2`, where l2 is
+   * `updateCounter % ceil(maxHealth + 5)` -- 25 ticks for 20 health) is gated
+   * on `isPotionActive(Potion.regeneration)`, the POTION, not on healing. This
+   * world has no effects system, so wiring the wave to survival.js's food
+   * regen would be a bob vanilla never shows. Left out rather than
+   * approximated; it is four lines the day effects exist.
+   */
+  const animateHearts = heartAnimation(hearts)
+  /*
+   * Per FRAME, with the tick number re-derived from the wall clock rather
+   * than counted. Both halves of that are deliberate.
+   *
+   * Per frame because that is where vanilla does it -- renderPlayerStats is
+   * called from the HUD render, not from the game tick, and it reads
+   * updateCounter rather than advancing it. On noa's 30 Hz 'tick' instead, the
+   * flash arrived up to a tick late and, worse, paints landed in bursts
+   * whenever the render loop fell behind: the first pulse measured 290 ms in
+   * from a hit rather than Minecraft's 150.
+   *
+   * Derived from the clock because counting handler calls would run the whole
+   * animation at whatever rate this machine happens to render at, which is the
+   * kind of thing that looks fine on the machine it was written on.
+   */
+  const bootedAt = performance.now()
+  let health = MAX_HEALTH
+  noa.on('beforeRender', () => {
+    const now = performance.now()
+    animateHearts(health, Math.floor((now - bootedAt) / TICK_MS), now)
+  })
+
   survival.onChange((s) => {
     paintAir(s.air)
+    health = s.health
     paintRow(hearts, s.health)
     paintRow(food, s.food)
     xpFill.style.width = px(HOTBAR_W * s.xpProgress)
