@@ -39,6 +39,17 @@ export function createSurvival(noa, {
     xpLevel: 0,
     xpProgress: 0, // 0..1 across the current level
     dead: false,
+    /*
+     * Air, in TICKS, because that is the unit Minecraft counts it in and the
+     * unit every rule about it is stated in -- 300 max, one per tick under
+     * water, four per tick back. The HUD divides by 30 to get bubbles; storing
+     * bubbles here instead would make the 20-tick grace period below
+     * unrepresentable, which is the same mistake as storing hearts instead of
+     * half-hearts.
+     */
+    air: MC.AIR_TICKS,
+    /** Whether the fire overlay should be drawn. Seconds remaining is private. */
+    burning: false,
   }
 
   const listeners = new Set()
@@ -87,6 +98,12 @@ export function createSurvival(noa, {
     state.food = MAX_FOOD
     state.saturation = 5
     state.dead = false
+    // Air and fire are part of "back to a fresh player" for the same reason
+    // health is. Leaving them out is how a test that drowned leaks an empty
+    // breath meter into the next one.
+    airTicks = MC.AIR_TICKS
+    state.air = MC.AIR_TICKS
+    state.extinguish()
     changed()
   }
 
@@ -163,6 +180,123 @@ export function createSurvival(noa, {
     hurt.emit({ amount: MAX_HEALTH, health: 0, cause: 'command' })
     died.emit({ cause: 'command' })
   }
+
+  /* ------------------------------------------------------------------ *
+   * Breath, drowning and burning.
+   *
+   * These are DRIVEN, not self-sensing: fluids.js decides every tick whether
+   * the eyes are under water and whether the feet are in lava, and calls in.
+   * The alternative -- survival sampling blocks itself -- would put a second
+   * answer to "am I in water" in the codebase, and the two would disagree the
+   * first time either changed.
+   * ------------------------------------------------------------------ */
+
+  /*
+   * The live counter, which goes NEGATIVE. `state.air` is the clamped copy the
+   * HUD paints; this is the real one, because the twenty ticks below zero are
+   * exactly the grace period between the bar emptying and the first hit.
+   */
+  let airTicks = MC.AIR_TICKS
+
+  /**
+   * @param secs        elapsed time
+   * @param submerged   whether the EYES are in water. Not the feet: standing
+   *   chest-deep in a pond slows you down and does not drown you, and vanilla
+   *   tests isEyeInFluid for exactly this.
+   */
+  state.breathe = (secs, submerged) => {
+    if (state.dead) return
+    const ticks = secs * MC.TICKS_PER_SECOND
+    const before = airTicks
+
+    if (!submerged) {
+      if (airTicks >= MC.AIR_TICKS) return
+      airTicks = Math.min(MC.AIR_TICKS, airTicks + ticks * MC.AIR_REFILL_PER_TICK)
+    } else {
+      airTicks -= ticks
+      /*
+       * Vanilla hurts you at exactly -20 and then sets the counter back to 0,
+       * NOT to -20. That reset is what makes drowning one hit per second
+       * rather than one per tick, and it is the only reason this reads as a
+       * comparison against a negative number instead of against zero.
+       */
+      if (airTicks <= -MC.DROWN_GRACE_TICKS) {
+        airTicks = 0
+        state.damage(MC.DROWN_DAMAGE, 'drown')
+      }
+    }
+
+    /*
+     * Rounded, because Minecraft's air supply is an INTEGER tick count and
+     * this one is accumulated from a floating-point dt. Without it a meter
+     * that has just refilled reads 299.9999999 and the HUD draws nine and a
+     * half bubbles at a full breath.
+     */
+    state.air = Math.max(0, Math.round(airTicks))
+    if (before !== airTicks) changed()
+  }
+
+  /*
+   * Fire, in seconds remaining. Minecraft counts it in ticks and hurts you on
+   * every twentieth, which is a modulo on a countdown; a countdown plus a
+   * separate interval timer is the same thing and survives a variable dt,
+   * which noa's tick has and Minecraft's does not.
+   */
+  let fireSeconds = 0
+  let fireTimer = 0
+  let lavaTimer = 0
+
+  /** Minecraft's setSecondsOnFire: it raises the timer, never lowers it. */
+  state.ignite = (seconds) => {
+    if (state.dead) return
+    if (seconds <= fireSeconds) return
+    fireSeconds = seconds
+    state.burning = true
+    changed()
+  }
+
+  state.extinguish = () => {
+    fireSeconds = 0
+    fireTimer = 0
+    lavaTimer = 0
+    if (state.burning) { state.burning = false; changed() }
+  }
+
+  /**
+   * A tick spent in lava. Called by fluids.js for as long as the feet are in
+   * it, which is also what keeps the 15-second burn topped up.
+   */
+  state.lavaBurn = (secs) => {
+    if (state.dead) return
+    state.ignite(MC.BURN_SECONDS)
+    /*
+     * Fire damage is suppressed while you are still in the lava
+     * (`remainingFireTicks % 20 == 0 && !this.isInLava()`), and holding the
+     * fire timer at zero is how that is expressed here -- it can never reach
+     * one second while this is being called every tick. Rejected: a separate
+     * `inLava` flag read by the fire tick below, which would be a frame late
+     * in whichever order the two tick handlers happened to be registered.
+     */
+    fireTimer = 0
+
+    lavaTimer -= secs
+    if (lavaTimer <= 0) {
+      lavaTimer = MC.LAVA_DAMAGE_INTERVAL
+      state.damage(MC.LAVA_DAMAGE, 'lava')
+    }
+  }
+
+  noa.on('tick', (dt) => {
+    if (state.dead || fireSeconds <= 0) return
+    const secs = dt / 1000
+    fireSeconds -= secs
+    fireTimer += secs
+    if (fireTimer >= MC.FIRE_INTERVAL) {
+      fireTimer -= MC.FIRE_INTERVAL
+      state.damage(MC.FIRE_DAMAGE, 'onFire')
+    }
+    if (fireSeconds <= 0) state.extinguish()
+  })
 
   /*
    * Hunger and regeneration, both real Minecraft rules:

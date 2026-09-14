@@ -328,6 +328,19 @@ const CE_SUBSTITUTES = {
   chiseled_bookshelf_empty: sub('bookshelf'),
 
   tinted_glass: sub('black_stained_glass', [210, 210, 210]),
+
+  /*
+   * CE ships no water or lava texture at all -- it is a 1.16 pack built on top
+   * of vanilla for the animated fluids, and animated fluids are the one thing
+   * this atlas cannot carry anyway (one still layer per material, no time).
+   *
+   * Ice stands in for water because it is the only blue-white block texture in
+   * the pack, and it is already blue, so the biome tint in blocks.js is skipped
+   * by the greyscale test and only the forced alpha applies. Magma stands in
+   * for lava unmultiplied: it is the same molten-crust artwork, just cooler.
+   */
+  water_still: sub('ice', [150, 180, 235]),
+  lava_still: sub('magma', [255, 255, 255]),
 }
 
 /* ------------------------------------------------------------------ *
@@ -352,6 +365,13 @@ async function decode(file) {
     .resize(TILE, TILE, { kernel: 'nearest' })
     .ensureAlpha()
     .raw().toBuffer()
+}
+
+/** Force every non-transparent pixel's alpha, in place. Fully transparent
+ *  pixels stay transparent -- a cutout texture must not gain a ghost. */
+function setAlpha(buf, a) {
+  for (let i = 3; i < buf.length; i += 4) if (buf[i] > 0) buf[i] = a
+  return buf
 }
 
 /** Multiply RGB by an 8-bit colour, in place. Alpha is untouched. */
@@ -466,6 +486,11 @@ async function decodeAll(dir, allowSubstitutes) {
     const buf = raw.get(name)
     if (!buf) continue
     if (recipe.tint && chroma(buf) < GREY_ENOUGH_TO_TINT) { multiply(buf, recipe.tint); tinted++ }
+    // A flat alpha, for a material whose translucency is a property of the
+    // BLOCK rather than of the artwork. Vanilla bakes 180 into water_still.png
+    // already, so this is a no-op there and the whole reason it exists is the
+    // substituted sources, which are opaque.
+    if (recipe.alpha !== undefined) setAlpha(buf, recipe.alpha)
     if (recipe.overlay) {
       const over = Buffer.from(raw.get(recipe.overlay))
       if (recipe.overlayTint && chroma(over) < GREY_ENOUGH_TO_TINT) multiply(over, recipe.overlayTint)
@@ -546,6 +571,14 @@ const UI_ATLAS_CROPS = {
     xp_bg: [0, 64, 182, 5], xp_fill: [0, 69, 182, 5],
     // Verified against the vanilla sprites by luminance.
     armor_empty: [16, 9, 9, 9], armor_half: [25, 9, 9, 9], armor_full: [34, 9, 9, 9],
+    /*
+     * Air bubbles. There are only TWO of them, not the three every other row
+     * here has: the legacy sheet ships a full bubble and a bursting one and no
+     * empty container at all, because Minecraft draws nothing where a spent
+     * bubble was. 1.21 kept that -- its air_empty.png exists and is 9x9 of
+     * pure transparency -- so neither source is sliced for one.
+     */
+    air_full: [16, 18, 9, 9], air_bursting: [25, 18, 9, 9],
   },
   inventory: { inventory: [0, 0, 176, 166] },
 }
@@ -573,6 +606,8 @@ async function uiFromVanilla(jar, tmp) {
     food_empty: 'gui/sprites/hud/food_empty',
     xp_bg: 'gui/sprites/hud/experience_bar_background',
     xp_fill: 'gui/sprites/hud/experience_bar_progress',
+    // See the note in UI_ATLAS_CROPS: no empty bubble, by design in both sources.
+    air_full: 'gui/sprites/hud/air', air_bursting: 'gui/sprites/hud/air_bursting',
     button: 'gui/sprites/widget/button', button_hover: 'gui/sprites/widget/button_highlighted',
   }
   execFileSync('unzip', ['-q', '-o', '-j', jar,

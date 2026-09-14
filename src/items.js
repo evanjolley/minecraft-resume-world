@@ -223,8 +223,16 @@ function titleCase(key) {
  * Assembly
  * ------------------------------------------------------------------ */
 
-/** Every block, as an item that places itself. */
-const BLOCK_ITEMS = BLOCK_TYPES.map(b => ({
+/*
+ * Every block, as an item that places itself -- except the fluids.
+ *
+ * Vanilla has no water or lava ITEM. It has a bucket, which is a different
+ * object with different rules, and the only way to move a fluid is through
+ * one. Leaving them in here would put two blocks in the creative inventory
+ * that place a fluid by hand, make `/give water` work, and give the held-item
+ * renderer a cube of water to draw in your fist.
+ */
+const BLOCK_ITEMS = BLOCK_TYPES.filter(b => !b.fluid).map(b => ({
   id: b.id, key: b.key, name: b.name, places: b.id, block: b,
 }))
 

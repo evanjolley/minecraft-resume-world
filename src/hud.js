@@ -3,6 +3,7 @@ import { itemName } from './items.js'
 import { HOTBAR_SIZE } from './inventory.js'
 import { armorPoints } from './armor.js'
 import { MAX_HEALTH, MAX_FOOD } from './survival.js'
+import { MC } from './physics.js'
 
 /*
  * The survival HUD, built from Minecraft's own sprites at its own geometry.
@@ -66,6 +67,20 @@ const SEL_SIZE = 24
  */
 const TEXT_LINE = 9          // Minecraft's font line height, glyph plus descender
 const HELD_NAME_BOTTOM = 50
+
+/*
+ * The air bubbles share the armor row's height -- Gui.renderPlayerHealth blits
+ * them at `screenHeight - 39 - 10`, which is the same 40..49 band the table
+ * above gives armor -- but on the RIGHT, above the food bar rather than above
+ * the hearts. Left and right of one row, so the two never collide no matter
+ * what either is doing.
+ *
+ * Anchored like HELD_NAME_BOTTOM rather than stacked in the flex column, and
+ * for the same reason plus one more: the armor row removes itself at zero
+ * points, and a bubble row sharing that flow would vanish with it every time a
+ * visitor swam without armor on -- which is every time.
+ */
+const AIR_BOTTOM = 40
 const GAP_UNDER_XP = 2       // the wide one: the level number sits in it
 const GAP_UNDER_HEARTS = 1
 const GAP_UNDER_ARMOR = 1
@@ -133,6 +148,59 @@ function paintRow(icons, value) {
       fill.style.opacity = '0'
     }
   })
+}
+
+/*
+ * The bubble row. Not built with iconRow/paintRow above, and that is the
+ * decision worth recording: those assume Minecraft's full/half/empty triple,
+ * and air has none of it. There is no half bubble, and there is no empty
+ * bubble either -- neither texture source ships one (1.21's air_empty.png
+ * exists and is nine by nine of pure transparency), because Minecraft draws
+ * NOTHING where a spent bubble was rather than an outline. Bending the
+ * three-state helper into a two-state row with a hole in it would have cost
+ * more than forty lines of its own.
+ */
+function airRow(hud) {
+  const row = document.createElement('div')
+  row.id = 'air-row'
+  row.style.position = 'absolute'
+  row.style.right = '0'
+  row.style.bottom = px(AIR_BOTTOM)
+  row.style.width = px(9 + 8 * (MC.AIR_BUBBLES - 1))
+  row.style.height = px(9)
+  hud.appendChild(row)
+
+  // Right to left, pitch 8, the same one-pixel overlap the hearts have.
+  const bubbles = []
+  for (let i = 0; i < MC.AIR_BUBBLES; i++) {
+    const b = spriteEl('/ui/air_full.png', 9, 9)
+    b.style.inset = 'auto'
+    b.style.top = '0'
+    b.style.right = px(i * 8)
+    row.appendChild(b)
+    bubbles.push(b)
+  }
+
+  return (air) => {
+    /*
+     * Vanilla's own arithmetic, verbatim:
+     *   full    = ceil((air - 2) * 10 / max)
+     *   partial = ceil(air * 10 / max) - full
+     * and it draws `full` normal bubbles then `partial` bursting ones. The -2
+     * is what makes the leading bubble spend a moment mid-pop instead of
+     * blinking out, and dropping it is the difference between a meter that
+     * drains and one that stutters.
+     */
+    const full = Math.ceil(((air - 2) * MC.AIR_BUBBLES) / MC.AIR_TICKS)
+    const shown = Math.ceil((air * MC.AIR_BUBBLES) / MC.AIR_TICKS)
+    bubbles.forEach((b, i) => {
+      b.style.display = i < shown ? 'block' : 'none'
+      b.style.backgroundImage = `url(/ui/air_${i < full ? 'full' : 'bursting'}.png)`
+    })
+    // Minecraft hides the row outright at a full meter, the way it hides the
+    // armor row at zero. The bar is only ever on screen while it matters.
+    row.style.display = air >= MC.AIR_TICKS ? 'none' : 'block'
+  }
 }
 
 export function installHUD(noa, { inventory, survival }) {
@@ -247,7 +315,10 @@ export function installHUD(noa, { inventory, survival }) {
   xpFill.style.backgroundSize = `${HOTBAR_W * SCALE}px ${5 * SCALE}px`
   const xpLevel = document.getElementById('xp-level')
 
+  const paintAir = airRow(hud)
+
   survival.onChange((s) => {
+    paintAir(s.air)
     paintRow(hearts, s.health)
     paintRow(food, s.food)
     xpFill.style.width = px(HOTBAR_W * s.xpProgress)

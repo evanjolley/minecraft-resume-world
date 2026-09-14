@@ -81,6 +81,68 @@ export const MC = {
   // reaches the same terminal speed in the same time: 0.6 per 1/20 s means
   // velocity decays as e^(-10.2t).
   FLY_VERTICAL_RESPONSE: 10.2,
+
+  // Mid-jump steering authority, as a fraction of the ground figure. Named
+  // because being IN A FLUID cancels it -- see installSpeedModes.
+  AIR_CONTROL: 0.2,
+
+  /* ---------------- fluids ---------------- *
+   *
+   * Movement in water and lava, from LivingEntity.travel()'s fluid branches.
+   * Accelerations convert straight across -- a tick is 0.05 s, so b/tick^2
+   * times 400 is b/s^2 -- and the two drag coefficients do NOT, which is the
+   * long story in fluids.js and the reason they are derived from terminal
+   * speeds instead. Read that before changing any of these six.
+   */
+
+  WATER_GRAVITY: 2,      // 0.005 b/tick^2, gravity 0.08 / 16
+  LAVA_GRAVITY: 8,       // 0.02  b/tick^2, gravity 0.08 / 4
+  SWIM_UP_ACCEL: 16,     // 0.04  b/tick^2, LivingEntity.jumpInLiquid, both fluids
+
+  /*
+   * Terminal sinking speeds, in blocks/second. `v' = 0.8v - 0.005` settles at
+   * 0.025 b/tick in water; `v' = 0.5v - 0.02` at 0.04 b/tick in lava. These
+   * are what fluids.js solves its drag coefficients backwards from -- the
+   * coefficients themselves are facts about noa, not about Minecraft, so they
+   * do not live in this table.
+   */
+  WATER_SINK_SPEED: 0.5,
+  LAVA_SINK_SPEED: 0.8,
+
+  // Horizontal. `v' = 0.8(v + 0.02)` settles at 0.1 b/tick in water and
+  // `v' = 0.5(v + 0.02)` at 0.04 b/tick in lava. The wiki's measured figure
+  // for water is 1.97; the code's own answer is used.
+  SWIM_SPEED: 2.0,
+  LAVA_SPEED: 0.8,
+
+  /* ---------------- breath, drowning, burning ---------------- *
+   *
+   * Entity.getMaxAirSupply() is 300 ticks -- fifteen seconds, ten bubbles of
+   * thirty ticks each. What is easy to get wrong is that damage does not start
+   * when the bar empties: LivingEntity.baseTick keeps decrementing past zero
+   * and only hurts you at exactly -20, so the first hit is at SIXTEEN seconds
+   * and then every second after, because the counter is reset to 0 rather than
+   * to -20 each time.
+   */
+  AIR_TICKS: 300,
+  AIR_BUBBLES: 10,
+  DROWN_GRACE_TICKS: 20,
+  DROWN_DAMAGE: 2,
+  // Entity.increaseAirSupply: +4 per tick, so empty to full takes 3.75 s.
+  AIR_REFILL_PER_TICK: 4,
+
+  /*
+   * Entity.lavaHurt is 4 damage and setSecondsOnFire(15), called every tick
+   * you are in lava. The i-frame rule in LivingEntity.hurt lets an equal hit
+   * through after half the 20-tick window, so 4 lands every 10 ticks: EIGHT
+   * health a second, not four. Burning afterwards is 1 a second, and is
+   * suppressed while you are still in the lava.
+   */
+  LAVA_DAMAGE: 4,
+  LAVA_DAMAGE_INTERVAL: 0.5,
+  BURN_SECONDS: 15,
+  FIRE_DAMAGE: 1,
+  FIRE_INTERVAL: 1,
 }
 
 // Calibrated, not derived. See the comment at its use site.
@@ -132,7 +194,7 @@ export function installPhysics(noa) {
   // acceleration is 0.1/tick against 0.02 in air, roughly a 1:5 ratio.
   // Getting this wrong is the single biggest "feels off" giveaway, because
   // too high lets you rescue jumps you should have missed.
-  move.airMoveMult = 0.2
+  move.airMoveMult = MC.AIR_CONTROL
 
   move.standingFriction = 4
   move.runningFriction = 0
@@ -286,7 +348,7 @@ function createFlight(noa, move) {
   }
 }
 
-export function installSpeedModes(noa, move, survival) {
+export function installSpeedModes(noa, move, survival, fluids = null) {
   noa.inputs.bind('sprint', 'ControlLeft')
   noa.inputs.bind('sneak', 'ShiftLeft')
 
@@ -343,11 +405,36 @@ export function installSpeedModes(noa, move, survival) {
 
     flight.tick(dt, S)
 
+    /*
+     * Being in a fluid beats everything except flying. Minecraft's fluid
+     * branch in LivingEntity.travel replaces the whole ground-movement path
+     * rather than scaling it, so sneaking or sprinting in water gets you the
+     * same 2 b/s -- there is no slow swim and no fast swim without the crawl
+     * pose, which this world does not have.
+     *
+     * The value comes back pre-compensated for fluid drag; see fluids.js's
+     * maxSpeed() for why assigning the raw 2.0 measures 20% slow.
+     */
+    const swim = flight.flying ? null : fluids?.maxSpeed() ?? null
+
+    /*
+     * Full steering authority in a fluid, and this is fidelity rather than
+     * convenience. Minecraft's water branch calls moveRelative with the same
+     * input weight whether or not your feet are on anything -- there is no
+     * air-control penalty underwater, because you are not in the air. Leaving
+     * airMoveMult at 0.2 caps the push at moveForce*0.2 = 8, and the cap binds
+     * before the speed target does: swimming then settles at whatever that
+     * force balances the drag at, 1.73 b/s, regardless of what maxSpeed says.
+     * That is how this first measured 13% slow with an exactly right maxSpeed.
+     */
+    if (!flight.flying) move.airMoveMult = swim !== null ? 1 : MC.AIR_CONTROL
+
     // Sneak beats sprint when both are somehow active. Sprinting doubles
     // flight speed rather than adding to it, which is Minecraft's rule and is
     // why creative flight has two very different gears.
     move.maxSpeed = flight.flying
       ? (sprinting ? MC.FLY_SPRINT_SPEED : MC.FLY_SPEED)
+      : swim !== null ? swim
       : sneaking ? MC.SNEAK_SPEED
       : sprinting ? MC.SPRINT_SPEED
       : MC.WALK_SPEED
@@ -387,7 +474,9 @@ export function installSpeedModes(noa, move, survival) {
     // Not while flying: space is climb there, not jump, and a flier can sit
     // grounded with it held -- which under this condition would hand out a
     // boost every single tick.
-    if (S.jump && sprinting && !flight.flying && body.atRestY() < 0) {
+    // Not in a fluid either: space is the swim climb there, and a player
+    // standing on a lake bed with it held would collect a boost every tick.
+    if (S.jump && sprinting && !flight.flying && swim === null && body.atRestY() < 0) {
       const h = move.heading
       body.velocity[0] += Math.sin(h) * MC.SPRINT_JUMP_BOOST
       body.velocity[2] += Math.cos(h) * MC.SPRINT_JUMP_BOOST

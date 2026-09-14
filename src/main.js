@@ -4,6 +4,7 @@ import { registerBlocks } from './blocks.js'
 import { getVoxelID, SPAWN } from './island.js'
 import { installPhysics, installSpeedModes, MC } from './physics.js'
 import { createSurvival } from './survival.js'
+import { createFluids, installFluids } from './fluids.js'
 import { createInventory, installInventoryScreen } from './inventory.js'
 import { installInteraction, installHotbarControls } from './interact.js'
 import { installRespawn } from './respawn.js'
@@ -130,6 +131,14 @@ const PLAYER_NAME = 'Evan'
 const move = installPhysics(noa)
 
 /*
+ * Fluid sensing is split from fluid EFFECTS because nothing else can sit in
+ * both places: installSpeedModes needs the sensor to know your swim speed, and
+ * drowning needs survival, which needs to exist first. So the sensor is built
+ * here and armed (block ids, damage) after survival, below.
+ */
+const fluids = createFluids(noa, move)
+
+/*
  * survival is created before installSpeedModes because sprinting depends on
  * the food level: Minecraft refuses to sprint at 6 food or less.
  *
@@ -153,7 +162,8 @@ const survival = createSurvival(noa, {
   allowRegen: () => authority.gamerule('naturalRegeneration'),
   damageReduction: createArmorReduction(inventory),
 })
-const movement = installSpeedModes(noa, move, survival)
+const movement = installSpeedModes(noa, move, survival, fluids)
+installFluids(noa, { blockIds: ids, fluids, survival })
 
 // One material shared by the third-person model and the first-person arm, so
 // a custom skin later only has to be swapped in one place. Declared before
@@ -337,6 +347,10 @@ noa.container.on('lostPointerLock', () => {
 
 window.noa = noa
 window.game = {
+  // `fluids` is exposed for the same reason `move` is: the test suite asserts
+  // measured swim speeds and breath durations, and both need to know which
+  // fluid the player is actually registering as in.
+  fluids,
   inventory, survival, move, sky, menu, chat, inputLock, perspective,
   skinMaterial, sounds, particles, drops, weather,
   /*

@@ -704,7 +704,81 @@ const NON_CUBE_FAMILIES = [
 const NON_CUBE = NON_CUBE_FAMILIES.flatMap(
   ([from, prefix, sourceKey, label]) => nonCubeSet(from, prefix, CUBE_BY_KEY.get(sourceKey), label))
 
-export const BLOCK_TYPES = normaliseHardness([...CUBES, ...NON_CUBE])
+/* ------------------------------------------------------------------ *
+ * Fluids.
+ *
+ * Last in the table on purpose. These two ids are the contract the terrain
+ * importer generates against, so they have to be stable, and appending is the
+ * only way to add an id without renumbering someone's save data.
+ *
+ * A fluid is NOT a block you can interact with, and that falls out of flags
+ * rather than out of special cases:
+ *   - `fluid: true` makes noa register it non-solid, so you walk into it.
+ *   - non-solid means `noa.blockTargetIdCheck` (bottom of this file) skips it,
+ *     so the crosshair raycast passes straight through and neither mining nor
+ *     placement ever names a fluid.
+ *   - `hardness: Infinity` is the belt to that braces: interact.js's
+ *     `breakable()` tests exactly this, so even a raycast that somehow landed
+ *     on water could not start a break.
+ *   - items.js drops fluids from its block-item list, so /give water and a
+ *     creative-inventory water bucket-that-isn't don't exist. Vanilla has no
+ *     water ITEM either -- it has a bucket, which is a different thing.
+ *
+ * Rejected: registering them as normal non-opaque blocks and doing the
+ * swimming in physics.js by sampling block ids per tick. noa already carries
+ * a fluid flag all the way down into voxel-physics-engine's buoyancy pass,
+ * and reimplementing that on top would mean two disagreeing notions of "am I
+ * in water" -- one for rendering and one for movement.
+ *
+ * `fluidDensity` and `viscosity` are passed and are, in noa 0.33, DEAD. The
+ * registry stores them in blockProps and nothing ever reads them back:
+ * voxel-physics-engine's applyFluidForces uses the engine-global
+ * `self.fluidDensity`, and the drag term uses the global `self.fluidDrag`.
+ * They are spelled out anyway because they are the right values and because
+ * the day noa starts honouring them is the day lava should get thicker on its
+ * own. fluids.js is where the per-fluid difference actually happens today.
+ */
+
+/*
+ * Minecraft ships `water_still.png` GREYSCALE with alpha 180/255 baked in and
+ * multiplies it by a per-biome `water_color` at render time -- the same
+ * arrangement as grass and leaves above. 0x3F76E4 is the default, used by
+ * plains, ocean and most of the overworld; swamps and mangrove swamps have
+ * their own and are not reproduced, because nothing here knows about biomes.
+ *
+ * Lava is the opposite: `lava_still.png` is fully coloured and fully opaque in
+ * the file, so it gets no tint and no alpha, and it stays on the opaque atlas
+ * page. That difference is why water is `alpha: true` and lava is not.
+ */
+const WATER = [0x3f, 0x76, 0xe4]
+
+const FLUIDS = [
+  {
+    id: 636, key: 'water', name: 'Water', all: 'water_still',
+    hardness: Infinity, fluid: true, alpha: true, tint: WATER,
+    // The alpha vanilla bakes into the PNG. Restated here so a source that
+    // ships opaque water (Pixel Perfection CE has no water texture at all and
+    // is substituted from ice) comes out translucent too.
+    alphaLevel: 180,
+    /*
+     * Minecraft's water density is 1.0 relative to the player, and the game
+     * gives a swimming player near-neutral buoyancy: you sink, but at about a
+     * fortieth of free-fall. See fluids.js for how that is actually produced.
+     */
+    fluidDensity: 1.0,
+    viscosity: 0.8,
+  },
+  {
+    id: 637, key: 'lava', name: 'Lava', all: 'lava_still',
+    hardness: Infinity, fluid: true,
+    // Lava's per-tick velocity retention is 0.5 against water's 0.8 -- it is
+    // roughly four times as thick to move through.
+    fluidDensity: 1.0,
+    viscosity: 0.5,
+  },
+]
+
+export const BLOCK_TYPES = normaliseHardness([...CUBES, ...NON_CUBE, ...FLUIDS])
 
 // Ids must be contiguous from 1. noa fills any gap with a silently-registered
 // filler block that has no material, which renders as untextured white and is
@@ -810,6 +884,10 @@ export const MATERIAL_RECIPES = {
 }
 for (const def of BLOCK_TYPES) {
   if (def.tint) MATERIAL_RECIPES[def.all] = { tint: def.tint }
+  // Merged rather than assigned: water wants both a biome tint and a fixed
+  // alpha, and writing a fresh object here would silently drop the tint the
+  // line above just set.
+  if (def.alphaLevel) (MATERIAL_RECIPES[def.all] ??= {}).alpha = def.alphaLevel
 }
 
 export function registerBlocks(noa) {
@@ -872,6 +950,17 @@ export function registerBlocks(noa) {
       // A non-opaque block must not have its neighbours' faces culled, or you
       // see straight through the world from inside a glass box.
       opaque: !def.alpha,
+      /*
+       * noa's BlockOptions constructor takes `fluid` and derives solid:false
+       * and opaque:false from it, so passing the flag alone would be enough
+       * for water. Lava is passed opaque:true deliberately and that is NOT an
+       * oversight: vanilla lava is on the solid render layer and hides
+       * whatever is behind it, so leaving it non-opaque draws the terrain
+       * inside a lava lake through the surface.
+       */
+      fluid: def.fluid === true,
+      fluidDensity: def.fluidDensity,
+      viscosity: def.viscosity,
     })
   }
 
