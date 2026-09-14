@@ -19,7 +19,9 @@ almost everyone gets wrong, and it is the part that makes the rest measurable.
 **Confidence, up front.** The strongest evidence in here is §1 (FACTS Grounding),
 §4 (CoCoNot, Kalai et al.) and §5.4 (MiniCheck) — all published numbers with
 methodology. AbstentionBench's *direction* is solid and its headline 24% figure
-is not; §4 explains why and I've stopped quoting the number. The weakest is §3's claim that *first-person* framing
+is not; §4 explains why and I've stopped quoting the number. **§7.2 is
+secondary-source legal research gathered under a time box, with individual items
+flagged unverified inline — it is a map of where to look, not advice.** The weakest is §3's claim that *first-person* framing
 specifically suppresses hedging; I could not find that measured directly and have
 marked it as an assertion. The vendor numbers in §2 (Anthropic Citations) are
 marketing and are labelled as such. Everything in §6 and §9 that concerns this
@@ -505,11 +507,25 @@ adds single-digit milliseconds, and its false positives are legible and fixable
 (you add the word to the list). Nothing else on this list has that profile.
 
 **Tier 2 — output-side checking in general.** Input filtering is leaky by
-construction; output checking sees the thing you actually care about. A small,
-cheap classifier on the draft response asking only "does this disparage a named
-person or organisation?" and "does this claim a skill?" is worth adding *if* tier
-1 proves insufficient. Cost is one extra small-model call per turn, which at chat
-latency is noticeable but survivable.
+construction; output checking sees the thing you actually care about. A small
+classifier on the draft response asking only "does this disparage a named person
+or organisation?" and "does this claim a skill?" is worth adding *if* tier 1
+proves insufficient — and given §7.2, the third-party half of that is worth more
+than I originally credited.
+
+**Make it a small fine-tuned encoder, not a prompted LLM judge.** Two reasons,
+both measured. Latency: on the order of **3.6 ms** at P50 for an encoder against
+**~718 ms** for a prompted judge, which is the difference between invisible and
+a perceptible stutter on every turn. And robustness: prompted judges are
+themselves attackable — JudgeDeceiver-style attacks reach **88-93%** success
+against them, with 50-62% transfer across judges. A guardrail you can talk your
+way past is not a guardrail.
+
+**Tier 2b — rate-limit and cap output tokens.** Boring, and the only real
+availability control. Guardrail stacks are a denial-of-wallet amplifier
+(reported **13-63× token** and up to **148× latency** amplification under
+adversarial input), which is a second argument for keeping the request-path
+stack as thin as §9 recommends.
 
 **Tier 3 — the system prompt itself.** Instruction hierarchy, delimiters, and
 spotlighting the corpus as data rather than instructions all help at the margin
@@ -520,7 +536,12 @@ not expect them to.
 
 **Input-side injection classifiers.** Willison's line is the right calibration:
 a vendor claiming to catch "95% of attacks" is describing "very much a failing
-grade" for a security control. He is right for agents with the trifecta. For AI
+grade" for a security control. And the 95% is generous, because **every number a
+defender quotes is a non-adaptive number.** The cleanest demonstration is *The
+Attacker Moves Second*, which evaluated twelve published defences and found
+static attack-success rates of 0-62%, adaptive attacks reaching 71-100%, and
+**human red-teaming succeeding on all twelve.** That is the whole literature in
+one line: defences hold against the attack they were tested on. He is right for agents with the trifecta. For AI
 Evan the argument is even simpler — a 5% miss rate on a threat whose worst
 outcome is an embarrassing screenshot does not justify the latency, the cost, or
 the false positives on legitimate questions. **Skip Prompt Guard, Lakera, NeMo
@@ -529,7 +550,11 @@ Guardrails and friends entirely.** They are the wrong weight class.
 **Trying to keep the system prompt secret.** OWASP's LLM07:2025 (System Prompt
 Leakage) is unambiguous: *"the system prompt should not be considered a secret,
 nor should it be used as a security control."* Attackers reverse-engineer
-restrictions through ordinary interaction even without exact disclosure. The
+restrictions through ordinary interaction even without exact disclosure — one
+result has roughly **64 ordinary answers** sufficing to reconstruct a prompt
+without ever extracting it. Reported real-world extraction rates run **80-92%**,
+and the highest-yield vector is **roleplay, at ~96.5%** — which is not a vector
+this project can close, because roleplay *is* the product. The
 architectural answer is to have nothing to leak — put nothing in the prompt or
 corpus you would not publish on the site.
 
@@ -560,9 +585,25 @@ doesn't look like an attack and because the fluent answer is the wrong one:
 
 There is no injection to detect. The model is being agreeable, which is what it
 was trained to be, and sycophancy toward the user's framing is a well-documented
-default. The defence is not a classifier. It is a corpus that contains an
-explicit, in-character stock answer for "asked to criticise a former employer,"
-and an eval category that tests it. That is the whole fix, and it is cheap.
+default. Drift toward the user's framing has been measured setting in **within
+about 8 turns**, which is shorter than a real recruiter conversation and is the
+argument for re-injecting the key rules periodically rather than trusting a
+system prompt read once at the top of a long thread.
+
+Worth recording that the security-side research arrived at the same conclusion
+independently and put it more sharply than I did: the realistic attack on a
+persona bot is not making it say a slur, it is *"So you led the Series B at
+&lt;company&gt;, right?"* and the bot agreeing. It also flagged the
+**persona → sycophancy → fabrication** chain as plausible, mechanically
+supported, and **entirely unmeasured** in the literature. Two independent passes
+landing on the same unmeasured failure mode is about as strong a signal as you
+get for "this is the thing your eval should cover," and it is why false-premise
+items are their own category in §5.3 rather than a subset of the adversarial set.
+
+The defence is not a classifier. It is a corpus containing an explicit,
+in-character stock answer for "asked to criticise a former employer," an eval
+category that tests it, and — per §7.2, where this stops being a matter of taste
+— a hard refusal to characterise named third parties at all.
 
 ---
 
@@ -589,69 +630,209 @@ That asymmetry is the argument for weighting fabrication so heavily in §5.2. A
 missed answer costs one interaction. A fabricated one can cost an opportunity
 without ever being visible.
 
-### 7.2 The legal picture is smaller than it looks, but not zero
+### 7.2 The legal picture, revised: smaller than it looks in one direction, larger in another
 
-Being precise about this, because it's easy to inflate:
+I opened this research assuming the legal section would be a paragraph of
+throat-clearing. It isn't, and the reason is a doctrinal point I hadn't seen
+before.
 
-- **A bot can't meaningfully defame its own subject.** Evan is not going to sue
-  himself, and false-light claims run the other way. The self-directed risk is
-  reputational and hiring-related, not tortious.
-- **Statements about third parties are where the actual legal shape lives.**
-  If the bot disparages a named former employer or colleague, that's a
-  defamation-shaped exposure with a real (if unlikely) plaintiff, and Evan is the
-  publisher. This is exactly the attack in §6.4, which is why the stock-answer
-  mitigation earns its place twice.
-- **Claiming credentials he lacks, in a hiring context,** is closer to resume
-  misrepresentation than to defamation. If a claimed skill materially affects an
-  offer, "the chatbot said it" is not a position anyone wants to be in.
-- **Disclosure obligations are live as of right now.** EU AI Act **Article 50**
-  requires providers of AI systems that interact directly with natural persons to
-  inform them they are interacting with an AI, "in a clear and distinguishable
-  manner at the latest at the time of the first interaction," and it **applies
-  from 2 August 2026** (Art. 113) — i.e. already. There is an exception where it
-  would be "obvious to a reasonably well-informed observer considering the
-  circumstances and context." Californian **SB 1001** (Bus. & Prof. Code
-  §17940–17942) is narrower: it bans bots that mislead about their artificial
-  identity specifically to *incentivize a commercial transaction or influence a
-  vote*, with a safe harbour for a "clear, conspicuous" disclosure. A portfolio
-  bot probably falls outside its scope. The 2025 wave of US companion-chatbot
-  disclosure laws targets companion/minor contexts and is unlikely to reach this,
-  though I could not verify their final scope within this time box and would
-  check before making a claim about them.
+**A provenance warning before any of this.** What follows is secondary-source
+research gathered under a time box. Several items are flagged unverified below.
+None of it is legal advice and I would confirm anything load-bearing before
+relying on it.
 
-Net: the compliance ask is one sentence of disclosure. Just do it.
+**The self-directed risk really is near zero.** A bot can't meaningfully defame
+its own subject; Evan is not going to sue himself. That intuition holds.
 
-### 7.3 Disclosure design, and why you should over-disclose
+**But the two AI defamation rulings that exist point in opposite directions, and
+the one that helps doesn't help *him*.**
 
-The Article 50 "obvious to a reasonable observer" exception is genuinely doing
-work here — a blocky voxel NPC standing on an island is not something a
-reasonable person mistakes for a live human. **The medium is the strongest
-disclosure signal in this project and it is free.** But the exception is
-fact-dependent and you should not lean on it, especially once the thing books
-meetings.
+*Walters v. OpenAI* (Gwinnett County Superior Court, No. 23-A-04860-2) —
+**summary judgment for OpenAI, Judge Tracie Cason, 19 May 2025.** Three
+independent grounds: no defamatory meaning, no fault, no damages. The court
+expressly rejected strict liability, which is genuinely good news for the field.
+But read *why* there was no defamatory meaning: ChatGPT told the journalist it
+couldn't access the internet, disclosed a knowledge cutoff, and OpenAI's
+interface warns of inaccuracy — signals that "objectively established to any
+reasonable reader that the challenged ChatGPT output was not stating actual
+facts."
 
-Three layers, all cheap:
+**That defence is built entirely out of the reader's awareness that they are
+talking to a fallible machine — which is precisely the context an unlabelled
+first-person persona is designed to destroy.** Walters protects a *developer* who
+warns users. It does not transfer to an operator who authored a persona that
+speaks in his own name. (Unverified: whether the state-court judgment was
+appealed; no Georgia Court of Appeals decision was found, so treat "no successful
+appeal" as provisional.)
 
-1. **The nametag says so.** It's already a nametag system; it should read
-   `AI Evan` and not `Evan`. Persistent, ambient, unmissable, zero friction.
-2. **The first line says so**, in character, once, and then never again — nobody
-   wants a bot that reintroduces its own artificiality every turn.
-3. **It never denies it.** Asked "are you a real person?", it answers
-   immediately and cheerfully. §6.3: fighting this makes it a game; conceding
-   instantly makes it boring.
+*Starbuck v. Google* (Delaware Superior Court) — **motion to dismiss DENIED,
+Judge Meghan A. Adams, 24 July 2026.** Now in discovery. Two holdings matter
+here: **disclaimers did not defeat publication at the pleading stage** (they are
+evidentiary, not an automatic shield), and **actual malice was adequately pleaded
+from prior legal notices plus alleged failure to remediate.** Caveat that
+Delaware applies a plaintiff-friendly "conceivability" pleading standard, which
+the court expressly invoked, so generalise carefully.
 
-The asymmetry is what settles it. Over-disclosing costs approximately nothing —
-the persona survives a nametag. Under-disclosing turns every screenshot into a
-worse screenshot, because "AI said a false thing" and "thing that was pretending
-to be a person said a false thing" are very different stories.
+**The doctrinal takeaway across the two, and the sentence in this document I'd
+most want Evan to read twice:**
 
-**One flag for the roadmap:** the moment this schedules meetings, the stakes
-change category. A false statement now has an action attached to it, the
-"obvious to a reasonable observer" defence weakens (people take booking flows
-literally), and spam becomes a real availability problem. Build the truthfulness
-machinery *before* the scheduling tool, not after.
+> Walters was a one-off hallucination with no prior warning. Starbuck was
+> repeated output *after* formal notice. **Notice-then-repetition is what turns a
+> hallucination into a viable claim — and the operator of a self-hosted persona
+> bot has notice of everything it says, by construction.**
 
----
+That is the structurally dangerous feature of this project. Evan is not a
+platform that discovers its errors through complaints. He is the author, the
+publisher, and the only person reading the transcripts. Every failure the offline
+checker in §9 surfaces is, from that moment, a thing he knew about.
+
+**Where the exposure actually sits: third parties, not himself.** This is the
+part I had underweighted. The bot will be asked about former employers,
+managers, and colleagues. Asked "why did he leave X?" or "what was his manager
+like?", it confabulates. Statements of fact about an identifiable third party,
+published to a recruiter, with Evan as the publisher — that is ordinary libel,
+with **no §230 shield** (he wrote the prompt, curated the corpus, and deployed
+it in his own name, so he *is* the information content provider — there is no
+third party to point at), **no developer-warning defence**, and, for a
+private-figure ex-colleague, **only a negligence standard rather than actual
+malice.** That is a materially lower bar than either Walters or Starbuck faced.
+Trade libel and tortious interference sit adjacent if the target is a company.
+
+**This is the single strongest argument in the document for the §6.4 control.**
+A hard refusal on characterising named third parties is the cheapest control
+available and it addresses the largest legal exposure. I ranked it as good
+practice on reputational grounds; it deserves to be ranked higher.
+
+**"The bot said it, not me" is not a defence.** *Moffatt v. Air Canada*, 2024
+BCCRT 149 (Feb 2024), rejected Air Canada's argument that its chatbot was "a
+separate legal entity," holding it is simply part of the company's website. Utah
+has since **codified** the principle at §13-75-102: it is not a defence that
+generative AI "made the violative statement." (Unverified: the Moffatt primary
+text was unretrievable; relying on secondary summaries, and sources give the date
+as either 14 or 19 Feb 2024.)
+
+**A gap, not a permission.** Illinois HB 3773, the Illinois AI Video Interview
+Act, and NYC Local Law 144 all regulate the *employer's* use of AI in hiring. **No
+statute anywhere appears to govern a job candidate deploying an AI agent to
+represent themselves to recruiters.** General fraud and consumer-protection law
+fills that space, and the relevant shape there is misrepresentation rather than
+defamation — inflating a title or inventing a credential creates
+fraudulent-inducement and termination-for-cause exposure, which is a worse
+outcome than a lawsuit.
+
+**The disclosure map, which is where the good news is.** A long list of statutes
+plausibly reaches this bot:
+
+| Law | Reaches this bot? |
+|---|---|
+| **EU AI Act Art. 50(1)** | Probably. Applied **2 Aug 2026** and was *not* delayed — the Digital Omnibus moved high-risk obligations to 2027/2028 and left Art. 50 untouched. Art. 2(1)(c) extends to third-country deployers whose output "is used in the Union." The Art. 2(10) "purely personal non-professional activity" exemption is a **genuinely uncertain shield** for a bot built to attract job offers. Final Guidelines (20 Jul 2026) say AI agents must disclose both their artificial nature **and the entity they represent**. Penalties under Art. 99(4): up to €15M or 3% of turnover. |
+| **Colorado AI Act §6-1-1704** | **Yes, on its face.** The disclosure duty is *not* limited to high-risk systems — it binds any deployer of an AI system "intended to interact with consumers," with an exception only where it "would be obvious to a reasonable person." Delayed to **30 June 2026**. ⚠️ Highest-priority item to re-verify given that Act's turbulent history. |
+| **Maine 10 M.R.S. §1500-Y** | **Yes.** Broadest plain-language chatbot law in the US — no platform-size threshold, no purchase-or-sale element, no companion element. Standard is content that "**may** mislead." Violation = Maine UTPA violation. |
+| **NY GBL Art. 47** | Possibly. Requires notice at the start of an AI companion interaction **and at least every three hours**. Up to $15,000/day. |
+| **CA SB 243** (companion chatbots, operative 1 Jan 2026) | Closest US call. Keys on adaptive human-like responses sustaining a relationship across interactions; "operator" reaches an individual; **private right of action at $1,000 per violation plus fees.** Clear disclosure defuses it entirely. |
+| **CA SB 1001** (B.O.T. Act) | **No.** Purpose element is limited to incentivising a purchase/sale or influencing a vote, and there's a 10M-monthly-visitor platform threshold. |
+| **Utah Title 13 Ch. 75** | Probably not (requires a "consumer transaction"), but §13-75-104 offers a **safe harbour** for clear and conspicuous disclosure "at the outset and throughout." |
+
+**The punchline is that one sentence discharges almost the entire table at
+once** — EU Art. 50(1), Colorado, Maine, NY, CA SB 243, and Utah's safe harbour
+all accept the same disclosure. The scope questions never need to be litigated
+because compliance is one line of UI text. **Two of them (NY explicitly, Utah's
+safe harbour implicitly) want it *sustained*, not just at first contact**, which
+slightly revises §7.3 below.
+
+⚠️ **Flagged unverified in the above:** Walters appellate status; whether
+*Garcia v. Character Technologies* settled (sources conflict directly); whether
+Colorado further amended or delayed SB 24-205 in its 2026 session; Maine
+§1500-Y's exact effective date; NY Art. 47's effective date; Moffatt's primary
+text.
+
+### 7.3 Disclosure design, and the three studies that settle it
+
+I had this section written as "over-disclose, it's cheap." That conclusion
+survived, but the reasoning under it got much better and one finding changed what
+I'd actually put on the page.
+
+**First: non-disclosure would work, and the persona prompt is the reason.**
+Jones & Bergen, *Large Language Models Pass the Turing Test*
+([arXiv:2503.23674](https://arxiv.org/abs/2503.23674), 31 Mar 2025), ran two
+randomised, pre-registered three-party Turing tests with 5-minute conversations:
+
+| System | Judged human |
+|---|---|
+| GPT-4.5 **with a humanlike persona prompt** | **73%** — *more often than the actual humans were selected* |
+| LLaMa-3.1-405B with persona prompt | 56% (statistically indistinguishable from humans) |
+| GPT-4o, **no** persona prompt | 21% |
+| ELIZA | 23% |
+
+The baseline models lost badly and the persona-prompted ones won. **The persona
+prompt is the decisive variable**, which means a first-person persona of a real
+named person is close to the exact configuration found indistinguishable from a
+human. Non-disclosure here isn't a theoretical concern about a hypothetical naive
+user — on a five-minute chat it would actually work on the recruiter.
+
+**Second: disclosure does cost you something, and hiding it costs more.**
+Schilke & Reimann, *The transparency dilemma: How AI disclosure erodes trust*
+(*Organizational Behavior and Human Decision Processes* vol. 188, May 2025,
+[doi:10.1016/j.obhdp.2025.104405](https://doi.org/10.1016/j.obhdp.2025.104405)),
+ran **thirteen experiments** across supervisors, subordinates, professors,
+analysts, creatives and investment funds. Disclosing AI use reduces trust,
+mediated by **reduced perceptions of legitimacy**, whether disclosure is
+voluntary or mandatory — but the effect is "comparatively weaker than the effect
+of third-party exposure."
+
+Two consequences. Voluntary disclosure is cheaper than being caught, which is the
+decision. And because the mechanism is *legitimacy* rather than scepticism about
+accuracy, **"but the bot is accurate" does not neutralise the cost** — which is a
+useful thing to know before trying to argue your way out of it with a better
+eval score.
+
+**Third, and this is the one that changed my recommendation:** Jakesch, French,
+Ma, Hancock & Naaman, CHI 2019
+([doi:10.1145/3290605.3300469](https://doi.org/10.1145/3290605.3300469)), on
+Airbnb host profiles — the closest published analogue to a portfolio, since it is
+AI-assisted *self-presentation* judged by a stranger deciding whether to transact.
+They name the **Replicant Effect**: participants penalised AI-labelled profiles
+**only when they believed they were seeing a mixed set** of AI- and human-written
+ones. When *all* profiles were labelled AI, the penalty vanished.
+
+The damage is not "this was written by AI." The damage is **being the odd one out
+in a field of apparently-human self-presentations** — which is exactly what a
+portfolio bot is in 2026, sitting alongside a world of résumés and LinkedIn
+profiles that are quietly AI-assisted but not labelled.
+
+That reframes the design problem. The answer is not to hide the disclosure or to
+bury it. It's to **make the AI-ness the premise rather than a caveat** — the
+frame is "I built an AI version of myself, here's how it works, here's the
+system prompt," not "chat with Evan (AI)." In the first frame there is no
+human-written comparison class to be the odd one out of; the visitor is
+evaluating a thing that was always presented as a built artifact. The voxel world
+already does most of this work, which is a genuine piece of luck in the project's
+design.
+
+**So, concretely, four layers:**
+
+1. **The nametag says `AI Evan`.** Persistent, ambient, zero friction.
+2. **The first line says so**, in character, once. The EU Guidelines (20 Jul
+   2026) want both the artificial nature *and* the entity represented, so it
+   should name Evan as the person behind it, not just admit to being a bot.
+3. **It never denies it**, and answers immediately when asked. §6.3.
+4. **Sustained, not just at first contact** — this is the revision. NY GBL Art.
+   47 asks for renewed notice at least every three hours and Utah's safe harbour
+   wants disclosure "at the outset and throughout." A persistent nametag plus a
+   visible AI-labelled chat panel satisfies this as ambient UI without a bot that
+   keeps reintroducing its own artificiality, which nobody wants. Get it from the
+   interface, not from the dialogue.
+
+The asymmetry still settles it: over-disclosing costs a legitimacy discount the
+Replicant framing largely neutralises; under-disclosing risks a recruiter who
+feels fooled, which is the one reputational outcome worse than a wrong fact.
+
+**One flag for the roadmap.** The moment this schedules meetings, the stakes
+change category. A false statement acquires an attached action, the "obvious to a
+reasonable observer" defence weakens (people read booking flows literally), CA SB
+243's commercial-adjacent framing gets closer, and spam becomes a real
+availability problem. Build the truthfulness machinery *before* the scheduling
+tool, not after.
 
 ## 8. What this implies about the corpus we gather from Evan
 
@@ -710,10 +891,20 @@ pointed at stylistic material, and the model should never treat a turn of phrase
 as a fact to assert.
 
 **7. Stock answers for the known-hostile questions.** Written by Evan, in his
-voice: asked to criticise a former employer; asked about salary; asked something
-personal; asked whether it's an AI; asked to claim a skill he lacks. These are
-corpus entries, not prompt rules, because a rule produces a hedge and a written
-answer produces a good interaction. §6.4 is the argument.
+voice: asked to characterise a former employer, manager or colleague; asked about
+salary; asked something personal; asked whether it's an AI; asked to claim a
+skill he lacks. These are corpus entries, not prompt rules, because a rule
+produces a hedge and a written answer produces a good interaction. §6.4 is the
+usability argument and §7.2 is the legal one — the third-party item in that list
+is carrying the most weight of anything in this section, since statements about
+identifiable third parties are the project's largest legal exposure and the one
+place a negligence standard applies.
+
+Add one CoCoNot category that a career corpus won't produce on its own:
+**humanizing requests** — "do you get bored standing here?", "what do you
+actually want?". Not dangerous, but the place where persona and truthfulness
+pull hardest against each other, and a written answer beats whatever the model
+improvises.
 
 **8. Assume the corpus is public.** OWASP LLM07 says the system prompt is not a
 secret; everything in it is effectively published. This is a constraint on
@@ -744,11 +935,33 @@ One system prompt, prompt-cached, in this order:
 7. **The two most important rules, repeated**, immediately before the user turn.
 
 **Model choice: a fast non-reasoning model, and do not turn on extended
-thinking.** This is counterintuitive and it is the best-supported configuration
-choice in this document. AbstentionBench measured reasoning fine-tuning costing
-~24% of abstention ability, and increasing reasoning budget improving accuracy
-while worsening abstention. You do not want a model that reasons its way to a
-plausible answer. You want one that checks a list.
+thinking — but this is the one recommendation here with real evidence against
+it, so here is the tension in full.**
+
+The abstention evidence says reasoning hurts: AbstentionBench found reasoning
+fine-tuning degrading abstention and reasoning budget trading abstention for
+accuracy. You do not want a model that reasons its way to a plausible answer;
+you want one that checks a list.
+
+The adversarial evidence says the opposite. Instruction-following under a hostile
+user is strongly model-tier-dependent — one reported figure has a mid-tier model
+holding a protected phrase against an adversarial user only **61.9%** of the
+time — and for this bot the persona instruction *is* the only thing standing
+between a visitor and an embarrassing screenshot.
+
+I come down on the non-reasoning side, for three reasons rather than one. The
+abstention finding is a measured property of the exact behaviour this document
+is about; the robustness finding is about a failure whose worst case (§6.1) is a
+screenshot. The §6.2 allowlist is a *deterministic* control that doesn't care
+how clever the model is, so the catastrophic class is covered regardless of
+tier. And the tension is empirical and local — **run both through the §5 suite
+and take the winner on your own numbers.** That is precisely the kind of
+question the eval exists to settle, and it is the first thing I would use it for.
+
+Note this cuts against the vendor framing in both directions: lab jailbreak-
+resistance numbers (99%+ claims) sit alongside independent results reporting
+100% attack success on the same model families. Treat tier as a dial to test,
+not a safety guarantee to buy.
 
 Use the **Citations API** if you're on Claude — the mechanism is right, it's free
 structure, and the citation spans give the offline checker something to verify
@@ -759,6 +972,18 @@ against. Measure the delta yourself rather than trusting the vendor's 15%.
 **One guardrail in the request path: the proper-noun allowlist (§6.2).**
 Deterministic, no model, milliseconds, catches the catastrophic class at n=1.
 Block-and-regenerate-once, then fall back to the abstention line.
+
+**Plus one rule that is not really a guardrail so much as a policy: refuse to
+characterise named third parties.** Not "be careful about former employers" — a
+flat refusal to render judgment on any named person or company, with a stock
+in-character deflection. §7.2 is the argument: this is the largest legal exposure
+in the project (ordinary libel, negligence standard, no §230, no
+developer-warning defence) and the cheapest control. If the allowlist is the
+highest value-per-line, this is the highest value-per-word.
+
+If a model-based output gate ever becomes necessary, make it a **small fine-tuned
+encoder, not a prompted judge** — ~3.6 ms versus ~718 ms, and prompted judges are
+themselves attackable at 88-93% (§6.2).
 
 **One offline: MiniCheck** sentence-level entailment over sampled production
 transcripts, reviewed weekly. 770M params, runs locally, ~400× cheaper than a
@@ -798,11 +1023,32 @@ freestyling them — particularly the false-premise set, which is the category
 with the worst downside here and the one where hand-written items tend to be
 too obvious.
 
+### The disclosure
+
+Four layers, all interface rather than dialogue (§7.3): nametag reads `AI Evan`;
+the opening line names both the artificial nature and the person represented (EU
+Guidelines, 20 Jul 2026, want both); it never denies being an AI; and the label
+is **ambient and persistent**, not a one-time notice, because NY GBL Art. 47 and
+Utah's safe harbour both want disclosure sustained rather than delivered once.
+
+Frame it as the premise, not a caveat — "I built an AI version of myself, here's
+the system prompt" rather than "chat with Evan (AI)." The Replicant Effect
+(§7.3) says the trust penalty attaches to being the odd one out in a field of
+apparently-human self-presentations, and a frame where the artifact-ness is the
+whole point has no such comparison class. The voxel world is already doing most
+of this work for free.
+
 ### What I would not bother with, and why
 
 - **RAG, vector stores, chunking, embeddings.** 25k tokens. It caches. There is
   no retrieval step, therefore no retrieval failure. Adding one would introduce
-  a failure mode that doesn't currently exist.
+  a failure mode that doesn't currently exist. Recording a live disagreement
+  here: the security-side research concluded with "ground every career fact in a
+  *retrieved* verified document, RAGAS-style." I think that's the reflex of a
+  literature written for large corpora, and the reasoning in §1 — that
+  fabrication here is parametric interpolation rather than missing context —
+  says retrieval is solving a problem we don't have. But it's a real
+  disagreement and worth knowing it exists.
 - **Fine-tuning on Evan's voice.** Costs money, buys no accuracy (personas don't
   improve factual accuracy — Wharton, Dec 2025), and actively harms the thing
   this document is about: it moves facts from a file you can edit and check into
