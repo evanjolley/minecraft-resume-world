@@ -119,6 +119,15 @@ y=177, ocean and lush caves in it, along with whatever ore the generator
 happened to put there -- the ore frequencies this used to solve for by hand
 are Mojang's own now, because Mojang's generator placed them.
 
+X is mirrored on the way out of the extractor, and that is the one thing in
+the pipeline that is not a straight copy. Babylon's scene is left-handed and
+Minecraft's world is right-handed, so without the flip the whole thing renders
+as a mirror image of the save it came from -- which is a bug that looks like
+nothing at all, because everything downstream inherits it and agrees with it.
+The consequence a player can see is that **+X is west here**: the axes cannot
+carry Minecraft's cardinal names and turn like a compass at the same time in a
+left-handed scene. `docs/TERRAIN.md` has the argument.
+
 `src/island.js` still answers `(x, y, z) => blockID` and is still pure. It
 just looks the answer up in `public/terrain/terrain.bin` instead of computing
 it, which is what let the chunk callback, the specs and the future diff-based
