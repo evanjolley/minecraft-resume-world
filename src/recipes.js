@@ -1,4 +1,4 @@
-import { ARMOR_SLOTS } from './items.js'
+import { ARMOR_SLOTS, ITEM_BY_KEY } from './items.js'
 
 /*
  * The recipe book. Data only -- crafting.js is what matches it.
@@ -257,3 +257,193 @@ const BLOCK_RECIPES = [
 ]
 
 export const RECIPES = [...WOOD_RECIPES, ...GEAR_RECIPES, ...BLOCK_RECIPES]
+
+/* ==================================================================== *
+ * SMELTING, and the fuel that drives it.
+ *
+ * A second table rather than a second file, and a second SHAPE rather than a
+ * third: a furnace recipe has no grid, so `shaped`/`shapeless` cannot express
+ * it and pretending a 1x1 pattern is one would put a fake grid in front of
+ * crafting.js's offset matcher for no gain. What it shares with the tables
+ * above is the thing that matters -- ingredients are KEYS and "#tags", and
+ * crafting.js resolves both to ids once, at load, through the same resolve().
+ *
+ * TIMES. Vanilla's furnace is 200 ticks (10 seconds) an item:
+ * "A furnace runs at a speed of one item every 200 game ticks (10 seconds)"
+ * (minecraft.wiki/w/Furnace), and TileEntityFurnace.getCookTime returns a flat
+ * 200 for every recipe. A blast furnace and a smoker halve it to 100 --
+ * "These devices operate at double speed, requiring only 5 seconds (100 ticks)
+ * per item, consuming identical fuel quantities" (minecraft.wiki/w/Smelting).
+ * That is a property of the BLOCK, not of the recipe, so it lives on the
+ * furnace kinds in furnace.js and no entry below carries a time.
+ *
+ * WHAT IS DELIBERATELY ABSENT: food. Every smoker recipe in Minecraft is a
+ * food item, and items.js has no food at all -- so the smoker in this palette
+ * is a furnace that cooks ores at double speed and has no menu of its own.
+ * Also absent: the dye recipes (cactus -> green, sea pickle -> lime), for the
+ * same reason the crafting table has no dyes, and popped chorus fruit, which
+ * has no item here.
+ * ==================================================================== */
+
+/* Two more vanilla item tags, needed by the fuel table rather than by any
+ * recipe. Wooden stairs burn as long as the planks they are made of; wooden
+ * slabs burn half as long, which is the one place the family splits.
+ *
+ * FILTERED against the item table rather than written out, because only eight
+ * of the twelve woods here have a slab and a stair item -- pale oak, crimson,
+ * warped and bamboo do not. A tag naming an item that does not exist makes
+ * crafting.js's resolve() throw at load, which would take the whole page down
+ * over a fuel entry; filtering also means a wood that GAINS a slab later joins
+ * the tag with no edit here. Road not taken: listing the eight by hand, which
+ * is the same table plus a maintenance trap. */
+const exists = (key) => ITEM_BY_KEY.has(key)
+const WOOD_PREFIXES = [...WOODS.map(([wood]) => wood), 'bamboo']
+TAGS.wooden_slabs = WOOD_PREFIXES.map(w => `${w}_slab`).filter(exists)
+TAGS.wooden_stairs = WOOD_PREFIXES.map(w => `${w}_stairs`).filter(exists)
+TAGS.wooden_tools = ['wooden_pickaxe', 'wooden_axe', 'wooden_shovel', 'wooden_hoe', 'wooden_sword']
+TAGS.wool = [
+  'white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray',
+  'light_gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black',
+].map(c => `${c}_wool`)
+
+/** One furnace recipe. `from` is an item key or a "#tag", same as a grid cell. */
+const smelt = (result, from) => ({ result, from })
+
+/**
+ * Every ore that yields its metal, including the deepslate and nether
+ * variants. Written as a generator because the five-line block per ore is
+ * where a copy-paste puts gold ingots in the copper row.
+ */
+const oreSmelts = (product, ores) => ores.map(ore => smelt(product, ore))
+
+export const SMELTING = [
+  /* ---- ores and the raw metals ---- */
+  ...oreSmelts('iron_ingot', ['raw_iron', 'iron_ore', 'deepslate_iron_ore']),
+  ...oreSmelts('gold_ingot', ['raw_gold', 'gold_ore', 'deepslate_gold_ore', 'nether_gold_ore']),
+  ...oreSmelts('copper_ingot', ['raw_copper', 'copper_ore', 'deepslate_copper_ore']),
+  ...oreSmelts('coal', ['coal_ore', 'deepslate_coal_ore']),
+  ...oreSmelts('diamond', ['diamond_ore', 'deepslate_diamond_ore']),
+  ...oreSmelts('emerald', ['emerald_ore', 'deepslate_emerald_ore']),
+  ...oreSmelts('lapis_lazuli', ['lapis_ore', 'deepslate_lapis_ore']),
+  ...oreSmelts('redstone', ['redstone_ore', 'deepslate_redstone_ore']),
+  ...oreSmelts('quartz', ['nether_quartz_ore']),
+  smelt('netherite_scrap', 'ancient_debris'),
+
+  /*
+   * Iron and gold gear back to nuggets. Vanilla's one deliberately lossy
+   * recipe -- a whole pickaxe returns a single nugget -- and it is the reason
+   * a furnace is worth anything to a player with a chest of junk armor.
+   */
+  ...['pickaxe', 'axe', 'shovel', 'hoe', 'sword'].flatMap(t => [
+    smelt('iron_nugget', `iron_${t}`), smelt('gold_nugget', `golden_${t}`),
+  ]),
+  ...ARMOR_SLOTS.flatMap(s => [
+    smelt('iron_nugget', `iron_${s}`), smelt('gold_nugget', `golden_${s}`),
+  ]),
+
+  /* ---- glass, and the sands that make it ---- */
+  smelt('glass', 'sand'),
+  smelt('glass', 'red_sand'),
+
+  /* ---- stone, which is what a furnace mostly does ---- */
+  smelt('stone', 'cobblestone'),
+  smelt('deepslate', 'cobbled_deepslate'),
+  smelt('smooth_stone', 'stone'),
+  smelt('smooth_sandstone', 'sandstone'),
+  smelt('smooth_red_sandstone', 'red_sandstone'),
+  smelt('smooth_quartz', 'quartz_block'),
+  smelt('smooth_basalt', 'basalt'),
+  smelt('cracked_stone_bricks', 'stone_bricks'),
+  smelt('cracked_deepslate_bricks', 'deepslate_bricks'),
+  smelt('cracked_deepslate_tiles', 'deepslate_tiles'),
+  smelt('cracked_nether_bricks', 'nether_bricks'),
+  smelt('cracked_polished_blackstone_bricks', 'polished_blackstone_bricks'),
+
+  /* ---- clay, and the two different things it becomes ---- */
+  smelt('terracotta', 'clay'),
+  smelt('brick', 'clay_ball'),
+  smelt('nether_brick', 'netherrack'),
+
+  /* ---- the odds ---- */
+  smelt('sponge', 'wet_sponge'),
+  /*
+   * CHARCOAL, from any log. `#logs` is the crafting table's own tag, reused
+   * -- which is exactly why the tag exists, and why a wood added to WOODS
+   * becomes fuel, planks and charcoal in one edit rather than three.
+   */
+  smelt('charcoal', '#logs'),
+]
+
+/* ------------------------------------------------------------------ *
+ * FUEL
+ *
+ * Burn times in TICKS, which is the unit vanilla stores them in.
+ * TileEntityFurnace.getItemBurnTime is the source for every number here and
+ * is quoted where it is not obvious; minecraft.wiki/w/Smelting states the
+ * same table in seconds, and they agree at 20 ticks to the second:
+ *
+ *   lava bucket       20000 ticks   1000 s   100 items
+ *   block of coal     16000 ticks    800 s    80 items
+ *   dried kelp block   4000 ticks    200 s    20 items
+ *   blaze rod          2400 ticks    120 s    12 items
+ *   coal / charcoal    1600 ticks     80 s     8 items
+ *   logs, planks, and the rest of the wooden furniture
+ *                       300 ticks     15 s    1.5 items
+ *   wooden slabs        150 ticks      7.5 s  0.75 items
+ *   wooden tools        200 ticks     10 s     1 item
+ *   stick, bowl, wool   100 ticks      5 s     0.5 items
+ *   bamboo               50 ticks      2.5 s  0.25 items
+ *
+ * "1.5 items" is not a rounding: burn time is spent by the TICK, so a plank's
+ * 300 leaves 100 ticks of flame still burning after one item is done, and a
+ * second item started in that window finishes for free. That is why the
+ * burn clock in furnace.js runs independently of the cook clock rather than
+ * being reset per item.
+ *
+ * NOT HERE and deliberately: the lava bucket and the blaze rod, the two ends
+ * of the table. items.js has `bucket` but no `lava_bucket` -- there is no
+ * filled-bucket item in this world -- and no blaze rod, because there are no
+ * blazes. Listing either would be a fuel nobody can ever hold.
+ * ------------------------------------------------------------------ */
+
+/** [item key or "#tag", burn time in ticks]. Order does not matter; a tag
+ *  and a key naming the same item would be a bug either way. */
+export const FUELS = [
+  ['coal_block', 16000],
+  ['dried_kelp_block', 4000],
+  ['coal', 1600],
+  ['charcoal', 1600],
+
+  // Material.wood, which in vanilla is the blanket rule every wooden block
+  // falls under. Spelled out here because this world has no material system
+  // to ask -- these are the wooden things items.js actually has.
+  ['#logs', 300],
+  ['#planks', 300],
+  ['#wooden_stairs', 300],
+  ['bamboo_block', 300],
+  ['bamboo_mosaic', 300],
+  ['ladder', 300],
+  ['bookshelf', 300],
+  ['crafting_table', 300],
+  ['note_block', 300],
+  ['jukebox', 300],
+  ['loom', 300],
+  ['barrel', 300],
+  ['cartography_table', 300],
+  ['fletching_table', 300],
+  ['smithing_table', 300],
+  ['bow', 300],
+  ['fishing_rod', 300],
+
+  // "if (block == Blocks.wooden_slab) return 150" -- the one wooden thing
+  // that is not 300, because it is half a plank.
+  ['#wooden_slabs', 150],
+
+  // ItemTool/ItemSword/ItemHoe with material WOOD.
+  ['#wooden_tools', 200],
+
+  ['stick', 100],
+  ['bowl', 100],
+  ['#wool', 100],
+  ['bamboo', 50],
+]

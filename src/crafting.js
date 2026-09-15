@@ -1,4 +1,4 @@
-import { RECIPES, TAGS } from './recipes.js'
+import { RECIPES, TAGS, SMELTING, FUELS } from './recipes.js'
 import { itemId } from './items.js'
 
 /*
@@ -203,3 +203,55 @@ export function consumeGrid(cells) {
   }
   return cells
 }
+
+/* ==================================================================== *
+ * Smelting: the same "data in recipes.js, matching here" split, one slot
+ * wide.
+ *
+ * Both lookups are MAPS built once at load, not scans. That is the opposite
+ * call from findRecipe above, and the reason is the call site: a grid match
+ * happens on a mouse click, while `smeltingResult` is asked by every lit
+ * furnace on every tick. 59 recipes times however many furnaces are burning,
+ * twenty times a second, is a scan that would show up.
+ *
+ * A tag expands to one map entry per member, which is why "#logs" costs
+ * nothing at lookup time.
+ * ==================================================================== */
+
+const buildIndex = (rows) => {
+  const map = new Map()
+  for (const [spec, value] of rows) {
+    for (const id of resolve(spec)) {
+      /*
+       * FIRST ENTRY WINS, and it has to be an error rather than a silent
+       * overwrite: two rows claiming the same item is a table bug, and the
+       * symptom -- cobblestone smelting into the wrong thing -- is invisible
+       * until someone plays it.
+       */
+      if (map.has(id)) throw new Error(`two smelting/fuel entries for item id ${id}`)
+      map.set(id, value)
+    }
+  }
+  return map
+}
+
+const SMELT_BY_INPUT = buildIndex(SMELTING.map(r => [r.from, itemId(r.result)]))
+const FUEL_BY_ITEM = buildIndex(FUELS)
+
+/**
+ * What one of this item smelts into, or 0.
+ *
+ * Returns an ITEM id and always a count of one: every furnace recipe in
+ * Minecraft yields exactly one item, so a `count` field would be a column of
+ * 1s. If a mod-shaped recipe ever needs otherwise, that is the moment to add
+ * it, not now.
+ */
+export const smeltingResult = (id) => SMELT_BY_INPUT.get(id) ?? 0
+
+/** How many ticks one of this item burns for, or 0 if it is not fuel. */
+export const burnTicks = (id) => FUEL_BY_ITEM.get(id) ?? 0
+
+/** Counts, for the test suite and the console -- a table that silently
+ *  shrank to two entries should be assertable. */
+export const smeltingTableSize = () => SMELT_BY_INPUT.size
+export const fuelTableSize = () => FUEL_BY_ITEM.size

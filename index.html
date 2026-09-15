@@ -155,7 +155,7 @@
     /* Two container screens share every rule: the inventory (2x2 crafting,
        armor, offhand) and the crafting table (3x3). Only the background
        sprite and the slot positions differ, both set from inventory.js. */
-    #inventory, #crafting, #creative { position: absolute; inset: 0; display: grid; place-content: center;
+    #inventory, #crafting, #creative, #furnace { position: absolute; inset: 0; display: grid; place-content: center;
       background: rgba(0,0,0,0.55); z-index: 20; }
     /* The sprite leaves the player-preview window transparent, which showed
        the page's black through it. Minecraft's panel grey sits behind so it
@@ -223,6 +223,39 @@
       0 0 0 2px #000000; border-radius: 0 0 6px 6px; }
     #creative-panel .gui-tab.selected { filter: none; z-index: 2; }
     .gui-tab-icon { pointer-events: none; }
+
+    /* ---------------- furnace ----------------
+       DRAWN rather than blitted, same call and the same reason as the
+       creative picker above: gui/container/furnace.png is in the vanilla jar
+       and the CE pack has no furnace GUI at all, and CE is what a deploy
+       ships. Same palette, same 2px-per-GUI-pixel bevels. */
+    #furnace-panel { position: relative; background: #c6c6c6; image-rendering: pixelated;
+      box-shadow: inset 4px 4px 0 #ffffff, inset -4px -4px 0 #555555,
+                  0 0 0 2px #000000; }
+    /* The title is centred, which is AbstractFurnaceScreen's own
+       titleLabelX = (imageWidth - font.width(title)) / 2 -- so it is a full
+       width line with centred text rather than a left offset we would have to
+       measure the font to compute. */
+    .furnace-title { left: 0; right: 0; text-align: center; }
+
+    /* The flame and the arrow. Each is a SHAPE (clip-path) holding two
+       layers: the dark one vanilla's background sprite paints, and a lit
+       layer over it. The lit layer is anchored -- flame to the bottom, arrow
+       to the left -- so growing it reveals the shape the way vanilla's
+       partial blit does, rather than scaling a whole sprite down. */
+    .furnace-gauge { position: absolute; background: #545454; }
+    .gauge-fill { position: absolute; }
+    /* 14x14. A flame: wide base, pinched waist, tip off to one side, which is
+       roughly what the vanilla sprite silhouettes to. */
+    .furnace-flame { clip-path: polygon(50% 0%, 72% 30%, 64% 43%, 86% 36%,
+      100% 64%, 86% 93%, 50% 100%, 14% 93%, 0% 64%, 7% 36%, 29% 43%); }
+    .furnace-flame .gauge-fill { left: 0; right: 0; bottom: 0;
+      background: linear-gradient(to bottom, #ff7b00 0%, #ffc400 55%, #fff0a0 100%); }
+    /* 24x16. The shaft is 6 px tall (5..11) and the head starts at x=14,
+       which is what the vanilla arrow measures. */
+    .furnace-arrow { clip-path: polygon(0% 31.25%, 58.3% 31.25%, 58.3% 0%,
+      100% 50%, 58.3% 100%, 58.3% 68.75%, 0% 68.75%); }
+    .furnace-arrow .gauge-fill { left: 0; top: 0; bottom: 0; background: #ffffff; }
 
     #creative-search { position: absolute; background: #000000; color: #e0e0e0;
       border: 2px solid #a0a0a0; outline: none; font-family: inherit;
@@ -430,7 +463,12 @@
   <div id="crafting" class="hidden">
     <div id="craft-panel"></div>
   </div>
-  <!-- The creative item picker. A third screen, not a mode of the first. -->
+  <!-- The furnace. A third container screen, and the only one whose contents
+       keep changing while you watch it. -->
+  <div id="furnace" class="hidden">
+    <div id="furnace-panel"></div>
+  </div>
+  <!-- The creative item picker. A fourth screen, not a mode of the first. -->
   <div id="creative" class="hidden">
     <div id="creative-panel"></div>
   </div>

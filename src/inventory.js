@@ -2,7 +2,8 @@ import { createItemIcon } from './blockIcon.js'
 import { SCALE as HUD_SCALE, FONT_PX, px } from './hud.js'
 import { stackMax, armorOf, ARMOR_SLOTS, itemId, itemName } from './items.js'
 import { TABS, tabItems, searchItems, creativeListClick, fullStack } from './creative.js'
-import { findRecipe, consumeGrid } from './crafting.js'
+import { findRecipe, consumeGrid, smeltingResult, burnTicks } from './crafting.js'
+import { createFurnaces, FURNACE_BLOCKS, INPUT, FUEL, OUTPUT } from './furnace.js'
 
 /*
  * Inventory model + the container screens.
@@ -76,8 +77,34 @@ export function createInventory() {
     area === 'armor' ? inv.armor
       : area === 'offhand' ? inv.offhand
         : area === 'craft' ? inv.craft.cells
-          : inv.slots
+          : area === 'furnace' ? (inv.openFurnace?.slots ?? NO_FURNACE)
+            : inv.slots
   )
+
+  /*
+   * What `container('furnace')` answers with when no furnace is open.
+   *
+   * A frozen three-null array rather than null, because every caller does
+   * `container(area)[index]` and a null here would throw from a repaint that
+   * lands one frame after the screen closed. Frozen so a stray write is a
+   * TypeError at the moment of the bug rather than an item vanishing into a
+   * shared scratch array.
+   */
+  const NO_FURNACE = Object.freeze([null, null, null])
+
+  /*
+   * THE WORLD'S FURNACES, on the inventory model.
+   *
+   * They live here rather than in main.js for the same reason `inv.screen`
+   * does: everything that needs them already has the inventory, and the
+   * alternative is threading a fifth handle through main.js -- a file two
+   * other agents are editing right now. furnace.js owns the mechanics; this
+   * owns nothing but the reference and which one is open.
+   */
+  inv.furnaces = createFurnaces()
+  /** The furnace state behind the open furnace screen, or null. */
+  inv.openFurnace = null
+  inv.setFurnace = (f) => { inv.openFurnace = f; changed() }
 
   /**
    * Add items, Minecraft's ordering: top up existing partial stacks first,
@@ -244,9 +271,25 @@ export function createInventory() {
    * Minecraft's are: a helmet slot takes helmets.
    */
   const accepts = (area, index, id) => {
-    if (area !== 'armor') return true
-    return armorOf(id)?.slot === ARMOR_SLOTS[index]
+    if (area === 'armor') return armorOf(id)?.slot === ARMOR_SLOTS[index]
+    if (area !== 'furnace') return true
+    /*
+     * The furnace's own two picky slots, both vanilla:
+     *
+     *   FurnaceResultSlot.mayPlace  returns false unconditionally -- the
+     *     output is take-only, exactly like the crafting result.
+     *   FurnaceFuelSlot.mayPlace    `isFuel(stack) || isBucket(stack)`, which
+     *     is why you cannot park a stack of dirt in the fuel slot. The bucket
+     *     half is vanilla's allowance for the empty bucket a lava bucket
+     *     leaves behind; there is no lava bucket here (see FUELS in
+     *     recipes.js), so the plain bucket is admitted and burns for nothing,
+     *     which is exactly what it does in Minecraft.
+     */
+    if (index === OUTPUT) return false
+    if (index === FUEL) return burnTicks(id) > 0 || id === BUCKET
+    return true
   }
+  const BUCKET = itemId('bucket')
 
   /* ---------------- shift-click (quick move) ---------------- */
 
@@ -294,6 +337,29 @@ export function createInventory() {
    * offhand. Vanilla's CraftingMenu really does stop at 46, which is why
    * shift-clicking a helmet at a table can never equip it.
    */
+  /*
+   * The furnace's menu, AbstractFurnaceMenu's own addSlot order:
+   *
+   *     0      input
+   *     1      fuel
+   *     2      output
+   *     3-29   slots 9-35        the main grid
+   *    30-38   slots 0-8         the hotbar, LAST, same trap as above
+   *
+   * No armor, no offhand and no crafting grid -- a furnace screen cannot
+   * equip a helmet, for the same reason a crafting table cannot.
+   */
+  const buildFurnaceMenu = () => {
+    const slots = [
+      { area: 'furnace', index: INPUT },
+      { area: 'furnace', index: FUEL },
+      { area: 'furnace', index: OUTPUT },
+    ]
+    for (let i = HOTBAR_SIZE; i < TOTAL_SLOTS; i++) slots.push({ area: 'main', index: i })
+    for (let i = 0; i < HOTBAR_SIZE; i++) slots.push({ area: 'main', index: i })
+    return slots
+  }
+
   const buildMenu = (gridSize) => {
     const slots = [{ area: 'result', index: 0 }]
     for (let i = 0; i < gridSize * gridSize; i++) slots.push({ area: 'craft', index: i })
@@ -322,6 +388,15 @@ export function createInventory() {
     USE_ROW_START: 36, USE_ROW_END: 45,
     SHIELD_SLOT: 45,
   }
+  const FURNACE_MENU = {
+    slots: buildFurnaceMenu(),
+    chain: quickMoveFurnaceMenu,
+    // Named INPUT/FUEL/RESULT to match the three slots, not vanilla's bare
+    // 0/1/2 -- the chain below reads on the names.
+    INPUT_SLOT: 0, FUEL_SLOT: 1, RESULT: 2,
+    INV_START: 3, INV_END: 30,
+    USE_ROW_START: 30, USE_ROW_END: 39,
+  }
   const TABLE_MENU = {
     slots: buildMenu(3),
     chain: quickMoveCraftingMenu,
@@ -340,7 +415,8 @@ export function createInventory() {
    * container it is currently part of: 2 for the player inventory, 3 for a
    * crafting table, set by show() on open and put back on close.
    */
-  const openMenu = () => (inv.craft.size === 3 ? TABLE_MENU : INV_MENU)
+  const openMenu = () => (
+    inv.openFurnace ? FURNACE_MENU : inv.craft.size === 3 ? TABLE_MENU : INV_MENU)
 
   /**
    * Slot.getItem, over whichever container the descriptor names.
@@ -553,6 +629,60 @@ export function createInventory() {
         if (index < m.USE_ROW_START) {
           if (!moveItemStackTo(m, stack, m.USE_ROW_START, m.USE_ROW_END, false)) return false
         } else if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_START, false)) return false
+      }
+    } else if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_END, false)) {
+      return false
+    }
+    return true
+  }
+
+  /**
+   * AbstractFurnaceMenu.quickMoveStack's if/else chain, verbatim.
+   *
+   * THIS IS THE PART PEOPLE NOTICE. Shift-clicking at a furnace does not
+   * mean "move it to the other half of the screen": vanilla asks what the
+   * item IS. A smeltable goes to the input slot, a fuel goes to the fuel
+   * slot, and only something that is neither falls through to the ordinary
+   * main<->hotbar swap. Shift-click a stack of raw iron and a stack of coal
+   * into an open furnace and it starts running without you aiming at a slot
+   * once.
+   *
+   * The question is asked in that ORDER, and the order is visible: a log is
+   * both smeltable (into charcoal) and fuel, and vanilla sends it to the
+   * INPUT slot, not the fuel slot. Reversing the two tests would make every
+   * log in the game fuel and charcoal unobtainable.
+   *
+   *   } else if (index != 1 && index != 0) {
+   *     if (this.canSmelt(itemstack1)) {
+   *       if (!this.moveItemStackTo(itemstack1, 0, 1, false)) return EMPTY;
+   *     } else if (this.isFuel(itemstack1)) {
+   *       if (!this.moveItemStackTo(itemstack1, 1, 2, false)) return EMPTY;
+   *     } else if ...
+   *
+   * Note what the first branch is NOT: it is not "is this slot the input or
+   * the fuel slot, send it to the inventory" written twice. Clicking IN the
+   * input or fuel slot is the final `else`, which empties that slot into the
+   * player -- the whole player, both rows, in one range.
+   */
+  function quickMoveFurnaceMenu(m, index, stack) {
+    if (index === m.RESULT) {
+      /*
+       * Reversed, like both crafting results: a smelted ingot lands in your
+       * rightmost free hotbar slot. FurnaceResultSlot.onTake also awards the
+       * accumulated smelting experience here -- there is no XP system in this
+       * world for it to award into, which is the one piece of the furnace
+       * that is honestly missing rather than deliberately cut.
+       */
+      if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_END, true)) return false
+    } else if (index !== m.FUEL_SLOT && index !== m.INPUT_SLOT) {
+      if (smeltingResult(stack.id)) {
+        if (!moveItemStackTo(m, stack, m.INPUT_SLOT, m.INPUT_SLOT + 1, false)) return false
+      } else if (burnTicks(stack.id)) {
+        if (!moveItemStackTo(m, stack, m.FUEL_SLOT, m.FUEL_SLOT + 1, false)) return false
+      } else if (index >= m.INV_START && index < m.INV_END) {
+        if (!moveItemStackTo(m, stack, m.USE_ROW_START, m.USE_ROW_END, false)) return false
+      } else if (index >= m.USE_ROW_START && index < m.USE_ROW_END) {
+        if (!moveItemStackTo(m, stack, m.INV_START, m.INV_END, false)) return false
       }
     } else if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_END, false)) {
       return false
@@ -804,6 +934,48 @@ const DOLL_ORIGIN = { x: 36, y: 11 }
 const SLOT_PITCH = 18, SLOT_SIZE = 16
 const GRID_X = 8, GRID_Y = 84, BAR_Y = 142
 
+/* ------------------------------------------------------------------ *
+ * The furnace screen.
+ *
+ * GEOMETRY is AbstractFurnaceMenu's addSlot calls and AbstractFurnaceScreen's
+ * renderBg, in GUI pixels, same discipline as every panel above:
+ *
+ *   input     56, 17
+ *   fuel      56, 53
+ *   output   116, 35
+ *   flame     56, 36, 14x14, and it BURNS DOWN -- vanilla blits
+ *             (14 - k) pixels into the sprite and k pixels tall at
+ *             y + 36 + 14 - k, where k = 13 * litTime / litDuration
+ *   arrow     79, 34, 24x16, filled left to right to
+ *             l = 24 * cookingProgress / cookingTotalTime
+ *   title     centred: titleLabelX = (imageWidth - font.width(title)) / 2
+ *
+ * DRAWN, NOT BLITTED, and for exactly the reason the creative picker is (see
+ * the long note at the bottom of this file): the art is
+ * gui/container/furnace.png in the vanilla jar, and THE CE PACK HAS NO
+ * FURNACE GUI AT ALL -- its gui/ directory is five files, crafting_table,
+ * inventory, icons, widgets and heart_legacy. A deploy ships CE, so extracting
+ * furnace.png would give a panel that looks right in development and 404s in
+ * production. So the panel, the slot recesses, the flame and the arrow are
+ * built from Minecraft's GUI palette in CSS at the same GUI-pixel scale, and
+ * they look identical in both builds.
+ *
+ * What the flame and the arrow MEAN is not approximated: both are driven from
+ * the furnace's own two clocks, scaled by vanilla's own 13 and 24.
+ * ------------------------------------------------------------------ */
+const FURNACE_SLOTS = {
+  [INPUT]: { x: 56, y: 17 },
+  [FUEL]: { x: 56, y: 53 },
+  [OUTPUT]: { x: 116, y: 35 },
+}
+const FLAME = { x: 56, y: 36, w: 14, h: 14, steps: 13 }
+const ARROW = { x: 79, y: 34, w: 24, h: 16, steps: 24 }
+/** getLitProgress / getBurnProgress, both clamped to their sprite's width. */
+const litProgress = (f) => (f.burnTotal > 0
+  ? Math.min(FLAME.steps, Math.round((f.burn * FLAME.steps) / f.burnTotal)) : 0)
+const burnProgress = (f) => (f.cookTotal > 0
+  ? Math.min(ARROW.steps, Math.round((f.cook * ARROW.steps) / f.cookTotal)) : 0)
+
 const ARMOR_ORIGIN = { x: 8, y: 8 }
 const OFFHAND_ORIGIN = { x: 77, y: 62 }
 const CRAFT_2 = { grid: { x: 98, y: 18 }, result: { x: 154, y: 28 } }
@@ -950,6 +1122,8 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
   const panel = document.getElementById('inv-panel')
   const tableScreen = document.getElementById('crafting')
   const tablePanel = document.getElementById('craft-panel')
+  const furnaceScreen = document.getElementById('furnace')
+  const furnacePanel = document.getElementById('furnace-panel')
   const creativeScreen = document.getElementById('creative')
   const creativePanel = document.getElementById('creative-panel')
   const carried = document.getElementById('inv-carried')
@@ -1085,6 +1259,78 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
     tablePanel.appendChild(el)
   }
 
+  /* ---- the furnace panel ---- */
+  furnacePanel.style.width = px(GUI_W)
+  furnacePanel.style.height = px(GUI_H)
+  // The player's own 36, at the same coordinates every container screen uses.
+  for (let i = HOTBAR_SIZE; i < TOTAL_SLOTS; i++) {
+    const n = i - HOTBAR_SIZE
+    makeCell(furnacePanel, 'main', i,
+      GRID_X + (n % 9) * SLOT_PITCH, GRID_Y + Math.floor(n / 9) * SLOT_PITCH)
+      .classList.add('drawn-slot')
+  }
+  for (let i = 0; i < HOTBAR_SIZE; i++) {
+    makeCell(furnacePanel, 'main', i, GRID_X + i * SLOT_PITCH, BAR_Y).classList.add('drawn-slot')
+  }
+  for (const [index, at] of Object.entries(FURNACE_SLOTS)) {
+    makeCell(furnacePanel, 'furnace', Number(index), at.x, at.y).classList.add('drawn-slot')
+  }
+
+  /*
+   * The flame and the arrow. Two elements each: the dark shape vanilla's
+   * background sprite paints, and the lit part drawn over it. The lit part is
+   * CLIPPED rather than resized -- a 14px-tall flame scaled to 4px is a
+   * squashed flame, where vanilla shows the bottom 4 pixels of a full one.
+   */
+  const gauge = (cls, at) => {
+    const el = document.createElement('div')
+    el.className = `furnace-gauge ${cls}`
+    el.style.left = px(at.x)
+    el.style.top = px(at.y)
+    el.style.width = px(at.w)
+    el.style.height = px(at.h)
+    const fill = document.createElement('div')
+    fill.className = 'gauge-fill'
+    el.appendChild(fill)
+    furnacePanel.appendChild(el)
+    return fill
+  }
+  const flameFill = gauge('furnace-flame', FLAME)
+  const arrowFill = gauge('furnace-arrow', ARROW)
+
+  const furnaceTitle = document.createElement('div')
+  furnaceTitle.className = 'gui-label furnace-title'
+  furnaceTitle.style.top = px(6)
+  furnaceTitle.style.fontSize = `${FONT_PX}px`
+  furnaceTitle.style.color = LABEL_COLOR
+  furnacePanel.appendChild(furnaceTitle)
+  {
+    const el = document.createElement('div')
+    el.className = 'gui-label'
+    el.textContent = 'Inventory'
+    el.style.left = px(8)
+    el.style.top = px(GUI_H - 94)
+    el.style.fontSize = `${FONT_PX}px`
+    el.style.color = LABEL_COLOR
+    furnacePanel.appendChild(el)
+  }
+
+  /**
+   * Paint the two gauges from the open furnace's clocks.
+   *
+   * Cheap on purpose -- two style writes -- because this runs on every tick
+   * while the screen is open, unlike the slot repaint, which rebuilds icons
+   * and only runs when the contents actually change.
+   */
+  const paintGauges = () => {
+    const f = inv.openFurnace
+    const k = f ? litProgress(f) : 0
+    const l = f ? burnProgress(f) : 0
+    // Anchored at the BOTTOM: the flame burns down, not up.
+    flameFill.style.height = `${(k / FLAME.steps) * 100}%`
+    arrowFill.style.width = `${(l / ARROW.steps) * 100}%`
+  }
+
   const paintSlot = (cell, stack) => {
     cell.textContent = ''
     // The hint outline is the slot's own background, so it vanishes the
@@ -1114,6 +1360,38 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
     carried.classList.toggle('hidden', !inv.carried)
   })
 
+  /*
+   * THE FURNACES TICK HERE, and they tick whether or not a screen is open.
+   *
+   * `dt` is milliseconds; furnaces.advance converts it to Minecraft's 20 Hz
+   * itself, because noa's tick is 30 Hz and counting engine ticks would make
+   * every number in recipes.js 1.5x wrong.
+   *
+   * Installed from the SCREEN installer rather than from main.js, which is the
+   * one thing here that is not obviously right: a furnace is world state and
+   * main.js is where world state is wired. It is here because main.js is a
+   * shared file with two other agents in it today, and because inventory.js
+   * already owns `inv.furnaces`. Worth moving when the traffic dies down.
+   *
+   * The repaint is split in two on purpose. The gauges are two style writes
+   * and run every tick; the SLOTS rebuild item icons, so they are repainted
+   * only when a smelt actually moved something -- compared by a cheap
+   * signature rather than by trusting the tick count, because a furnace that
+   * is burning changes its clocks 20 times a second and its contents once
+   * every 200.
+   */
+  const slotSignature = (f) => (f ? f.slots.map(x => (x ? `${x.id}x${x.count}` : '-')).join() : '')
+  let lastSignature = ''
+  noa.on('tick', (dt) => {
+    inv.furnaces.advance(dt)
+    if (current !== 'furnace') return
+    paintGauges()
+    const sig = slotSignature(inv.openFurnace)
+    if (sig === lastSignature) return
+    lastSignature = sig
+    inv.emitChange()
+  })
+
   // The carried stack follows the pointer, but only while a screen is open:
   // otherwise this listener runs on every mouse move during play.
   document.addEventListener('mousemove', (e) => {
@@ -1138,10 +1416,18 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
     repaint: () => inv.emitChange(),
   })
 
-  let current = null // null | 'inventory' | 'creative' | 'table'
+  let current = null // null | 'inventory' | 'creative' | 'table' | 'furnace'
 
-  const show = (which) => {
-    if (current === which) return
+  /*
+   * `at` is the furnace's state, and only the furnace screen takes one.
+   *
+   * A second parameter rather than a separate showFurnace(): every rule this
+   * function owns -- pointer lock, the input lock, emptying the crafting grid
+   * on the way out, hiding the tooltip -- applies to the furnace too, and a
+   * parallel entry point is how one of them gets forgotten.
+   */
+  const show = (which, at = null) => {
+    if (current === which && inv.openFurnace === at) return
     // Leaving a screen empties its crafting grid, exactly as closing a
     // container in Minecraft does.
     if (current) inv.clearCraft()
@@ -1154,6 +1440,19 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
     screen.classList.toggle('hidden', which !== 'inventory')
     tableScreen.classList.toggle('hidden', which !== 'table')
     creativeScreen.classList.toggle('hidden', which !== 'creative')
+    furnaceScreen.classList.toggle('hidden', which !== 'furnace')
+    /*
+     * The furnace KEEPS ITS CONTENTS when you close it -- that is the whole
+     * difference between it and a crafting grid, and it is why clearCraft
+     * above has no furnace equivalent. All that is dropped here is the
+     * REFERENCE, so `openMenu()` goes back to answering the player's own
+     * screen and the burning carries on in inv.furnaces without a screen.
+     */
+    inv.openFurnace = which === 'furnace' ? at : null
+    if (at) {
+      furnaceTitle.textContent = itemName(itemId(at.kind))
+      paintGauges()
+    }
     if (which === 'creative') creative.opened()
     // A tooltip outlives the screen it was drawn over otherwise: the pointer
     // never leaves the cell, it is the cell that goes away, so no mouseleave
@@ -1220,14 +1519,27 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
    *   not to place anything.
    */
   const CRAFTING_TABLE = itemId('crafting_table')
-  const useBlock = (blockId) => {
-    if (blockId !== CRAFTING_TABLE) return false
-    show('table')
+  const useBlock = (blockId, position) => {
+    if (blockId === CRAFTING_TABLE) { show('table'); return true }
+    /*
+     * A furnace screen is bound to a POSITION, not to a block id: two
+     * furnaces side by side are two separate machines with separate
+     * contents. `furnaces.at` creates the state on first use, which is this
+     * world's stand-in for a block entity -- see the note in furnace.js about
+     * what that costs when a furnace is broken and replaced.
+     */
+    const kind = FURNACE_BLOCKS.get(blockId)
+    if (!kind) return false
+    show('furnace', inv.furnaces.at(position, kind))
     return true
   }
 
   const api = {
     setOpen, useBlock, openCraftingTable: () => show('table'), current: () => current,
+    /** Open a furnace by world position, for the console and the test suite --
+     *  the same path a right-click takes, minus aiming at one. */
+    openFurnace: (position, kind = 'furnace') =>
+      show('furnace', inv.furnaces.at(position, kind)),
     /*
      * The picker's handle, for the test suite and the console. Exposed rather
      * than reached through the DOM because "which tab is showing" and "how far
