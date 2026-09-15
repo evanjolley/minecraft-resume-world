@@ -227,12 +227,21 @@ const GROUND = [
 /* ------------------------------------------------------------------ *
  * Ice. Translucent, so `alpha` -- which puts them on the atlas page
  * that gets alpha blending, and tells noa not to cull their neighbours.
+ *
+ * `friction` is Minecraft's Block.getFriction, and the three values here are
+ * the only reason anyone builds an ice road: 0.98 for ice and packed ice,
+ * 0.989 for blue ice, against 0.6 for every ordinary block. It is a
+ * SLIPPERINESS, not a friction -- higher means MORE slide -- and it does two
+ * things at once, which is the part worth knowing: it sets how much speed you
+ * keep each tick AND, through 0.1 * (0.6/friction)^3, how hard you may push.
+ * That is why ice is slow to get going and slow to stop rather than simply
+ * fast. physics.js owns the arithmetic; this table owns the numbers.
  * ------------------------------------------------------------------ */
 
 const ICE = [
-  { id: 69, key: 'ice', name: 'Ice', all: 'ice', hardness: T(0.5, false), alpha: true },
-  { id: 70, key: 'packed_ice', name: 'Packed Ice', all: 'packed_ice', hardness: T(0.5, false) },
-  { id: 71, key: 'blue_ice', name: 'Blue Ice', all: 'blue_ice', hardness: T(2.8, false) },
+  { id: 69, key: 'ice', name: 'Ice', all: 'ice', hardness: T(0.5, false), alpha: true, friction: 0.98 },
+  { id: 70, key: 'packed_ice', name: 'Packed Ice', all: 'packed_ice', hardness: T(0.5, false), friction: 0.98 },
+  { id: 71, key: 'blue_ice', name: 'Blue Ice', all: 'blue_ice', hardness: T(2.8, false), friction: 0.989 },
 ]
 
 /* ------------------------------------------------------------------ *
@@ -339,7 +348,15 @@ const NETHER = [
   { id: 124, key: 'cracked_nether_bricks', name: 'Cracked Nether Bricks', all: 'cracked_nether_bricks', hardness: T(2) },
   { id: 125, key: 'chiseled_nether_bricks', name: 'Chiseled Nether Bricks', all: 'chiseled_nether_bricks', hardness: T(2) },
   { id: 126, key: 'red_nether_bricks', name: 'Red Nether Bricks', all: 'red_nether_bricks', hardness: T(2) },
-  { id: 127, key: 'soul_sand', name: 'Soul Sand', all: 'soul_sand', hardness: T(0.5, false) },
+  /*
+   * `speedFactor` is Block.getSpeedFactor and is a DIFFERENT mechanism from
+   * `friction` above, which is the thing everyone conflates. Friction changes
+   * how you accelerate and how you keep speed; the speed factor is a flat
+   * multiplier Entity.move applies to horizontal velocity every tick you are
+   * on the block. Soul sand is 0.4 -- shared with honey, which this world has
+   * no block for yet -- and 1.0 everywhere else.
+   */
+  { id: 127, key: 'soul_sand', name: 'Soul Sand', all: 'soul_sand', hardness: T(0.5, false), speedFactor: 0.4 },
   { id: 128, key: 'soul_soil', name: 'Soul Soil', all: 'soul_soil', hardness: T(0.5, false) },
   { id: 129, key: 'glowstone', name: 'Glowstone', all: 'glowstone', hardness: T(0.3, false) },
   { id: 130, key: 'shroomlight', name: 'Shroomlight', all: 'shroomlight', hardness: T(1, false) },
@@ -529,7 +546,10 @@ const UTILITY = [
   { id: 332, key: 'dried_kelp_block', name: 'Dried Kelp Block',
     top: 'dried_kelp_top', bottom: 'dried_kelp_bottom', side: 'dried_kelp_side', hardness: T(0.5, false) },
   { id: 333, key: 'honeycomb_block', name: 'Honeycomb Block', all: 'honeycomb_block', hardness: T(0.6, false) },
-  { id: 334, key: 'slime_block', name: 'Slime Block', all: 'slime_block', hardness: 0, alpha: true },
+  // Slime is 0.8 slippery: not ice, but enough that you overshoot on it. Its
+  // bounce is a separate mechanic (Block.getJumpFactor and the landing
+  // bounce-back) and is not reproduced -- see physics.js.
+  { id: 334, key: 'slime_block', name: 'Slime Block', all: 'slime_block', hardness: 0, alpha: true, friction: 0.8 },
   { id: 335, key: 'sponge', name: 'Sponge', all: 'sponge', hardness: T(0.6, false) },
   { id: 336, key: 'wet_sponge', name: 'Wet Sponge', all: 'wet_sponge', hardness: T(0.6, false) },
 
@@ -825,6 +845,21 @@ BLOCK_TYPES.forEach((def, i) => {
 
 // id -> definition, for the O(1) lookups mining and the inventory do per frame.
 export const BLOCK_BY_ID = new Map(BLOCK_TYPES.map(b => [b.id, b]))
+
+/*
+ * id -> the two numbers that change how a block is to WALK ON, for the blocks
+ * where either is not the default. physics.js reads this every tick.
+ *
+ * ONLY THE EXCEPTIONS ARE IN IT, and that is deliberate rather than an
+ * optimisation: a miss means "ordinary ground", which is the branch physics.js
+ * must be able to take without touching a single calibrated constant. A map
+ * containing all 638 blocks with 0.6/1.0 in most of them would still work, but
+ * it would hide the fact that this is a rule with four exceptions.
+ */
+export const SURFACE_PHYSICS = new Map(
+  BLOCK_TYPES
+    .filter(b => b.friction !== undefined || b.speedFactor !== undefined)
+    .map(b => [b.id, { friction: b.friction ?? 0.6, speedFactor: b.speedFactor ?? 1 }]))
 
 /**
  * The six face materials for a block, in noa's order.

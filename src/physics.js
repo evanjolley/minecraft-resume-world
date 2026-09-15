@@ -1,4 +1,5 @@
 import { createEmitter } from './emitter.js'
+import { SURFACE_PHYSICS } from './blocks.js'
 
 /*
  * Minecraft Java Edition movement, mapped onto noa's physics.
@@ -77,10 +78,61 @@ export const MC = {
   FLY_SPRINT_SPEED: 21.78,
   FLY_VERTICAL_SPEED: 7.5,
 
-  // The 0.6 vertical retention above, expressed as the continuous rate that
-  // reaches the same terminal speed in the same time: 0.6 per 1/20 s means
-  // velocity decays as e^(-10.2t).
-  FLY_VERTICAL_RESPONSE: 10.2,
+  /*
+   * The two retentions flight is built out of, kept as Minecraft's own
+   * per-tick multipliers rather than as rates. `Player.travel` is four lines
+   * long and both numbers are in it:
+   *
+   *   if (this.getAbilities().flying) {
+   *     double d2 = this.getDeltaMovement().y;
+   *     super.travel(input);                     // 0.91 lands on x and z here
+   *     this.setDeltaMovement(...with(Y, d2 * 0.6));
+   *   }
+   *
+   * The y line is the whole of vanilla's vertical flight model: it throws away
+   * gravity AND the 0.98 vertical air drag that super.travel just applied, and
+   * replaces them with a flat 0.6. The horizontal keeps travelInAir's 0.91,
+   * which is the same 0.91 every airborne entity gets.
+   *
+   * They used to be one number here, FLY_VERTICAL_RESPONSE = 10.2, which was
+   * 0.6 correctly resampled as a continuous rate (-ln(0.6) * 20 = 10.216) and
+   * was applied only to the vertical. It was not wrong; it was half the model.
+   * Nothing at all was applied horizontally, so a flier who let go of W kept
+   * their speed against noa's airDrag alone and coasted 68 blocks over ten
+   * seconds where vanilla stops inside 5.5 blocks and a second and a half.
+   * That gap is what "the slowdown time of flying isn't a match" is.
+   */
+  FLY_RETENTION: 0.91,
+  FLY_VERTICAL_RETENTION: 0.6,
+
+  /* ---------------- ground you can slip on ---------------- *
+   *
+   * Block.getFriction, the number this file calls SLIPPERINESS because higher
+   * means MORE slide: 0.6 for almost every block in the game, and the
+   * exceptions live in blocks.js next to the blocks that have them.
+   *
+   * AIR_FRICTION is the 0.91 that multiplies it. LivingEntity.travelInAir:
+   *
+   *   float f = this.onGround() ? blockBelow.getFriction() : 1.0F;
+   *   float f1 = f * 0.91F;
+   *   ... setDeltaMovement(vec3.x * f1, d0 * f2, vec3.z * f1)
+   *
+   * so the per-tick horizontal retention is 0.546 on ordinary ground, 0.8918
+   * on ice, and 0.91 in mid-air -- and the airborne figure does NOT depend on
+   * what you jumped off, which is why nothing below touches air control.
+   *
+   * GROUND_ACCEL_NUMERATOR is getFrictionInfluencedSpeed's 0.21600002, the
+   * other half of what slipperiness does:
+   *
+   *   speed * (0.21600002F / (friction * friction * friction))
+   *
+   * 0.6^3 is 0.216, so the constant exists precisely to make ordinary ground
+   * come out at 1x. On ice the cube makes you push at 0.23x. Ice is slow to
+   * start AND slow to stop; only the second half is the famous one.
+   */
+  DEFAULT_FRICTION: 0.6,
+  AIR_FRICTION: 0.91,
+  GROUND_ACCEL_NUMERATOR: 0.21600002,
 
   // Mid-jump steering authority, as a fraction of the ground figure. Named
   // because being IN A FLUID cancels it -- see installSpeedModes.
@@ -265,6 +317,199 @@ const BASE_FOV_DEG = 70
 const SPRINT_FOV_MULT = 1.1
 const DOUBLE_TAP_MS = 350
 
+/* ------------------------------------------------------------------ *
+ * Minecraft's own recurrence, for the two places noa's model cannot reach
+ * ------------------------------------------------------------------ */
+
+/*
+ * WHY THIS EXISTS WHEN THERE IS A REJECTION TWO HUNDRED LINES DOWN THAT
+ * LOOKS LIKE IT FORBIDS IT. Read that one first: the sprint-jump clamp
+ * rejects "raising drag to Minecraft's 0.91" because the flat-ground
+ * 7.34 b/s average, MC.SPRINT_JUMP_BOOST and JUMP_IMPULSE are all balanced
+ * against noa's drag, and moving it re-opens three calibrated numbers.
+ *
+ * THAT REJECTION STILL STANDS, and nothing here disturbs it, because it is
+ * about ORDINARY GROUND AND MID-AIR -- which is where every calibrated
+ * number in this file was measured. What follows runs in exactly two
+ * situations, neither of them ordinary:
+ *
+ *   1. standing on a block whose slipperiness or speed factor is not the
+ *      default -- ice, blue ice, slime, soul sand. Four block ids.
+ *   2. flying.
+ *
+ * On grass, stone, and in mid-air over either, the lookup misses, this code
+ * returns without touching a thing, and walking is bit-for-bit what it was.
+ * That is the layering the ice question came down to, and it works because
+ * BOTH of vanilla's per-block numbers can be expressed as a ratio against
+ * the 0.6 case, and both ratios are exactly 1 at 0.6:
+ *
+ *   speed    (0.6/f)^3 * (1 - 0.91*0.6) / (1 - 0.91*f*speedFactor)
+ *   retain   0.91 * f * speedFactor      (against 0.546 on ordinary ground)
+ *
+ * So MC.WALK_SPEED, MC.SPRINT_SPEED and MC.SNEAK_SPEED stay exactly where
+ * they are and get multiplied by a number that is 1.0000 unless you are
+ * standing on one of four blocks. Adopting vanilla's model wholesale --
+ * replacing responsiveness/drag everywhere with (v + a) * f -- would have
+ * been the other answer, and it re-opens jump apex, walk speed, sprint-jump
+ * average and air control simultaneously to fix a block nobody has built
+ * with yet. Rejected on the same grounds the drag change was.
+ *
+ * WHAT IT ACTUALLY DOES, where it is engaged, is stop using noa's movement
+ * model rather than bend it. noa pushes with `responsiveness * (S - v)`
+ * capped at moveForce, which reaches its target in about four ticks however
+ * slippery the ground is -- and "how long it takes to reach the target" IS
+ * the ice mechanic, so there is nothing to scale. So moveForce and both
+ * ground frictions go to zero and the velocity is written directly from
+ * Minecraft's recurrence instead. It is a takeover with a hard boundary,
+ * not a tuning.
+ *
+ * NOT REPRODUCED, and each is a separate mechanic rather than a corner cut:
+ *   - the slime block's bounce (Block.getJumpFactor 0.5 and the landing
+ *     bounce-back in Entity.bounceUp). Slime's 0.8 slipperiness is here;
+ *     its trampoline is not.
+ *   - the honey block, which shares soul sand's 0.4 speed factor and adds a
+ *     0.5 jump factor and wall-sliding. blocks.js has no honey block to
+ *     hang it on -- the block does not exist in this world yet, and adding
+ *     one needs a texture the build pipeline has to be told about.
+ *   - frosted ice (0.98), which only exists under Frost Walker boots.
+ */
+
+/**
+ * One axis, advanced by Minecraft's `v' = (v + a) * retain`.
+ *
+ * THE SUBTLETY IS THE DIVISION AT THE END, and it is the same
+ * one-step-ahead correction fluids.js's dragFor() carries. This runs in
+ * noa's 'tick' event, which fires AFTER the physics step -- so the number
+ * written here is not the velocity that moves the player, it is the
+ * velocity noa will apply its global airDrag to and THEN move with.
+ * Dividing the drag back out means the displacement per tick is exactly
+ * Minecraft's, which is the thing a player can actually see. Skip it and
+ * everything here reads 0.33% slow.
+ *
+ * `retain` is Minecraft's per-20-Hz-tick figure and is resampled onto noa's
+ * tick rate by exponent, which is legal for the same reason it is legal in
+ * fluids.js's sinkTransient: it is a pure geometric decay with the
+ * acceleration already separated out of it, so `r^(20*dt)` has the same
+ * continuous rate at any tick rate.
+ */
+function driveAxis(body, axis, dtSec, retain, target, drag) {
+  const f = retain ** (MC.TICKS_PER_SECOND * dtSec)
+  const mult = Math.max(1 - (drag * dtSec) / body.mass, 0)
+  const v = f * body.velocity[axis] + target * (1 - f)
+  body.velocity[axis] = mult > 0 ? v / mult : v
+}
+
+/**
+ * The speed multiplier and per-tick retention a block produces, as ratios
+ * against ordinary ground. Both are exactly 1 and 0.546 when the block is
+ * ordinary, which is what makes this safe to layer.
+ */
+export function surfaceModel({ friction, speedFactor }) {
+  const retain = MC.AIR_FRICTION * friction * speedFactor
+  const plain = MC.AIR_FRICTION * MC.DEFAULT_FRICTION
+  /*
+   * getFrictionInfluencedSpeed is `speed * (0.21600002 / friction^3)`, and
+   * dividing that by itself at 0.6 cancels the 0.21600002 outright -- which
+   * is the algebra that makes ordinary ground come out at exactly 1 rather
+   * than at 0.99999998. MC.GROUND_ACCEL_NUMERATOR is kept in the table as
+   * the fact it is; it is deliberately not used here.
+   */
+  const accel = (MC.DEFAULT_FRICTION / friction) ** 3
+  return { retain, speedMult: (accel * (1 - plain)) / (1 - retain) }
+}
+
+/**
+ * Ownership of the horizontal, for whoever is driving it this tick.
+ *
+ * ONE OWNER PER TICK, and that is the reason this is a thing at all rather
+ * than two copies of four lines. Both callers have to zero move.moveForce to
+ * get noa's push out of the way, and an earlier arrangement where flight and
+ * the ground each set it themselves had them fighting over it on the tick a
+ * flight ends: flight restores the force, the ground takes it away again,
+ * and which one lands depends on call order.
+ */
+function createDrive(noa, move) {
+  const player = noa.playerEntity
+
+  // Captured from the live component, so installPhysics stays the one place
+  // these are chosen.
+  const base = {
+    moveForce: move.moveForce,
+    standing: move.standingFriction,
+    running: move.runningFriction,
+  }
+  let held = false
+
+  const hold = (on) => {
+    if (on === held) return
+    held = on
+    /*
+     * Both frictions, not just the standing one. noa's movement component
+     * assigns `body.friction = runningFriction` while you hold a key and
+     * `standingFriction` while you don't, and voxel-physics-engine's
+     * applyFrictionByAxis is a Coulomb brake against the ground -- which on
+     * ice is precisely the thing that must not happen. standingFriction 4 is
+     * what stops the player in two ticks today.
+     */
+    move.moveForce = on ? 0 : base.moveForce
+    move.standingFriction = on ? 0 : base.standing
+    move.runningFriction = on ? 0 : base.running
+  }
+
+  const dragOf = (b) => (b.airDrag >= 0 ? b.airDrag : noa.physics.airDrag)
+
+  /*
+   * The block being STOOD ON. Vanilla asks
+   * getBlockPosBelowThatAffectsMyMovement, which is the feet minus 0.5000001
+   * -- the same "a resting player's y IS the block boundary" problem
+   * installMovementFeedback's groundBlock and preventWalkingOffEdge both
+   * solve, and solved the same way.
+   *
+   * ONE SAMPLE AT THE CENTRE, where fluids.js scans every column the box
+   * covers. Vanilla samples one point too (the box centre, floored), so this
+   * is fidelity rather than a shortcut: stand with half your body off the
+   * edge of an ice block and vanilla gives you the block under your centre.
+   */
+  const under = () => {
+    const p = noa.ents.getPositionData(player).position
+    return noa.getBlock(Math.floor(p[0]), Math.floor(p[1] - FOOT_PROBE), Math.floor(p[2]))
+  }
+
+  return {
+    /** Hand the horizontal back to noa. Idempotent. */
+    release: () => hold(false),
+
+    /** The non-default surface under the feet, or null for ordinary ground. */
+    surface: () => SURFACE_PHYSICS.get(under()) ?? null,
+
+    /**
+     * Drive x and z toward `speed` along the movement heading.
+     *
+     * The heading is `move.heading`, which noa's receivesInputs builds from
+     * the camera and the movement keys -- so strafing steers this, unlike the
+     * sprint-jump boost below, which vanilla takes off the body yaw instead.
+     * Here the heading is right: vanilla's moveRelative is fed the same
+     * forward/strafe pair.
+     */
+    horizontal(b, dtSec, retain, speed) {
+      hold(true)
+      // `move.running` is false when no movement key is down, and heading
+      // keeps its last value there -- so it has to gate the target, not just
+      // the speed.
+      const t = move.running ? speed : 0
+      const drag = dragOf(b)
+      driveAxis(b, 0, dtSec, retain, t * Math.sin(move.heading), drag)
+      driveAxis(b, 2, dtSec, retain, t * Math.cos(move.heading), drag)
+    },
+
+    /** Drive y toward `target` (signed). Nothing to take over: noa's
+     *  movement component never touches the vertical except to jump. */
+    vertical(b, dtSec, retain, target) {
+      driveAxis(b, 1, dtSec, retain, target, dragOf(b))
+    },
+  }
+}
+
 /*
  * Flight, for creative and spectator.
  *
@@ -279,6 +524,15 @@ const DOUBLE_TAP_MS = 350
  *      toward a fixed climb/dive rate and releasing both eases you back to a
  *      hover -- which is why a flying player stops dead in the air instead of
  *      arcing like a jump.
+ *
+ * BOTH AXES RUN MINECRAFT'S OWN RECURRENCE (see createDrive above), and the
+ * horizontal one is the fix for "flying does not slow down like vanilla".
+ * Vanilla's two retentions are 0.91 sideways and 0.6 vertically, and the
+ * asymmetry is most of the feel: let go of W at cruise and you glide about
+ * 5.5 blocks over a second and a half, but let go of Space and you stop
+ * inside half a block. Only the vertical half of that was modelled before,
+ * and the horizontal had NO decay at all beyond noa's global airDrag -- 68
+ * blocks of coast over ten seconds, measured, and never actually stopping.
  *
  * The toggle is Minecraft's: double-tap jump within 7 ticks. It hangs off the
  * keydown EVENT for the same reason the sprint double-tap does -- a tap can
@@ -297,7 +551,7 @@ const DOUBLE_TAP_MS = 350
  * all read `getPhysics(player).body` every tick and would throw on the first
  * one.
  */
-function createFlight(noa, move) {
+function createFlight(noa, move, drive) {
   const player = noa.playerEntity
   const body = () => noa.ents.getPhysics(player).body
 
@@ -362,8 +616,13 @@ function createFlight(noa, move) {
       // vanilla: /gamemode creative twice does not drop you out of the sky.
     },
 
-    /** Driven from installSpeedModes' tick so there is one tick handler. */
-    tick(dt, S) {
+    /**
+     * Driven from installSpeedModes' tick so there is one tick handler.
+     * `speed` is the flight gear for this tick, passed in rather than read
+     * off move.maxSpeed so the sprint gear change lands on the tick it
+     * happens rather than the one after.
+     */
+    tick(dt, S, speed) {
       if (!flying) return
       const b = body()
 
@@ -378,9 +637,16 @@ function createFlight(noa, move) {
         else if (liftedOff) { setFlying(false); return }
       }
 
-      const target = ((S.jump ? 1 : 0) - (S.sneak ? 1 : 0)) * MC.FLY_VERTICAL_SPEED
-      const k = 1 - Math.exp(-(dt / 1000) * MC.FLY_VERTICAL_RESPONSE)
-      b.velocity[1] += (target - b.velocity[1]) * k
+      const dtSec = dt / 1000
+
+      /*
+       * Space and Shift together cancel, which is vanilla: LocalPlayer.aiStep
+       * builds an integer from (jump ? +1 : 0) + (sneak ? -1 : 0) and skips
+       * the impulse entirely when it comes out zero.
+       */
+      const up = (S.jump ? 1 : 0) - (S.sneak ? 1 : 0)
+      drive.vertical(b, dtSec, MC.FLY_VERTICAL_RETENTION, up * MC.FLY_VERTICAL_SPEED)
+      drive.horizontal(b, dtSec, MC.FLY_RETENTION, speed)
     },
   }
 }
@@ -393,7 +659,8 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
   const baseFov = (BASE_FOV_DEG * Math.PI) / 180
   camera.fov = baseFov
 
-  const flight = createFlight(noa, move)
+  const drive = createDrive(noa, move)
+  const flight = createFlight(noa, move, drive)
 
   let sprinting = false
   let lastForwardPress = -Infinity
@@ -440,8 +707,6 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
     if (sneaking) sprinting = false
     if (survival && survival.food <= 6 && !flight.flying) sprinting = false
 
-    flight.tick(dt, S)
-
     /*
      * Being in a fluid beats everything except flying. Minecraft's fluid
      * branch in LivingEntity.travel replaces the whole ground-movement path
@@ -469,12 +734,41 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
     // Sneak beats sprint when both are somehow active. Sprinting doubles
     // flight speed rather than adding to it, which is Minecraft's rule and is
     // why creative flight has two very different gears.
+    const flySpeed = sprinting ? MC.FLY_SPRINT_SPEED : MC.FLY_SPEED
     move.maxSpeed = flight.flying
-      ? (sprinting ? MC.FLY_SPRINT_SPEED : MC.FLY_SPEED)
+      ? flySpeed
       : swim !== null ? swim
       : sneaking ? MC.SNEAK_SPEED
       : sprinting ? MC.SPRINT_SPEED
       : MC.WALK_SPEED
+
+    const body = noa.ents.getPhysics(noa.playerEntity).body
+
+    /*
+     * Exactly one thing owns the horizontal each tick, and it is decided
+     * here. flight.tick RETURNS WITHOUT DRIVING if the flight ended this tick
+     * -- landing clears it -- which is why the ground branch below re-reads
+     * flight.flying rather than assuming an else.
+     */
+    flight.tick(dt, S, flySpeed)
+
+    /*
+     * Ice, slime and soul sand. The lookup misses for every ordinary block,
+     * and a miss releases the takeover and leaves walking exactly as it was
+     * -- which is the whole safety argument, so it is one branch rather than
+     * a scale factor applied everywhere. Airborne is excluded because
+     * vanilla's air friction is a flat 0.91 that does not care what you
+     * jumped off; being in a fluid is excluded because fluids.js owns that
+     * case outright.
+     */
+    const surface = flight.flying || swim !== null || body.atRestY() >= 0
+      ? null : drive.surface()
+    if (surface) {
+      const { retain, speedMult } = surfaceModel(surface)
+      drive.horizontal(body, dt / 1000, retain, move.maxSpeed * speedMult)
+    } else if (!flight.flying) {
+      drive.release()
+    }
 
     // Minecraft eases this over a few ticks rather than snapping, which is
     // what stops it reading as a glitch.
@@ -555,7 +849,6 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
      * JUMP_IMPULSE are both calibrated against it. Changing it re-opens three
      * numbers to fix one.
      */
-    const body = noa.ents.getPhysics(noa.playerEntity).body
     // Not while flying: space is climb there, not jump, and a flier can sit
     // grounded with it held -- which under this condition would hand out a
     // boost every single tick.

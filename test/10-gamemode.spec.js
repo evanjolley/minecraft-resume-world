@@ -153,7 +153,7 @@ test.describe('flight', () => {
        * Measured AFTER a settling window, not immediately: releasing jump
        * eases the climb velocity toward zero rather than cutting it, so a
        * flying player coasts up roughly 0.7 blocks first. That coast is the
-       * point (physics.js: MC.FLY_VERTICAL_RESPONSE) and it would otherwise
+       * point (physics.js: MC.FLY_VERTICAL_RETENTION) and it would otherwise
        * read as drift. Twenty ticks of genuine hover is two thirds of a
        * second, in which a falling player drops about seven blocks.
        */
@@ -190,13 +190,36 @@ test.describe('flight', () => {
       await teleport(page, DROP_X, 210, DROP_Z)
       await waitTicks(page, 2)
 
-      const cruise = await measureSpeed(page, ['KeyW'])
+      /*
+       * THE ASSERTIONS BELOW ARE UNCHANGED; the warm-up they are measured
+       * after is not, and the reason is a fidelity fix rather than a fudge.
+       *
+       * measureSpeed's default 900 ms warm-up assumed flight reaches its top
+       * speed almost at once, which was true while the horizontal was noa's
+       * `responsiveness * (S - v)` -- that arrives in about four ticks. It is
+       * not true of Minecraft: a flying player keeps 0.91 of their speed per
+       * tick and accelerates against that, so cruise is 90% reached at 1.2 s
+       * and 98% at 2 s. Sampling from 0.9 s reads the ramp, not the cruise,
+       * and came out at 9.82 b/s against a real 10.89.
+       *
+       * So the ruler moved and the number did not. 2000 ms puts the sample
+       * window at 98.5% of terminal, which lands inside the 5% band with the
+       * ramp's contribution smaller than the band is.
+       */
+      const WARM = { warmupMs: 2000 }
+
+      const cruise = await measureSpeed(page, ['KeyW'], WARM)
       expect(cruise, `flew at ${cruise.toFixed(2)} b/s`).toBeGreaterThan(FLY_SPEED * 0.95)
       expect(cruise, `flew at ${cruise.toFixed(2)} b/s`).toBeLessThan(FLY_SPEED * 1.05)
 
+      // Back to the start before the fast gear: a 2.7 s sprint-flight covers
+      // nearly 60 blocks and the patch has an invisible wall around it.
+      await teleport(page, DROP_X, 210, DROP_Z)
+      await waitTicks(page, 2)
+
       // Vanilla doubles Abilities.flyingSpeed outright rather than adding to
       // it, which is why creative flight has two very distinct gears.
-      const sprint = await measureSpeed(page, ['KeyW', 'ControlLeft'])
+      const sprint = await measureSpeed(page, ['KeyW', 'ControlLeft'], WARM)
       expect(sprint, `sprint-flew at ${sprint.toFixed(2)} b/s`)
         .toBeGreaterThan(FLY_SPEED * 2 * 0.95)
       expect(sprint, `sprint-flew at ${sprint.toFixed(2)} b/s`)
