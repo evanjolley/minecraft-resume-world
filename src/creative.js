@@ -1,4 +1,4 @@
-import { BLOCK_TYPES } from './blocks.js'
+import { BLOCK_TYPES, BLOCK_BY_ID } from './blocks.js'
 import { ITEMS, stackMax } from './items.js'
 
 /*
@@ -437,5 +437,18 @@ export const blocksWithoutEntry = () => {
   // "no entry" instead would report 280 blocks that are working correctly,
   // and a report nobody can read is a report nobody checks.
   const reachable = (b) => have.has(b.id) || (b.drops !== undefined && have.has(b.drops))
-  return BLOCK_TYPES.filter(b => !reachable(b)).map(b => b.key)
+  /*
+   * ...and the same redirection AGAIN for the blocks whose canonical id is
+   * itself entry-less. The sixteen fluid flow levels are variants of water and
+   * lava exactly the way a north-facing stair is a variant of a stair, and
+   * `drops` says so -- but water has no picker entry to be reached THROUGH, so
+   * the clause above cannot rescue them and all sixteen would be reported as
+   * uncategorised blocks. They are not uncategorised. They are water.
+   *
+   * So report the CANONICAL id instead of the variant, and de-duplicate: the
+   * answer stays "water, lava and the barrier", which is the true statement,
+   * rather than growing by fourteen names that all mean one of those two.
+   */
+  const canonical = (b) => (b.drops !== undefined ? BLOCK_BY_ID.get(b.drops) ?? b : b)
+  return [...new Set(BLOCK_TYPES.filter(b => !reachable(b)).map(b => canonical(b).key))]
 }

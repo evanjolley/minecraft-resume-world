@@ -834,7 +834,109 @@ const BARRIER = [
   },
 ]
 
-export const BLOCK_TYPES = normaliseHardness([...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER])
+/* ------------------------------------------------------------------ *
+ * Flowing fluids: one block id per flow level.
+ *
+ * Minecraft holds flow in BLOCK METADATA -- `level` 0 for a source, 1-7 for
+ * the decaying flow, and bit 8 set for a falling column
+ * (BlockDynamicLiquid.updateTick: `this.tryFlowInto(worldIn, pos.down(),
+ * iblockstate, i + 8)`). THIS ENGINE HAS NO METADATA. That is the same
+ * constraint that produced 280 slab and stair ids one section up: noa draws a
+ * custom block mesh as a thin instance, and every voxel of an id shares one
+ * geometry and one material, so anything a voxel needs to remember has to BE
+ * its id.
+ *
+ * So eight ids per fluid: levels 1-7 and one falling. The source keeps the id
+ * it always had (636 / 637), which is the whole reason these are appended at
+ * the very end after the barrier rather than slotted in next to FLUIDS --
+ * 636 and 637 are what the terrain importer writes into the asset and what
+ * every existing save holds. Nothing renumbers.
+ *
+ * WHY EIGHT AND NOT SIXTEEN. Overworld lava decays TWO levels per block, so
+ * it only ever occupies levels 2, 4 and 6 and three of its seven ids are dead
+ * weight here. They are generated anyway, because the Nether decays lava by
+ * one (BlockDynamicLiquid: `int j = 1;` becomes 2 only for lava in a
+ * non-vaporizing dimension) and this world has a Nether -- the same ids carry
+ * both, which is exactly what metadata does in vanilla.
+ *
+ * WHAT COMES FOR FREE, and both were checked rather than assumed:
+ *   - `all: 'water_still'` / `'lava_still'` is not laziness about the FLOW
+ *     texture. terrainAnimation.js keys its layer-remap uniform on MATERIAL
+ *     NAME, so a flow level registered against the still material is animated
+ *     by the table that already exists, with no new atlas frames, no second
+ *     animation entry and no change to that module at all. Vanilla's
+ *     directional `water_flow` would need a per-level rotated UV and a
+ *     material per direction -- four more ids again. Rejected.
+ *   - `fluid: true` is what items.js filters on (`!b.fluid`), so none of
+ *     these sixteen becomes an item, appears in /give, or lands in the
+ *     creative picker. That is the same exclusion water and lava already had;
+ *     it was not extended, it was inherited.
+ *
+ * `drops` points at the source id. Nothing ever breaks one of these -- the
+ * crosshair raycast skips a fluid and hardness is Infinity -- so it is not a
+ * loot table. It is the CANONICAL-ID link, the same field nonCubeSet uses to
+ * say "this is a variant of that", and creative.js's blocksWithoutEntry reads
+ * it to report `water` once instead of reporting `water_1` through
+ * `water_falling` as sixteen blocks nobody has categorised.
+ *
+ * FULL-HEIGHT CUBES, deliberately, for now. A partial-height flow block means
+ * a `shape` and a blockMesh, and in this file a `shape` takes the block off
+ * noa's terrain mesher entirely (see registerBlocks) -- which costs it the
+ * `fluid` flag's buoyancy, puts it back into blockTargetIdCheck as something
+ * minable, and hands it to installNonCubeCollision as something solid. Three
+ * regressions in the hard-won part of fluids.js to buy a cosmetic slope. The
+ * spread is the feature; the profile is the follow-up.
+ */
+function flowSet(from, source, label) {
+  const shared = {
+    all: source.all,
+    hardness: source.hardness,
+    fluid: true,
+    alpha: source.alpha,
+    alphaLevel: source.alphaLevel,
+    tint: source.tint,
+    fluidDensity: source.fluidDensity,
+    viscosity: source.viscosity,
+    drops: source.id,
+  }
+  const rows = []
+  for (let level = 1; level <= 7; level++) {
+    rows.push({ ...shared, id: from + level - 1, key: `${source.key}_${level}`, name: `Flowing ${label}` })
+  }
+  // The falling column. Vanilla draws it as a FULL block regardless of the
+  // level it carries, and treats it as decay 0 when the block below it asks
+  // what is feeding it -- which is why water poured off a cliff spreads the
+  // full seven blocks again from where it lands.
+  rows.push({ ...shared, id: from + 7, key: `${source.key}_falling`, name: `Falling ${label}` })
+  return rows
+}
+
+/**
+ * key -> what that key MEANS to the flow simulation. Exported because
+ * fluids.js needs it and must not need the block table: it is handed ids by
+ * main.js and reads the shape of a level out of here.
+ *
+ * `level` is vanilla's, so 0 is a source and 7 is the last block before the
+ * flow stops. `falling` is vanilla's bit 8.
+ */
+export const FLUID_FLOW = [
+  { key: 'water', fluid: 'water', level: 0, falling: false },
+  { key: 'lava', fluid: 'lava', level: 0, falling: false },
+]
+for (const fluid of ['water', 'lava']) {
+  for (let level = 1; level <= 7; level++) {
+    FLUID_FLOW.push({ key: `${fluid}_${level}`, fluid, level, falling: false })
+  }
+  FLUID_FLOW.push({ key: `${fluid}_falling`, fluid, level: 0, falling: true })
+}
+
+const FLUID_BY_KEY = new Map(FLUIDS.map(b => [b.key, b]))
+const FLUID_FLOW_BLOCKS = [
+  ...flowSet(639, FLUID_BY_KEY.get('water'), 'Water'),
+  ...flowSet(647, FLUID_BY_KEY.get('lava'), 'Lava'),
+]
+
+export const BLOCK_TYPES = normaliseHardness([...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER, ...FLUID_FLOW_BLOCKS])
 
 // Ids must be contiguous from 1. noa fills any gap with a silently-registered
 // filler block that has no material, which renders as untextured white and is

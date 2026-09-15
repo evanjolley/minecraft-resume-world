@@ -1,4 +1,14 @@
 import { MC } from './physics.js'
+/*
+ * The one thing this file imports from the block table, and it is not the
+ * table: FLUID_FLOW is sixteen rows of {key, fluid, level, falling} saying
+ * what a flow level MEANS. The ids still arrive from main.js through
+ * setIds/installFluids, the way the note above byId insists -- a level is a
+ * shape, an id is a registration, and only the second one is blocks.js's
+ * business to hand over.
+ */
+import { FLUID_FLOW } from './blocks.js'
+import { currentDimension } from './island.js'
 
 /*
  * Water and lava: being in one, moving through one, and what each does to you.
@@ -250,7 +260,16 @@ export function createFluids(noa, move) {
    * right answer during the boot frames before blocks exist.
    */
   let byId = new Map()
-  const setIds = (ids) => { byId = new Map([[ids.water, 'water'], [ids.lava, 'lava']]) }
+  /*
+   * EVERY flow level maps to its fluid here, not just the two sources. This is
+   * the line that keeps the hard-won half of this file honest: a player
+   * standing in `water_3` is standing in water, and buoyancy, drowning, the
+   * entry transient and the burn all have to agree with that. Miss it and
+   * flowing water becomes a hole you fall through.
+   */
+  const setIds = (ids) => {
+    byId = new Map(FLUID_FLOW.map(f => [ids[f.key], f.fluid]))
+  }
 
   /** Which fluid occupies a world point, or null. */
   const fluidAt = (x, y, z) =>
@@ -583,8 +602,518 @@ export function installFluidEffects(noa, { fluids, survival }) {
   })
 }
 
-/** Wire the whole thing up. One call, so main.js has one line to read. */
-export function installFluids(noa, { blockIds, fluids, survival }) {
+/**
+ * Wire the whole thing up. One call, so main.js has one line to read.
+ *
+ * The flow engine is attached to the SAME `fluids` object main.js already
+ * holds and already exposes on `window.game`, rather than returned. That is
+ * not tidiness: main.js belongs to another agent this session and this landed
+ * without touching it, so `game.fluids.flow` is the handle the tests and the
+ * console use.
+ */
+export function installFluids(noa, { blockIds, fluids, survival, authority = null }) {
   fluids.setIds(blockIds)
   installFluidEffects(noa, { fluids, survival })
+  fluids.flow = installFluidFlow(noa, { blockIds, authority })
+  return fluids.flow
+}
+
+/* ------------------------------------------------------------------ *
+ * FLOW: water and lava that actually go somewhere
+ * ------------------------------------------------------------------ *
+ *
+ * Reported from play, docs/REPORTED.md item 15: "see a random block of lava in
+ * a cave, but it isnt flowing down. Do fluids flow?" ... "water doesnt either".
+ * The header above listed flowing fluids as a deliberate non-goal. It was a
+ * backlog entry, not a boundary, and this is it being paid off.
+ *
+ * MINECRAFT'S NUMBERS, and where each was read.
+ *
+ *   water spreads 7 blocks horizontally from a source on a flat surface, and
+ *   downward without limit, at 1 block every 5 game ticks
+ *     -- minecraft.wiki/w/Water: "7 blocks horizontally from a source block on
+ *        a flat surface", "spreads at a rate of 1 block every 5 game ticks,
+ *        or 4 blocks per second".
+ *
+ *   lava spreads 3 blocks in the Overworld and 7 in the Nether, at 1 block
+ *   every 30 ticks in the Overworld and every 10 in the Nether
+ *     -- minecraft.wiki/w/Lava: "lava travels 3 blocks in any horizontal
+ *        direction from a source block", "in the Nether ... lava travels 7
+ *        blocks horizontally"; "1 block every 30 game ticks, or 1.5 seconds"
+ *        and "1 block every 10 game ticks, or 2 blocks per second".
+ *
+ *   THREE IS NOT A SEPARATE RULE FROM SEVEN. Both fluids decay to level 7 and
+ *   stop; overworld lava just decays TWO levels per block instead of one, so
+ *   it runs out after three. BlockDynamicLiquid.updateTick keeps one decay
+ *   constant -- `int j = 1;` -- and doubles it for lava outside a vaporizing
+ *   dimension. So DECAY below is 1, 1 and 2, and the 3-vs-7 figures fall out
+ *   rather than being typed in. That is worth the indirection: two constants
+ *   that have to agree are two constants that eventually will not.
+ *
+ *   falling fluid carries vanilla's bit 8 and is drawn full height; the block
+ *   it lands on counts as decay 0 when its neighbours ask what feeds them,
+ *   which is why a waterfall spreads the FULL seven blocks again from the
+ *   floor rather than continuing the count from the top of the cliff
+ *     -- BlockDynamicLiquid.updateTick: `this.tryFlowInto(worldIn, pos.down(),
+ *        iblockstate, i + 8)`, and the horizontal branch is guarded by
+ *        `i >= 0 && (i == 0 || this.isBlocked(worldIn, pos.down(), ...))` --
+ *        a fluid that CAN fall does nothing else that tick.
+ *
+ *   infinite water: a flowing block horizontally adjacent to two or more
+ *   source blocks, sitting on a solid block or another water source, becomes
+ *   a source itself
+ *     -- minecraft.wiki/w/Water, and `adjacentSourceBlocks` in
+ *        BlockDynamicLiquid. Lava does NOT do this in Java Edition.
+ *
+ *   water meeting lava: water onto a lava SOURCE gives obsidian in the lava's
+ *   cell; the two FLOWING into each other gives cobblestone and removes
+ *   neither; lava flowing down onto water turns the water to stone
+ *     -- minecraft.wiki/w/Water: "If water touches a lava source, the lava
+ *        source turns to obsidian. If both touch each other while flowing,
+ *        cobblestone is made and no sources are removed, and if lava flows
+ *        downward onto water, the water turns to stone."
+ *
+ * ------------------------------------------------------------------
+ * THE TICK RATES ARE IN MILLISECONDS HERE, NOT TICKS, and that is not a
+ * convenience. noa ticks at 30 Hz and Minecraft at 20, so "every 5 ticks"
+ * converted as a tick COUNT would run water 1.5x too fast -- the same class of
+ * mistake the retention constants at the top of this file document at length.
+ * 5 ticks is 250 ms and that is what gets scheduled.
+ *
+ * ------------------------------------------------------------------
+ * SCHEDULING, which is the part that decides whether this is shippable.
+ *
+ * The naive implementation walks the loaded world every tick looking for
+ * fluid. At this world's size that is millions of voxels per frame and the
+ * answer is almost always "nothing changed". So: NOTHING IS EVER SCANNED PER
+ * TICK. A position enters `pending` only when something happened to it --
+ *
+ *   - a chunk arrived carrying fluid          (scanned ONCE, on chunkAdded)
+ *   - a block next to it changed              (the setBlock wrap below)
+ *   - a flow update touched it                (the engine schedules its own)
+ *
+ * -- and leaves as soon as its update produces no change. A settled pool costs
+ * exactly zero. `pending` is a Map of packed position -> due time, so the
+ * per-tick cost is the size of the ACTIVE FRONTIER, not of the world.
+ *
+ * BUDGET is the backstop. A single tick applies at most BUDGET updates and
+ * leaves the rest for the next one; a pathological pour spreads over more
+ * frames instead of dropping one.
+ *
+ * REJECTED -- a per-chunk dirty flag and a rescan of dirty chunks. It sounds
+ * cheaper and is not: a chunk is 24^3 = 13,824 voxels and one block placed
+ * anywhere in it costs a full rescan, where the frontier here is a few dozen
+ * entries for a pour that covers a whole room.
+ *
+ * REJECTED -- running the update off noa's render loop with a time budget in
+ * milliseconds. Fluid spread has to be deterministic for the tests to say
+ * anything, and a frame-rate-dependent number of updates per second is the
+ * opposite of that.
+ */
+
+/** Packed position <-> key. Multiplayer will want a string anyway. */
+const keyOf = (x, y, z) => `${x},${y},${z}`
+
+/** vanilla's decay per block: one level, except overworld lava's two. */
+const DECAY = { water: 1, lavaOverworld: 2, lavaNether: 1 }
+
+/** vanilla tick rates, converted from game ticks to milliseconds at 50 ms. */
+const RATE_MS = { water: 5 * 50, lavaOverworld: 30 * 50, lavaNether: 10 * 50 }
+
+/** The last level that still exists. Level 8 would be nothing at all. */
+const MAX_LEVEL = 7
+
+/** How many fluid updates one tick may apply before deferring the rest. */
+const BUDGET = 256
+
+/**
+ * The flow engine.
+ *
+ * @param noa
+ * @param blockIds  key -> id, straight from registerBlocks. This file never
+ *   imports the block table (see setIds above for why); FLUID_FLOW is the
+ *   shape of a level, and the ids come from the caller.
+ * @param flowTable blocks.js's FLUID_FLOW.
+ * @param isNether  () => boolean. Overworld lava is half as fast again and
+ *   twice as short, and the dimension can change under a running pool.
+ * @param setBlock  the applier. See the note at installFluidFlow.
+ */
+export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }) {
+  /* id -> { fluid, level, falling }, and the inverse. Built once. */
+  const metaById = new Map()
+  const idFor = new Map()
+  for (const entry of flowTable) {
+    const id = blockIds[entry.key]
+    if (id === undefined) throw new Error(`fluid flow: no block id for "${entry.key}"`)
+    metaById.set(id, entry)
+    idFor.set(`${entry.fluid}:${entry.falling ? 'fall' : entry.level}`, id)
+  }
+  const idOf = (fluid, level, falling = false) =>
+    idFor.get(`${fluid}:${falling ? 'fall' : level}`)
+
+  /* The two blocks water and lava make of each other. Named, not numbered. */
+  const STONE = blockIds.stone
+  const COBBLESTONE = blockIds.cobblestone
+  const OBSIDIAN = blockIds.obsidian
+
+  const pending = new Map()
+  let now = 0
+  /** Updates applied since install. The tests read it; so does the debug HUD. */
+  let applied = 0
+
+  const get = (x, y, z) => noa.getBlock(x, y, z)
+  const metaAt = (x, y, z) => metaById.get(get(x, y, z)) ?? null
+
+  const rateFor = (fluid) =>
+    fluid === 'water' ? RATE_MS.water : (isNether() ? RATE_MS.lavaNether : RATE_MS.lavaOverworld)
+  const decayFor = (fluid) =>
+    fluid === 'water' ? DECAY.water : (isNether() ? DECAY.lavaNether : DECAY.lavaOverworld)
+
+  /**
+   * Put a position in the queue, at vanilla's rate for the fluid that will act
+   * on it. An entry already waiting keeps the EARLIER of the two due times --
+   * re-scheduling must never be able to postpone an update, or a fast trickle
+   * next to a slow one would stall behind it.
+   */
+  function schedule(x, y, z, fluid) {
+    const k = keyOf(x, y, z)
+    const due = now + rateFor(fluid)
+    const have = pending.get(k)
+    if (have !== undefined && have <= due) return
+    pending.set(k, due)
+  }
+
+  /** The six neighbours of a cell, plus the cell, scheduled. */
+  function scheduleAround(x, y, z) {
+    for (const [dx, dy, dz] of [[0, 0, 0], [0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
+      const m = metaAt(x + dx, y + dy, z + dz)
+      if (m) schedule(x + dx, y + dy, z + dz, m.fluid)
+    }
+  }
+
+  /**
+   * May this fluid move into that cell?
+   *
+   * Air, and a thinner amount of the SAME fluid. Vanilla also washes away
+   * grass, flowers and torches; this world's palette has none of them as
+   * non-solid blocks, so "air or thinner" is the whole rule rather than a
+   * simplification of one.
+   */
+  function canFlowInto(x, y, z, fluid, level) {
+    const id = get(x, y, z)
+    if (id === 0) return true
+    const m = metaById.get(id)
+    if (!m || m.fluid !== fluid) return false
+    // A falling column is never replaced by a flowing one, and a source never
+    // by anything: both are already the most fluid that cell can be.
+    if (m.falling || m.level === 0) return false
+    return m.level > level
+  }
+
+  /** Does this cell stop a fluid resting on it from falling through? */
+  const isBlocked = (x, y, z) => {
+    const id = get(x, y, z)
+    if (id === 0) return false
+    // A fluid does not hold another fluid up unless it is the same one at full
+    // depth -- water lands ON a lake rather than falling through it.
+    const m = metaById.get(id)
+    if (m) return true
+    return true
+  }
+
+  /**
+   * What water and lava make of each other, and WHERE -- the `where` is the
+   * half that is easy to get wrong.
+   *
+   * @returns true if the encounter consumed the move (so nothing flows).
+   */
+  function react(fluid, level, falling, x, y, z, fromBelow) {
+    const m = metaAt(x, y, z)
+    if (!m || m.fluid === fluid) return false
+
+    if (fluid === 'water') {
+      // Water reaching lava replaces the LAVA's cell, not the water's:
+      // obsidian if that lava is a source, cobblestone if it is flowing.
+      setBlock(m.level === 0 && !m.falling ? OBSIDIAN : COBBLESTONE, x, y, z)
+      scheduleAround(x, y, z)
+      return true
+    }
+    // Lava reaching water. Straight down onto water turns that water to stone;
+    // sideways contact makes cobblestone. Either way the lava does not move in.
+    setBlock(fromBelow ? STONE : COBBLESTONE, x, y, z)
+    scheduleAround(x, y, z)
+    return true
+  }
+
+  /** Write a fluid level, count it, and wake the neighbourhood. */
+  function place(id, x, y, z, fluid) {
+    setBlock(id, x, y, z)
+    applied++
+    scheduleAround(x, y, z)
+    if (fluid) schedule(x, y, z, fluid)
+  }
+
+  /**
+   * One fluid block's update. Vanilla's BlockDynamicLiquid.updateTick, with
+   * the slope search left out -- see the note at the bottom of this function.
+   */
+  function update(x, y, z) {
+    const me = metaAt(x, y, z)
+    if (!me) return false
+    const { fluid } = me
+    const decay = decayFor(fluid)
+    const source = me.level === 0 && !me.falling
+
+    /* ---- 1. am I still fed? ---- */
+    if (!source) {
+      let best = MAX_LEVEL + 1
+      let sources = 0
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const n = metaAt(x + dx, y, z + dz)
+        if (!n || n.fluid !== fluid) continue
+        if (n.falling) continue          // a falling column feeds only downward
+        if (n.level === 0) sources++
+        best = Math.min(best, n.level)
+      }
+      const above = metaAt(x, y + 1, z)
+      const fedFromAbove = !!above && above.fluid === fluid
+
+      let want
+      if (fedFromAbove) {
+        // Anything under the same fluid is a falling column, at full depth.
+        want = { level: 0, falling: true }
+      } else if (fluid === 'water' && sources >= 2 && (isBlocked(x, y - 1, z) || (() => {
+        const below = metaAt(x, y - 1, z)
+        return !!below && below.fluid === 'water' && below.level === 0
+      })())) {
+        // Infinite water. Two sources and a floor make a third.
+        want = { level: 0, falling: false }
+      } else {
+        want = { level: best + decay, falling: false }
+      }
+
+      if (want.level > MAX_LEVEL) {
+        // Nothing feeds this any more. Vanilla's de-spread.
+        place(0, x, y, z, null)
+        return true
+      }
+      if (want.level !== me.level || want.falling !== me.falling) {
+        place(idOf(fluid, want.level, want.falling), x, y, z, fluid)
+        return true
+      }
+    }
+
+    /* ---- 2. straight down, and nothing else if it can ---- */
+    const belowY = y - 1
+    if (react(fluid, me.level, me.falling, x, belowY, z, true)) return true
+    if (canFlowInto(x, belowY, z, fluid, -1)) {
+      place(idOf(fluid, 0, true), x, belowY, z, fluid)
+      return true
+    }
+
+    /*
+     * ---- 3. sideways, but only if it could not fall ----
+     *
+     * `i == 0 || isBlocked(below)` in vanilla: a source spreads sideways even
+     * over a hole (the hole is fed by the source's own downward flow), and a
+     * flowing block only spreads sideways when it is sitting on something.
+     */
+    if (!source && !me.falling && !isBlocked(x, belowY, z)) return false
+
+    // A falling column and a source both count as decay 0 for what they feed.
+    const outLevel = (source || me.falling) ? decay : me.level + decay
+    if (outLevel > MAX_LEVEL) return false
+
+    let changed = false
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx
+      const nz = z + dz
+      if (react(fluid, me.level, me.falling, nx, y, nz, false)) { changed = true; continue }
+      if (!canFlowInto(nx, y, nz, fluid, outLevel)) continue
+      place(idOf(fluid, outLevel, false), nx, y, nz, fluid)
+      changed = true
+    }
+
+    /*
+     * NOT REPRODUCED -- vanilla's slope search (`getSlopeDistance`, up to four
+     * blocks of lookahead per direction, every update). It makes water prefer
+     * the direction of the nearest hole instead of spreading evenly, which is
+     * the difference between a puddle that finds the drain and one that fills
+     * the room first and then finds it. Both end in the same place. The search
+     * is 4 directions x 4 depth x 4 directions of recursion per BLOCK per
+     * update, on the hot path this whole scheduler exists to keep small, and
+     * it buys aesthetics. If a pour ever needs to look right rather than end
+     * right, this is the thing to add.
+     */
+    return changed
+  }
+
+  /**
+   * One game tick's worth of fluid.
+   *
+   * @param dtMs milliseconds since the last call.
+   */
+  function tick(dtMs) {
+    now += dtMs
+    if (pending.size === 0) return 0
+    let done = 0
+    /*
+     * Collected before applying, because update() schedules -- iterating the
+     * Map while it grows would let a flow chase itself across the world inside
+     * one tick, which is exactly the "water appears instantly" bug and also an
+     * unbounded loop.
+     */
+    const due = []
+    for (const [k, at] of pending) {
+      if (at <= now) due.push(k)
+      if (due.length >= BUDGET) break
+    }
+    for (const k of due) {
+      pending.delete(k)
+      const [x, y, z] = k.split(',').map(Number)
+      update(x, y, z)
+      done++
+    }
+    return done
+  }
+
+  /**
+   * Seed from a chunk that just arrived.
+   *
+   * ONCE PER CHUNK, on chunkAdded, which is the only place in this file that
+   * looks at more than seven voxels. A 24^3 chunk is 13,824 reads of a typed
+   * array and it happens on load; the alternative is never noticing the lava
+   * that was already in the cave, which is the actual bug report.
+   *
+   * Only fluids with somewhere to GO are scheduled -- an ocean is millions of
+   * blocks and all but its surface and its edges are already settled.
+   */
+  function seedChunk(chunk) {
+    const { voxels } = chunk
+    if (!voxels) return 0
+    const size = chunk.size
+    let n = 0
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        for (let k = 0; k < size; k++) {
+          const id = voxels.get(i, j, k)
+          const m = metaById.get(id)
+          if (!m) continue
+          const x = chunk.x + i
+          const y = chunk.y + j
+          const z = chunk.z + k
+          if (!hasSomewhereToGo(x, y, z, m)) continue
+          schedule(x, y, z, m.fluid)
+          n++
+        }
+      }
+    }
+    return n
+  }
+
+  /** Cheap enough to run on every fluid voxel of a loading chunk. */
+  function hasSomewhereToGo(x, y, z, m) {
+    if (get(x, y - 1, z) === 0) return true
+    const out = (m.level === 0 || m.falling) ? 0 : m.level
+    if (out >= MAX_LEVEL) return false
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (get(x + dx, y, z + dz) === 0) return true
+    }
+    return false
+  }
+
+  return {
+    tick,
+    seedChunk,
+    schedule: (x, y, z) => scheduleAround(x, y, z),
+    /** id -> level info, for the HUD, the tests and underwater.js. */
+    metaOf: (id) => metaById.get(id) ?? null,
+    idOf,
+    get pendingCount() { return pending.size },
+    get applied() { return applied },
+    /** Test seam: drain the queue synchronously instead of over real time. */
+    run(steps = 200, dtMs = 50) {
+      let total = 0
+      for (let i = 0; i < steps; i++) total += tick(dtMs)
+      return total
+    },
+  }
+}
+
+/**
+ * Install the flow engine: seed it, wake it, and tick it.
+ *
+ * THE APPLIER, AND THE ONE THING WORTH ARGUING ABOUT.
+ *
+ * authority.js says it plainly: nothing calls noa.setBlock behind its back,
+ * and a fluid tick is exactly what would be tempting to sneak past. So it is
+ * named rather than snuck.
+ *
+ * authority.js splits DECIDE from APPLY. Its decide half answers "may THIS
+ * PLAYER do this" -- `requestBlockChange` refuses a break in adventure mode
+ * and a `command` cause from a non-operator. A fluid tick has no player and no
+ * capability behind it: it is world simulation, the half that in the
+ * multiplayer build docs/FUTURE.md describes runs INSIDE the Durable Object
+ * and is broadcast, never requested. Routing it through `requestBlockChange`
+ * would mean picking a `cause` and getting the wrong answer for it -- 'command'
+ * denies the world its own physics for every non-op, and a fourth cause that
+ * is always allowed is an `if (true)` with a name.
+ *
+ * So `setBlock` is a parameter with noa's as its default, and `authority` is
+ * accepted and preferred the moment it offers a fluid path. When the room
+ * exists, the server ticks fluids and this engine stops running client-side
+ * entirely -- which is the same swap authority.js was shaped for, arriving at
+ * the same seam from the simulation side.
+ *
+ * HANDOFF, so it is not lost: main.js can pass `authority` into
+ * installFluids the day authority.js grows a world-simulation path. One line,
+ * and it is not written here because main.js is another agent's file today.
+ */
+function installFluidFlow(noa, { blockIds, authority }) {
+  const apply = authority?.applyWorldChange
+    ? (id, x, y, z) => authority.applyWorldChange(id, x, y, z)
+    : (id, x, y, z) => noa.setBlock(id, x, y, z)
+
+  const flow = createFluidFlow(noa, {
+    blockIds,
+    flowTable: FLUID_FLOW,
+    isNether: () => currentDimension() === 'nether',
+    setBlock: apply,
+  })
+
+  /*
+   * Seeding. The bug report was a lava block ALREADY IN A CAVE, which no
+   * player action ever touches -- so the terrain has to wake it up as it
+   * loads, and chunkAdded is the only moment that is true exactly once.
+   */
+  noa.world.on('chunkAdded', (chunk) => flow.seedChunk(chunk))
+
+  /*
+   * Waking. Any block change anywhere schedules its own cell and its six
+   * neighbours, which is how a pool notices the wall you just mined out of it.
+   *
+   * WRAPPING noa.setBlock rather than subscribing: noa 0.33 emits nothing on a
+   * voxel write. blockMeshes.js already wraps it for placement orientation,
+   * and this wrap goes on top so it sees the id that was actually written --
+   * order matters, and the order is "last wrapper installed sees the truth".
+   *
+   * The engine's OWN writes come back through here too, and that is wanted
+   * rather than tolerated: one code path schedules neighbours, and it is this
+   * one, so there is no second list of who-wakes-whom to keep in step.
+   */
+  const inner = noa.setBlock.bind(noa)
+  noa.setBlock = (id, x, y, z) => {
+    const out = inner(id, x, y, z)
+    flow.schedule(x, y, z)
+    return out
+  }
+
+  /*
+   * Ticking. noa's 'tick' carries its own dt in milliseconds, which is the
+   * number the schedule is written in -- see RATE_MS. Falling back to the
+   * nominal tick keeps a test that drives ticks by hand honest.
+   */
+  noa.on('tick', (dt) => flow.tick(typeof dt === 'number' ? dt : 1000 / noa.tickRate))
+
+  return flow
 }

@@ -167,7 +167,14 @@ const GROUP_RULES = [
    * are their own events, wired in fluids.js, not a SoundType -- so this is a
    * silence that means silence. play() reads null as "nothing to play here".
    */
-  [/^(water|lava)$/, null, 'fluids have no SoundType'],
+  /*
+   * The eight flow levels per fluid (blocks.js's flowSet) are matched by the
+   * same line rather than by a second rule, because the reason is the same
+   * reason: a flowing water block is water. Vanilla does not give it a
+   * SoundType either -- it is one BlockDynamicLiquid with a level in its
+   * metadata, and metadata carries no sound.
+   */
+  [/^(water|lava)(_[1-7]|_falling)?$/, null, 'fluids have no SoundType'],
   // The invisible wall around the patch. You can stand on top of it, so it
   // needs a sound; vanilla's barrier declares no SoundType and inherits stone.
   [/^barrier$/, 'stone', 'vanilla barrier inherits SoundType.STONE'],
