@@ -139,8 +139,11 @@ const RULES = [
      stone, a `nether_brick` item is not nether bricks). ---- */
   [/_(sword|bow)$|^(bow|arrow)$|_(helmet|chestplate|leggings|boots)$/, 'combat',
     'vanilla moved all armor into Combat in 1.19.3; swords, bows and arrows were already there'],
-  [/_(pickaxe|axe|shovel|hoe)$|^(shears|flint_and_steel|bucket|fishing_rod)$/, 'tools_and_utilities',
-    'Tools & Utilities: the five tool shapes plus shears, flint and steel, buckets and rods'],
+  [/_(pickaxe|axe|shovel|hoe)$|^(shears|flint_and_steel|bucket|water_bucket|lava_bucket|fishing_rod)$/,
+    'tools_and_utilities',
+    'Tools & Utilities: the five tool shapes plus shears, flint and steel, buckets and rods. '
+    + 'The filled buckets are spelled out rather than matched as a `_bucket` suffix, because '
+    + 'vanilla files the MILK bucket under Foods -- a suffix rule would be wrong the day it lands'],
   [/^(stick|coal|charcoal|flint|clay_ball|leather|string|feather|gunpowder|paper|book|wheat|slime_bal)/,
     'ingredients', 'Ingredients holds every crafting material that is not a block'],
   [/^(iron|gold|copper|netherite)_(ingot|nugget|scrap)$|^raw_(iron|gold|copper)$/, 'ingredients',

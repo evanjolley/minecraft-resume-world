@@ -32,6 +32,8 @@ import { installSounds } from './sounds.js'
 import { installParticles } from './particles.js'
 import { installWeather } from './weather.js'
 import { installItemEntities } from './itemEntity.js'
+import { installBuckets } from './bucket.js'
+import { installFurnaceDrops } from './furnace.js'
 import { installHighlightStyle } from './highlight.js'
 import { createAuthority } from './authority.js'
 import { installGamemode } from './gamemode.js'
@@ -332,6 +334,14 @@ const authority = createAuthority({
     get playerName() { return roster.displayNameOf(LOCAL_ID) },
     applyGamemode: (mode) => gamemode.apply(mode),
     setBlock: (id, x, y, z) => noa.setBlock(id, x, y, z),
+    /*
+     * Read-only, and the authority's only window on the world. It needs it to
+     * say WHAT it just destroyed -- see onBlockDestroyed there. A server
+     * reading its own copy of the chunk is the same call with a different
+     * backing store, which is why this sits in the apply half rather than
+     * being threaded through the request.
+     */
+    getBlock: (x, y, z) => noa.getBlock(x, y, z),
     getTime: () => sky.getTime(),
     setTime: (t) => sky.setTime(t),
     teleport: movePlayer,
@@ -421,6 +431,23 @@ const weather = installWeather(noa, { sky, authority, sounds })
  * stopped adding to the inventory, and the drop appeared in the world instead.
  */
 const drops = installItemEntities(noa, { inventory, authority, sounds, inputLock })
+
+/*
+ * Buckets, and a furnace that stops haunting its own coordinate.
+ *
+ * Both hang off block CHANGES rather than off the inventory, which is why
+ * they are wired here together and after `drops`:
+ *
+ *   installBuckets    right-click, its own fluid raycast, and two calls to
+ *                     requestBlockChange. It reads the inputLock rather than
+ *                     being ordered against interact.js -- see the note there.
+ *   installFurnaceDrops  subscribes to authority.onBlockDestroyed, which is
+ *                     new and is the general "this coordinate is gone" event.
+ *                     `drops.popResource` is the same scatter a broken block's
+ *                     own drop uses, so a furnace's contents land like ore.
+ */
+const buckets = installBuckets(noa, { inventory, authority, inputLock })
+installFurnaceDrops(inventory.furnaces, authority, drops.popResource)
 
 /*
  * F3. Installed after `drops` and `particles` because it counts both, and it
@@ -719,6 +746,13 @@ window.game = {
    * real rather than rebuilt every frame.
    */
   held, itemModelStats,
+  /*
+   * Buckets, for the console and for the test suite: `ray` is the fluid pick
+   * on its own, which is how a spec proves flowing water is refused without
+   * owning a bucket, and fill/pour are the two actions with the input layer
+   * taken out of the way.
+   */
+  buckets,
   /*
    * The debug screen, for the console and for the test suite. `sample()` is
    * the numbers BEFORE they are formatted, which is how a spec asserts that

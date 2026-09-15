@@ -201,6 +201,19 @@ const GEAR = [
   { key: 'shears', name: 'Shears', stack: 1, model: 'handheld' },
   { key: 'flint_and_steel', name: 'Flint and Steel', stack: 1, model: 'handheld' },
   { key: 'bucket', name: 'Bucket', stack: 16 },
+  /*
+   * The two FILLED buckets, and they are the only way a fluid is ever held.
+   * The assembly note below says why there is no `water` item: vanilla has
+   * none, and these are what it has instead.
+   *
+   * stack 1 is BucketItem.stacksTo(1) and it is not the tool rule it looks
+   * like -- an empty bucket stacks to 16 (the line above, 1.11+), because
+   * empties are interchangeable and a filled one has a fluid attached to that
+   * particular bucket. Same reason a filled bucket has no `model: handheld`:
+   * vanilla's water_bucket.json is item/generated, like the empty one.
+   */
+  { key: 'water_bucket', name: 'Water Bucket', stack: 1 },
+  { key: 'lava_bucket', name: 'Lava Bucket', stack: 1 },
   { key: 'bowl', name: 'Bowl' },
   /*
    * Vanilla's bow.json is item/generated with its OWN thirdperson override

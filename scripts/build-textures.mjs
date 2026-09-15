@@ -206,6 +206,17 @@ const SLOT_HINT_SOURCE = {
 }
 
 const CE_ITEM_SUBSTITUTES = {
+  /*
+   * The filled buckets. CE predates them (its `item/` has `bucket.png` and
+   * nothing else bucket-shaped), and a multiply is the only honest thing left:
+   * it tints the WHOLE bucket rather than just the fluid inside it, so a CE
+   * build shows a blue bucket and an orange one instead of a grey bucket with
+   * a fluid in it. Readable at 16px, which is the bar -- and the alternative,
+   * compositing CE's own water_still over the lower half, is a hand-drawn
+   * sprite pretending to be a derived one.
+   */
+  water_bucket: sub('bucket', [90, 150, 255]),
+  lava_bucket: sub('bucket', [255, 130, 40]),
   copper_ingot: sub('gold_ingot', [200, 115, 75]),
   raw_copper: sub('gold_ingot', [190, 110, 80]),
   raw_iron: sub('iron_ingot', [215, 175, 155]),

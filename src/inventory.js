@@ -280,10 +280,11 @@ export function createInventory() {
      *     output is take-only, exactly like the crafting result.
      *   FurnaceFuelSlot.mayPlace    `isFuel(stack) || isBucket(stack)`, which
      *     is why you cannot park a stack of dirt in the fuel slot. The bucket
-     *     half is vanilla's allowance for the empty bucket a lava bucket
-     *     leaves behind; there is no lava bucket here (see FUELS in
-     *     recipes.js), so the plain bucket is admitted and burns for nothing,
-     *     which is exactly what it does in Minecraft.
+     *     half is vanilla's allowance for the EMPTY bucket a lava bucket
+     *     leaves behind -- it burns for nothing, but it has to be allowed back
+     *     into the slot it appears in. The lava bucket itself needs no
+     *     special case here: it is in FUELS now (recipes.js), so `burnTicks`
+     *     already says yes.
      */
     if (index === OUTPUT) return false
     if (index === FUEL) return burnTicks(id) > 0 || id === BUCKET

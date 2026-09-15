@@ -1,4 +1,5 @@
 import { GAMEMODES, DEFAULT_GAMEMODE } from './gamemode.js'
+import { createEmitter } from './emitter.js'
 
 /*
  * The trust boundary. One module decides what the player is allowed to do;
@@ -139,8 +140,65 @@ export function createAuthority({ world, storage = globalThis.localStorage } = {
    */
   const caps = () => GAMEMODES[gamemode].caps
 
+  /* ------------------------------------------------------------------ *
+   * "A block was destroyed here."
+   * ------------------------------------------------------------------ *
+   *
+   * WHY IT IS IN THIS FILE. A block that holds something -- a furnace today, a
+   * chest and a dispenser later -- keeps that something in a side table keyed
+   * by coordinate, because a voxel in this engine is an integer with nowhere
+   * to hang a tile entity. Side tables like that go stale the instant the
+   * block under them changes, and the failure is silent and delightful: break
+   * a furnace with eight iron in it, put a fresh one back in the hole, and the
+   * iron is still in there.
+   *
+   * So somebody has to say "the block at 4,70,-3 is gone". The only place that
+   * can honestly say it is the place every block change already passes
+   * through, which is requestBlockChange -- mining, placing, /setblock and
+   * /fill all end up here, and nothing else in the codebase calls
+   * noa.setBlock. A hook anywhere else is a hook with holes in it.
+   *
+   * REJECTED: a furnace-shaped branch in here (`if (FURNACE_BLOCKS.has(was))`
+   * ...), which would have been six lines instead of twenty. The authority
+   * would then have to import furnace.js, know what a smelting slot is, and
+   * grow another branch per container -- and the trust boundary is the last
+   * file that should know what a chest is. It announces a COORDINATE and an
+   * id; whoever cared about that coordinate does the caring.
+   *
+   * ALSO REJECTED: hanging it off interact.js's existing blockBreak event,
+   * which already exists and already fires on a break. It fires on a PLAYER
+   * break only -- /setblock over a furnace, a future explosion, and a server
+   * telling us someone else mined it all go around it.
+   *
+   * `cause` rides along because the subscriber needs it and this module
+   * already knows it: vanilla drops a container's contents when the block is
+   * BROKEN and silently voids them when /setblock replaces it, which is one
+   * `if` at the subscriber and no extra events here.
+   */
+  const destroyed = createEmitter()
+
+  /**
+   * Emit for a change that actually removed something.
+   *
+   * The `was !== next` guard is what stops the event firing when a block is
+   * written over itself -- /fill'ing a stone box with stone destroys nothing,
+   * and a furnace re-placed at its own coordinate by an orientation swap must
+   * not lose its contents.
+   */
+  const announceDestroyed = (was, next, position, cause) => {
+    if (!was || was === next) return
+    destroyed.emit({ id: was, position, cause })
+  }
+
   const api = {
     isOperator,
+    /**
+     * A block stopped existing at this coordinate.
+     * @param fn ({ id, position, cause }) => void  `id` is the block that was
+     *   there, never the one that replaced it -- by the time this fires the
+     *   world already says otherwise.
+     */
+    onBlockDestroyed: destroyed.on,
     get gamemode() { return gamemode },
     caps,
     gamerule: (name) => GAMERULES[name]?.value,
@@ -196,7 +254,9 @@ export function createAuthority({ world, storage = globalThis.localStorage } = {
       if (cause === 'break' && !c.mayBreak) return deny('You cannot break blocks in this game mode')
       if (cause === 'place' && !c.mayBuild) return deny('You cannot place blocks in this game mode')
       if (cause === 'command' && !isOperator()) return NOT_ALLOWED
+      const was = world.getBlock?.(position[0], position[1], position[2]) ?? 0
       world.setBlock(id, position[0], position[1], position[2])
+      announceDestroyed(was, id, position, cause)
       return allow()
     },
 
@@ -215,7 +275,14 @@ export function createAuthority({ world, storage = globalThis.localStorage } = {
       }
       for (let x = min[0]; x <= max[0]; x++) {
         for (let y = min[1]; y <= max[1]; y++) {
-          for (let z = min[2]; z <= max[2]; z++) world.setBlock(id, x, y, z)
+          for (let z = min[2]; z <= max[2]; z++) {
+            const was = world.getBlock?.(x, y, z) ?? 0
+            world.setBlock(id, x, y, z)
+            // /fill destroys tile entities too. It is the same announcement,
+            // with the same `cause`, which is the whole point of putting it
+            // here rather than in interact.js -- see the note above.
+            announceDestroyed(was, id, [x, y, z], 'command')
+          }
         }
       }
       return allow(`Successfully filled ${count} block${count === 1 ? '' : 's'}`)

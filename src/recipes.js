@@ -400,15 +400,23 @@ export const SMELTING = [
  * burn clock in furnace.js runs independently of the cook clock rather than
  * being reset per item.
  *
- * NOT HERE and deliberately: the lava bucket and the blaze rod, the two ends
- * of the table. items.js has `bucket` but no `lava_bucket` -- there is no
- * filled-bucket item in this world -- and no blaze rod, because there are no
- * blazes. Listing either would be a fuel nobody can ever hold.
+ * THE LAVA BUCKET IS NOW IN. It was left out when this table was written for
+ * one reason -- items.js had `bucket` and no `lava_bucket`, so the entry would
+ * have been a fuel nobody could ever hold. bucket.js gives you one by
+ * right-clicking lava, so the top row of the table is real and it is here.
+ * Burning it leaves the empty bucket behind, which furnace.js does rather
+ * than this file: a remainder is a thing the CONTAINER hands back, not a
+ * property of the fuel.
+ *
+ * NOT HERE and still deliberately: the blaze rod, because there are no blazes
+ * and no Nether fortress to get one from.
  * ------------------------------------------------------------------ */
 
 /** [item key or "#tag", burn time in ticks]. Order does not matter; a tag
  *  and a key naming the same item would be a bug either way. */
 export const FUELS = [
+  // The best fuel in the game: 100 items off one bucket.
+  ['lava_bucket', 20000],
   ['coal_block', 16000],
   ['dried_kelp_block', 4000],
   ['coal', 1600],
