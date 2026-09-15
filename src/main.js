@@ -22,7 +22,7 @@ import { createSkinMaterial } from './playerModel.js'
 import { createSwing } from './swing.js'
 import { installPerspective } from './perspective.js'
 import { installCrackOverlay } from './crackOverlay.js'
-import { installSky } from './sky.js'
+import { installSky, LIGHT_VECTOR } from './sky.js'
 import { installUnderwater } from './underwater.js'
 import { createArmorReduction } from './armor.js'
 import { itemName, itemId, dropFor, rollDrops, unmappedDrops } from './items.js'
@@ -133,7 +133,14 @@ const noa = new Engine({
   AOmultipliers: [0.92, 0.8, 0.5],
   reverseAOmultiplier: 1.0,
 
-  lightVector: [0.6, -1, -0.4],
+  /*
+   * Straight down, from sky.js, which owns it and re-asserts it every tick.
+   * A tilted vector lights one side of every block and leaves the opposite
+   * side on ambient alone, which is the "east edge is brighter" report;
+   * Minecraft's face shading is a fixed symmetric table instead. The reasoning
+   * and the table are at the top of sky.js.
+   */
+  lightVector: LIGHT_VECTOR,
   blockTestDistance: 5, // Minecraft's survival reach is about 4.5 blocks
 })
 

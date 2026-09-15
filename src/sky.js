@@ -7,6 +7,72 @@ import { MC } from './physics.js'
 import { setEntityLight } from './entityLight.js'
 
 /*
+ * FACE SHADING, and why the light points straight down.
+ *
+ * Reported: "the east edge of blocks has weirdly more lighting than the rest,
+ * even at night. Isnt dynamic but should be I guess."
+ *
+ * The premise is backwards, and worth stating because it sends you at the
+ * wrong fix. Minecraft's face shading is NOT dynamic and never has been. From
+ * `BlockModelRenderer.EnumNeighborInfo` in the decompiled client, every face
+ * carries a constant multiplier:
+ *
+ *     UP    1.0      NORTH  0.8      WEST  0.6      DOWN  0.5
+ *                    SOUTH  0.8      EAST  0.6
+ *
+ * Those numbers scale the light level, so at night the whole table gets
+ * darker together and the ordering never moves. The sun's position does not
+ * enter into it. Chasing "make it follow the sun" would have produced
+ * something less like Minecraft, not more.
+ *
+ * WHAT IS ACTUALLY WRONG is that the table is SYMMETRIC -- east and west are
+ * both 0.6, north and south are both 0.8 -- and a Lambertian directional
+ * light cannot be. `max(0, dot(n, -L))` is antisymmetric by construction: any
+ * L with a horizontal component lights one side of every block and leaves the
+ * opposite side on the ambient term alone. With the old [0.6, -1, -0.4] one
+ * vertical face came out at ~0.99 of the top face and the one facing it at
+ * ~0.5. Opposite faces of the same block differing 2:1 is a thing that never
+ * happens in Minecraft, and it is what got reported.
+ *
+ * So the fix is to take the horizontal component OUT. Straight down means all
+ * four side faces land on the same value and the asymmetry is gone.
+ *
+ * WHAT THIS DOES NOT BUY, honestly: N/S 0.8 vs E/W 0.6. One directional light
+ * plus one scene-wide ambient term can express exactly two numbers -- "faces
+ * the light" and "does not" -- so the four sides collapse to one value, and
+ * the bottom collapses into it too. SIDE_SHADE is the mean of 0.8 and 0.6
+ * rather than a taste knob. Getting the real five-value table needs per-face
+ * shading in the terrain fragment shader; that is scoped in docs/lighting.md
+ * alongside block light, because it is the same hook.
+ *
+ * Rejected: five directional lights, one per face direction, which does
+ * express the table exactly. Babylon lights are scene-wide, so they would
+ * also land on every entity -- and entity shading is a tuned model that lives
+ * in entityLight.js and was explicitly not to be disturbed. Per-mesh
+ * exclusion lists over dynamically created chunk meshes is a worse problem
+ * than the one being solved.
+ */
+
+/** Minecraft's per-face multipliers, from BlockModelRenderer.EnumNeighborInfo. */
+export const MC_FACE_SHADE = {
+  up: 1.0, down: 0.5, north: 0.8, south: 0.8, east: 0.6, west: 0.6,
+}
+
+/**
+ * What a vertical face gets here. The mean of vanilla's 0.8 and 0.6, because
+ * one ambient term cannot tell a north wall from an east one.
+ */
+export const SIDE_SHADE = (MC_FACE_SHADE.north + MC_FACE_SHADE.east) / 2
+
+/**
+ * Straight down. Not "roughly down" -- any horizontal component at all is the
+ * bug above. main.js hands this to noa so the first frame is already right;
+ * the tick below keeps it there.
+ */
+export const LIGHT_VECTOR = [0, -1, 0]
+
+
+/*
  * Clouds, sun and moon, and the way the sky answers the weather.
  *
  * The clouds are GEOMETRY, not a texture. A first attempt tiled the pack's
@@ -536,16 +602,17 @@ export function installSky(noa) {
     if (light) {
       light.intensity = level
       /*
-       * Straight down, near enough. The Nether's light comes from lava and
-       * glowstone, which this engine has no concept of -- there are no point
-       * lights and no propagated block light, only one directional light and
-       * an ambient term. A near-vertical direction is the honest
-       * approximation: it lights floors and tops of things, leaves walls
-       * darker, and has no direction you can read a time of day off.
+       * Straight down. The Nether's light comes from lava and glowstone,
+       * which this engine has no concept of -- there are no point lights and
+       * no propagated block light, only one directional light and an ambient
+       * term. Vertical is the honest approximation: it lights floors and tops
+       * of things, leaves walls darker, and has no direction you can read a
+       * time of day off. It used to carry a -0.15 tilt on z, which was the
+       * same opposite-faces-disagree bug as the Overworld's, just quieter.
        */
-      light.direction.set(0, -1, -0.15)
+      light.direction.set(...LIGHT_VECTOR)
     }
-    scene_.ambientColor.set(level * 0.5, level * 0.5, level * 0.5)
+    scene_.ambientColor.set(level * SIDE_SHADE, level * SIDE_SHADE, level * SIDE_SHADE)
     setEntityLight(level)
   }
 
@@ -616,9 +683,16 @@ export function installSky(noa) {
     const level = Math.max((0.18 + daylight * 0.82) * storm, flash)
     if (light) {
       light.intensity = level
-      light.direction.set(-sunX, -Math.max(elevation, 0.15), -0.3)
+      /*
+       * Fixed, and vertical. See MC_FACE_SHADE at the top: vanilla's face
+       * shading does not rotate with the sun, and a tilted light is what made
+       * one side of every block twice as bright as the other. `sunX` still
+       * drives the sun MESH and the sky gradient -- the sun visibly crosses
+       * the sky, it just does not drag the block shading around with it.
+       */
+      light.direction.set(...LIGHT_VECTOR)
     }
-    scene_.ambientColor.set(level * 0.5, level * 0.5, level * 0.5)
+    scene_.ambientColor.set(level * SIDE_SHADE, level * SIDE_SHADE, level * SIDE_SHADE)
     /*
      * The same number, pushed at every entity material -- player, NPCs, held
      * items. Terrain gets it for free through light.intensity and the scene
