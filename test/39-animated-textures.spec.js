@@ -2,7 +2,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { test, expect } from './fixtures.js'
-import { grantOp, look, teleport, waitFrames } from './helpers/world.js'
+import { grantOp, look, teleport, waitFrames, waitTicks } from './helpers/world.js'
 
 /*
  * Water moves.
@@ -136,6 +136,19 @@ test('the atlas carries every frame the animation table claims', async ({ page }
   // sampling a layer that does not exist.
   expect(await page.evaluate(() => window.game.terrainAnim.framesLoaded('water_still'))).toBe(true)
   expect(await page.evaluate(() => window.game.terrainAnim.framesLoaded('lava_still'))).toBe(true)
+})
+
+test('the clock runs on its own, without anyone stepping it', async ({ page }) => {
+  /*
+   * The pixel tests below step the animation by hand so the measurement does
+   * not depend on how many real milliseconds a software-GL frame took. That
+   * makes them blind to exactly one failure: the tick handler never being
+   * wired up at all. This is the only test that waits on the real clock.
+   */
+  const before = await page.evaluate(() => window.game.terrainAnim.tick)
+  await waitTicks(page, 20)
+  const after = await page.evaluate(() => window.game.terrainAnim.tick)
+  expect(after).toBeGreaterThan(before)
 })
 
 test('lava ping-pongs through its explicit frame list', async ({ page }) => {
