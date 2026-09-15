@@ -331,61 +331,91 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
    * plain white box, which is why holding nothing looked wrong.
    */
   /*
-   * Transcribed from ItemInHandRenderer.renderPlayerArm, which is a chain of
-   * transforms rather than a single pose:
+   * Transcribed line for line from ItemRenderer.renderPlayerArm (1.8.9, via
+   * the MCP-919 decompile) rather than reasoned about. The whole method, with
+   * the swing terms dropped:
    *
-   *   translate(0.64, -0.6, -0.72)  rotateY(45)
-   *   [scale to model units]
-   *   translate(-1, 3.6, 3.5)  rotateZ(120)  rotateX(200)  rotateY(-135)
+   *   translate(0.64, -0.6, -0.72)
+   *   rotateY(45)
+   *   translate(-1.0, 3.6, 3.5)
+   *   rotateZ(120)  rotateX(200)  rotateY(-135)
    *   translate(5.6, 0, 0)
+   *   renderRightArm -> ModelRenderer.render(0.0625)
    *
-   * That rotateX(200) is the important one: it turns the arm most of the way
-   * over so the HAND end points back at the camera. Without it you are
-   * looking at the top of the shoulder, which is what this did before.
+   * THE BUG THIS FIXES IS A UNITS BUG, NOT AN ANGLES BUG. Every number in
+   * that chain is in BLOCKS. Only the last step -- the arm part itself -- is
+   * in model units, because render(0.0625) is where the /16 happens. The
+   * previous version hung a `scaling = 1/16` node directly under the
+   * rotateY(45), so translate(-1, 3.6, 3.5) moved 0.06 of a block instead of
+   * 3.6, and translate(5.6, 0, 0) moved 0.35 instead of 5.6.
    *
-   * Built as nested TransformNodes because each translation happens in the
-   * frame left by the previous rotation -- flattening it into one position
-   * and one Euler triple does not reproduce that.
+   * What that looked like: the shoulder never got pushed down out of frame,
+   * so you saw the WHOLE arm -- underside, sleeve and all -- lying across the
+   * lower right with the hand up near the crosshair. Vanilla puts the hand at
+   * about (0.65, -0.42) in screen units and the shoulder at (0.92, -1.58),
+   * well below the bottom edge. That is the "I just see the hand" look, and
+   * it falls straight out of the maths once the units are right.
+   *
+   * REJECTED: nudging offsets until the picture improved. That is what
+   * produced the previous two attempts, including one that "found" a missing
+   * model offset. The scale node moved one level down the tree and the arm
+   * box offset lost a folded-in constant. No angle changed.
+   *
+   * Nested TransformNodes because each translation happens in the frame left
+   * by the previous rotation; one position plus one Euler triple cannot
+   * express that.
+   *
+   * HANDEDNESS, established once here and applied uniformly below: this
+   * viewmodel is Minecraft's camera space reflected in Z (Minecraft looks
+   * down -Z, Babylon down +Z). Conjugating by diag(1, 1, -1) means
+   * translations negate z, and rotations about X and Y negate their ANGLE
+   * while rotations about Z are untouched. Nothing below is sign-flipped for
+   * any other reason.
    */
   const armRoot = new TransformNode('fp-arm-root', scene)
   armRoot.parent = camera
   armRoot.position.set(0.64, -0.6, 0.72)
   armRoot.rotation.y = deg(-45)
 
-  const armUnits = new TransformNode('fp-arm-units', scene)
-  armUnits.parent = armRoot
-  armUnits.scaling.setAll(1 / 16)
-
   const armPose = new TransformNode('fp-arm-pose', scene)
-  armPose.parent = armUnits
+  armPose.parent = armRoot
+  // translate(-1, 3.6, 3.5), in BLOCKS. This is the step that swings the
+  // shoulder down and back out of the frame.
   armPose.position.set(-1, 3.6, -3.5)
   armPose.rotationQuaternion = Quaternion.RotationYawPitchRoll(0, 0, 0)
 
+  /*
+   * translate(5.6, 0, 0) -- still blocks -- and then, and only then, the /16
+   * that ModelRenderer.render applies. Everything under this node is in
+   * Minecraft model units.
+   */
+  const armPart = new TransformNode('fp-arm-part', scene)
+  armPart.parent = armPose
+  armPart.position.set(5.6, 0, 0)
+  armPart.scaling.setAll(1 / 16)
+
   const arm = createFirstPersonArm(noa, skinMaterial)
-  arm.parent = armPose
+  arm.parent = armPart
   arm.renderingGroupId = 1
   /*
-   * The last two steps of the chain, and the pair that was wrong.
+   * Where the arm BOX sits relative to the part origin, in model units.
+   * ModelBiped gives the right arm rotationPoint (-5, 2, 0) and a cube
+   * addBox(-3, -2, -2, 4, 12, 4) whose centre is (-1, 4, 0) from that point,
+   * so the centre lands at (-6, 6, 0). The previous code wrote (-0.4, 6, 0),
+   * folding the 5.6 in as though it were model units -- 5.6 - 6 = -0.4 --
+   * which is the same units bug in miniature.
    *
-   * translate(5.6, 0, 0) moves to the arm PART's origin, and the part's own
-   * geometry then hangs off that: Minecraft's right arm sits at model
-   * (-5, 2, 0) with a box spanning (-3..1, -2..10, -2..2), so the box centre
-   * is at (-6, 6, 0) and the whole thing lands at 5.6 - 6 = -0.4. Placing the
-   * mesh at a bare (5.6, 0, 0) -- the previous code -- dropped the part
-   * offset entirely, which is what left only a sliver of shoulder on screen.
+   * The 6 is Y-DOWN and stays that way. renderRightArm goes through
+   * ModelRenderer directly and skips RendererLivingEntity's scale(-1, -1, 1),
+   * so raw Y-down model coordinates go into the matrix, and the rotateX(200)
+   * earlier in the chain is what brings the arm back upright.
    *
-   * The 6 is Y-DOWN, and stays that way. Minecraft renders this arm through
-   * ModelPart directly, skipping LivingEntityRenderer's scale(-1, -1, 1), so
-   * the raw Y-down model coordinates go into the matrix unflipped and the
-   * rotateX(200) later in the chain is what brings the arm back upright.
-   *
-   * Which leaves the shared arm mesh one rotation away from that frame. The
-   * mesh is built mirrored in X (playerModel.js, for Babylon's handedness)
-   * while this chain is Minecraft's mirrored in Z, and those two differ by
-   * exactly a half turn about Z -- so this is a real rotation, not a
-   * reflection, and the sleeve's UVs stay the right way round.
+   * The half turn about Z: the shared mesh is built mirrored in X for
+   * Babylon's handedness (playerModel.js) while this chain is Minecraft's
+   * mirrored in Z. Two reflections differ by a proper ROTATION -- here
+   * exactly Rz(180) -- which is why the sleeve's UVs survive it.
    */
-  arm.position.set(-0.4, 6, 0)
+  arm.position.set(-6, 6, 0)
   arm.rotation.z = Math.PI
 
   const setArmPose = (swingProgress) => {
