@@ -1,5 +1,7 @@
 import { test, expect } from './fixtures.js'
-import { waitTicks } from './helpers/world.js'
+import {
+  waitTicks, teleport, setBlock, aim, holdMouse, targetedBlock, SURFACE_Y,
+} from './helpers/world.js'
 import { shotRegion } from './helpers/shots.js'
 
 /*
@@ -290,6 +292,32 @@ test.describe('the screen', () => {
       expect((await furnaceSlots(page))[0]).toBeNull()
       expect(await page.evaluate(() => window.game.inventory.furnaces.count())).toBe(2)
     })
+
+  /*
+   * The reported bug, end to end: aim at a furnace in the world, right-click,
+   * get the screen. Everything else in this file drives the model directly,
+   * so without this one nothing proves interact.js ever reaches it.
+   */
+  test('right-clicking a furnace in the world opens it', async ({ page, terrain }) => {
+    // The block under the player's feet, looked straight down at. Aiming
+    // sideways would need a column that is clear at head height, and which
+    // columns those are is terrain data this spec has no business knowing.
+    const at = [0, SURFACE_Y - 1, 0]
+    await terrain.keep(at, at)
+    await teleport(page, 0.5, SURFACE_Y, 0.5)
+    await setBlock(page, await id(page, 'furnace'), ...at)
+    await aim(page, { pitch: Math.PI / 2 })
+    await waitTicks(page, 2)
+    expect((await targetedBlock(page))?.position).toEqual(at)
+
+    await holdMouse(page, 120, 'right')
+    await waitTicks(page, 2)
+    expect(await page.evaluate(() => window.game.inventoryScreen.current())).toBe('furnace')
+    // Bound to THAT block, not to a floating singleton.
+    expect(await page.evaluate(() => window.game.inventory.furnaces.all().map(e => e.pos)))
+      .toContain(at.join(','))
+    await page.evaluate(() => window.game.inventoryScreen.setOpen(false))
+  })
 
   test('the flame and the arrow read the two clocks, at vanilla scale',
     async ({ page }) => {
