@@ -67,7 +67,19 @@ test.describe('the command line', () => {
 
   test('/kill is open to everyone and kills only the caller', async ({ page }) => {
     const out = await chatCommand(page, '/kill')
-    expect(systemIn(out)).toEqual([`Killed ${await playerName(page)}`])
+    /*
+     * TWO lines, and that is vanilla. The death broadcast goes to everyone who
+     * would see any death; the "Killed X" feedback goes to whoever ran the
+     * command. They are different messages to different audiences and only
+     * happen to land in the same log in singleplayer.
+     *
+     * This asserted one line until death messages existed, so it is the
+     * assertion that was incomplete rather than the behaviour that regressed.
+     * Kept as an exact list rather than `arrayContaining`: the audiences are
+     * the point, so a build that dropped either half should fail here.
+     */
+    const who = await playerName(page)
+    expect(systemIn(out)).toEqual([`${who} was killed`, `Killed ${who}`])
     expect(await page.evaluate(() => window.game.survival.dead)).toBe(true)
     await expect(page.locator('#death')).toBeVisible()
   })
