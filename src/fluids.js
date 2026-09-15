@@ -352,23 +352,23 @@ export function createFluids(noa, move) {
     b.fluidDrag = dragFor(t.down, t.sink)
   }
 
-/*
- * REJECTED, and worth writing down because it was the obvious fix and it was
- * measurably unnecessary: turning noa's autostep on while in a fluid.
- *
- * main.js keeps `playerAutoStep: false` because Minecraft's step height is 0.6
- * -- a slab, never a full block -- and noa's is a whole block, which would
- * walk you up the parkour course. So this world has NO step at all where
- * vanilla has 0.6, and swimming into a bank does read as swimming into a wall:
- * the trace of the original bug had resting[0] pinned for a hundred ticks.
- *
- * It was built, and then reverted: with the buoyancy above restored, held jump
- * lifts the feet clear of the surface and the coast carries you onto the land
- * with the step switched off. Reverting the step made no test go red, and a
- * behaviour change no test covers is not one to ship under a water fix.
- *
- * The 0.6 step remains a real fidelity gap, on its own, for its own change.
- */
+  /*
+   * REJECTED, and worth writing down because it was the obvious fix and it was
+   * measurably unnecessary: turning noa's autostep on while in a fluid.
+   *
+   * main.js keeps `playerAutoStep: false` because Minecraft's step height is 0.6
+   * -- a slab, never a full block -- and noa's is a whole block, which would
+   * walk you up the parkour course. So this world has NO step at all where
+   * vanilla has 0.6, and swimming into a bank does read as swimming into a wall:
+   * the trace of the original bug had resting[0] pinned for a hundred ticks.
+   *
+   * It was built, and then reverted: with the buoyancy above restored, held jump
+   * lifts the feet clear of the surface and the coast carries you onto the land
+   * with the step switched off. Reverting the step made no test go red, and a
+   * behaviour change no test covers is not one to ship under a water fix.
+   *
+   * The 0.6 step remains a real fidelity gap, on its own, for its own change.
+   */
 
   /**
    * The per-tick factor that turns noa's decay toward terminal into
