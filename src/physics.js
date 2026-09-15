@@ -98,6 +98,24 @@ export const MC = {
   WATER_GRAVITY: 2,      // 0.005 b/tick^2, gravity 0.08 / 16
   LAVA_GRAVITY: 8,       // 0.02  b/tick^2, gravity 0.08 / 4
   SWIM_UP_ACCEL: 16,     // 0.04  b/tick^2, LivingEntity.jumpInLiquid, both fluids
+  SINK_DOWN_ACCEL: 16,   // 0.04  b/tick^2, Entity.goDownInWater -- the exact
+                         // mirror of jumpInLiquid, same magnitude, and like it
+                         // there is no ground check: aiStep calls it on
+                         // `isInWater() && isShiftKeyDown() && isAffectedByFluids()`.
+
+  /*
+   * The VERTICAL VELOCITY RETENTION, which is the one number in this block
+   * that is not an acceleration and not a speed.
+   *
+   * Entity.travel's fluid branch multiplies motion by `(f, 0.8, f)` in water
+   * and `(0.5, 0.5, 0.5)` in lava -- note the vertical multiplier in water is
+   * a hardcoded 0.8 even when the horizontal one is 0.9 for sprint-swimming.
+   * This is a per-tick decay independent of gravity, and it is what sets how
+   * fast a plunge bleeds off, which the terminal speeds below say nothing
+   * about. fluids.js explains why noa's linear drag cannot reproduce both.
+   */
+  WATER_RETENTION: 0.8,
+  LAVA_RETENTION: 0.5,
 
   /*
    * Terminal sinking speeds, in blocks/second. `v' = 0.8v - 0.005` settles at
@@ -108,6 +126,17 @@ export const MC = {
    */
   WATER_SINK_SPEED: 0.5,
   LAVA_SINK_SPEED: 0.8,
+
+  /*
+   * And the same two with sneak held. goDownInWater stacks on top of the
+   * passive sink, so the recurrence becomes `u' = 0.8u - 0.045` in water and
+   * `u' = 0.5u - 0.06` in lava: 0.225 and 0.12 b/tick, 4.5 and 2.4 b/s.
+   * Like the climb speeds, these are a CHECK rather than a tuning knob --
+   * fluids.js reproduces them from the accelerations and drag above without
+   * being told them, which is what says the model is right.
+   */
+  WATER_SNEAK_SINK_SPEED: 4.5,
+  LAVA_SNEAK_SINK_SPEED: 2.4,
 
   // Horizontal. `v' = 0.8(v + 0.02)` settles at 0.1 b/tick in water and
   // `v' = 0.5(v + 0.02)` at 0.04 b/tick in lava. The wiki's measured figure

@@ -64,8 +64,78 @@ import { MC } from './physics.js'
  *   water rise = 14/3.529 - 14/30 = 3.5 b/s -- Minecraft: 0.175 b/tick = 3.5
  *   lava rise  = 8/7.5    - 8/30  = 0.8 b/s -- Minecraft: 0.04  b/tick = 0.8
  *
- * Both land on the published figures to the digit, off two constants fitted to
- * the SINK speeds alone. That is the whole justification for the drag numbers.
+ * and so does the sneak sink, added later against the same two constants:
+ *
+ *   water sneak = 18/3.529 - 18/30 = 4.5 b/s -- Minecraft: 0.225 b/tick = 4.5
+ *   lava sneak  = 24/7.5   - 24/30 = 2.4 b/s -- Minecraft: 0.12  b/tick = 2.4
+ *
+ * Four figures landing on the published ones to the digit, off two constants
+ * fitted to the SINK speeds alone. That is the whole justification for the
+ * drag numbers, and it is why they are not the thing to reach for when the
+ * water feels wrong.
+ *
+ * ------------------------------------------------------------------
+ * WHAT TERMINAL SPEED DOES NOT TELL YOU, which is the entry plunge.
+ *
+ * Solving the drag backwards from terminal pins the STEADY STATE and says
+ * nothing about the transient. Minecraft's 0.8 is not a drag coefficient at
+ * all -- it is a flat per-tick velocity retention, and the rate at which a
+ * plunge bleeds off is a second, independent fact about the fluid.
+ *
+ * Both models decay geometrically toward terminal, so they are comparable:
+ *
+ *   Minecraft      0.8 per 20 Hz tick    -> 1.15e-2 per second
+ *   this, drag 3.529 @ 30 Hz  0.88237    -> 2.34e-2 per second
+ *
+ * Twice as much speed surviving each second, which comes out as exactly 1.25x
+ * the overshoot at any entry speed -- measured, not estimated: a 20-block drop
+ * enters at 34 b/s and reaches 9.9 blocks down where Minecraft reaches 7.4.
+ *
+ * AND THE TWO CANNOT BOTH BE HAD FROM ONE LINEAR DRAG. noa's terminal is
+ * `a*dt*(1-k)/k` with k = drag*dt/mass, so pinning terminal at 0.5 b/s with
+ * a = 2 b/s^2 at 30 Hz FORCES k = 0.1176. Matching Minecraft's decay instead
+ * (k = 0.1382) drops terminal to 0.416, and dragging the climb back to match
+ * needs SWIM_UP_ACCEL refitted from 16 to 19.25 -- at which point every
+ * agreement above is a fit rather than a check. Rejected for exactly that.
+ *
+ * So the transient is corrected on its own, in sinkTransient() below, as a
+ * per-tick factor on the EXCESS over terminal. Terminal is a fixed point of
+ * both models, so correcting only the excess leaves the sink, the climb, the
+ * sneak sink and the horizontal speed untouched to the last digit.
+ *
+ * The other half of the entry depth is not this file's: noa's airDrag of 0.1
+ * gives a falling terminal of ~318 b/s against Minecraft's 78.4, so a tall
+ * drop arrives FASTER here than there (57.9 b/s off 60 blocks, against 46.8).
+ * That is physics.js's airDrag and the jump impulse is calibrated against it.
+ * Noted in docs rather than changed.
+ *
+ * ------------------------------------------------------------------
+ * BEING IN A FLUID IS BINARY IN MINECRAFT, AND IS NOT IN NOA.
+ *
+ * Entity.travel picks its fluid branch off `isInWater()`, a yes/no test, and
+ * everything inside that branch is at full strength however little of you is
+ * under the surface. noa instead models Archimedes properly: the buoyant force
+ * is scaled by `ratioInFluid`, the fraction of the box below the surface.
+ *
+ * That difference has one very visible consequence. The buoyancy that cancels
+ * gravity is 30 b/s^2 at full submersion, so at ratio r the net is 30r - 32,
+ * and the climb's +16 balances it at r = 0.533 -- feet 0.96 blocks below the
+ * surface. That is a STABLE FLOAT LINE: hold jump at the surface of a lake and
+ * you rise to 0.96 under it and stop, forever, which is why you could not get
+ * out onto a shore. Measured at y=200.04 against a surface at 201, bobbing.
+ *
+ * So the ratio is compensated back out while the feet are under the surface
+ * (see the buoyancy top-up in the tick), and the binary edge is `atFeet`,
+ * which is where Minecraft's own edge is: its jump gate is
+ * `isInWater() && getFluidHeight(WATER) > 0`, and that height is measured up
+ * from the BOTTOM of the box, so it goes to zero the moment the feet clear.
+ *
+ * noa also fades the DRAG with `1 - (1-ratio)^2`, and that is NOT divided back
+ * out. Dividing it would send the coefficient past mass/dt at small ratios,
+ * where noa clamps the whole velocity to zero and you read as hitting a wall.
+ * The transient correction below handles it from the other end instead, by
+ * asking what retention noa actually applied rather than assuming the
+ * nominal one -- same result on the vertical axis, no coefficient to blow up.
  *
  * Horizontal is the one place Minecraft's own arithmetic and its own
  * measurements disagree slightly: `v' = 0.8(v + 0.02)` gives 0.1 b/tick =
@@ -82,8 +152,6 @@ import { MC } from './physics.js'
  *     its two conditions are mutually exclusive (|y-0.005| >= 0.003 AND
  *     |y-0.005| < 0.003), so it is unreachable dead code unless Slow Falling
  *     is active, and there are no potions here either.
- *   - Holding sneak to sink faster (goDownInWater, -0.04/tick -> 4.5 b/s).
- *     Sneak is already bound to the sneak walk and the ledge guard.
  *   - Flowing fluids. Every fluid voxel here is a full still block: no levels,
  *     no current pushing you downstream, no falling water column.
  */
@@ -100,8 +168,18 @@ import { MC } from './physics.js'
  * noa's linear drag coefficient derived from the terminal speed above.
  */
 const TUNING = {
-  water: { down: MC.WATER_GRAVITY, sink: MC.WATER_SINK_SPEED, forward: MC.SWIM_SPEED },
-  lava: { down: MC.LAVA_GRAVITY, sink: MC.LAVA_SINK_SPEED, forward: MC.LAVA_SPEED },
+  water: {
+    down: MC.WATER_GRAVITY,
+    sink: MC.WATER_SINK_SPEED,
+    forward: MC.SWIM_SPEED,
+    retain: MC.WATER_RETENTION,
+  },
+  lava: {
+    down: MC.LAVA_GRAVITY,
+    sink: MC.LAVA_SINK_SPEED,
+    forward: MC.LAVA_SPEED,
+    retain: MC.LAVA_RETENTION,
+  },
 }
 
 /**
@@ -187,11 +265,52 @@ export function createFluids(noa, move) {
    * which is the body; breath is `isEyeInFluid`, which is strictly the eye
    * point -- standing chest-deep in a pond you are slowed and you are not
    * drowning, and one sample could not tell you both.
+   *
+   * THE BODY QUESTION IS A BOX, NOT A POINT, and that is Minecraft's own
+   * test rather than a refinement of it. Entity.updateFluidHeightAndDoFluidPushing
+   * deflates the bounding box by 0.001 and walks every voxel column it
+   * overlaps, `floor(minX)` through `ceil(maxX)` and the same in Z. A single
+   * sample at the centre is only the same answer while the box sits inside one
+   * column -- press against a shoreline with half the box over the sand and
+   * the centre reads the sand, and the swim push cuts while you are still
+   * visibly in the water.
+   *
+   * ONE Y LEVEL, though, and deliberately: the gate this feeds is
+   * `isInWater() && getFluidHeight(WATER) > 0`, and that height is measured
+   * up from the BOTTOM of the box. Scanning the whole 1.8 blocks would keep
+   * you "in water" with your feet on dry land, which is the opposite of the
+   * bug. So the scan is the columns the box covers, at the feet.
+   *
+   * The 0.001 replaces the old 0.1 probe, and that is the second half of
+   * getting out of water: 0.1 cut the climb a tenth of a block BEFORE the
+   * surface, which is a tenth less coast to clear the lip with. 0.001 is
+   * vanilla's own epsilon and is there for the same off-by-a-boundary reason
+   * the 0.1 was -- the position IS the bottom of the box.
    */
   const sample = () => {
-    const p = noa.ents.getPositionData(player).position
-    atFeet = fluidAt(p[0], p[1] + FOOT_PROBE, p[2])
+    const dat = noa.ents.getPositionData(player)
+    const p = dat.position
     atEyes = fluidAt(p[0], p[1] + MC.EYE_HEIGHT, p[2])
+
+    /*
+     * The box comes from the POSITION COMPONENT, not from `body.aabb`, and
+     * that is not a style preference. noa has a floating origin -- it shifts
+     * the whole scene when you wander far enough from it -- so the physics
+     * body's aabb is in LOCAL coordinates while noa.getBlock takes global
+     * ones. Reading the corners off the aabb looks right, builds, and reports
+     * "not in a fluid" everywhere, which is how this was found: the player
+     * sank straight through a pool with the climb never firing.
+     */
+    const half = dat.width / 2
+    const y = Math.floor(p[1] + BOX_EPSILON)
+    const x1 = Math.floor(p[0] + half - BOX_EPSILON)
+    const z1 = Math.floor(p[2] + half - BOX_EPSILON)
+    atFeet = null
+    for (let x = Math.floor(p[0] - half + BOX_EPSILON); x <= x1 && !atFeet; x++) {
+      for (let z = Math.floor(p[2] - half + BOX_EPSILON); z <= z1 && !atFeet; z++) {
+        atFeet = byId.get(noa.getBlock(x, y, z)) ?? null
+      }
+    }
   }
 
   /*
@@ -213,6 +332,14 @@ export function createFluids(noa, move) {
     const t = atFeet && TUNING[atFeet]
     if (!t) {
       b.fluidDrag = -1              // -1 means "use the engine default"
+      /*
+       * And the global density back to nothing, which the first version did
+       * not do. Left at water's 1.447 it is a loaded gun: noa's own inFluid
+       * is sampled at the box's MIN CORNER while atFeet now scans every
+       * column, so the two can disagree by a frame at a shoreline, and the
+       * frame they disagree on would get buoyancy with no drag to hold it.
+       */
+      noa.physics.fluidDensity = 0
       return
     }
     /*
@@ -225,22 +352,112 @@ export function createFluids(noa, move) {
     b.fluidDrag = dragFor(t.down, t.sink)
   }
 
+/*
+ * REJECTED, and worth writing down because it was the obvious fix and it was
+ * measurably unnecessary: turning noa's autostep on while in a fluid.
+ *
+ * main.js keeps `playerAutoStep: false` because Minecraft's step height is 0.6
+ * -- a slab, never a full block -- and noa's is a whole block, which would
+ * walk you up the parkour course. So this world has NO step at all where
+ * vanilla has 0.6, and swimming into a bank does read as swimming into a wall:
+ * the trace of the original bug had resting[0] pinned for a hundred ticks.
+ *
+ * It was built, and then reverted: with the buoyancy above restored, held jump
+ * lifts the feet clear of the surface and the coast carries you onto the land
+ * with the step switched off. Reverting the step made no test go red, and a
+ * behaviour change no test covers is not one to ship under a water fix.
+ *
+ * The 0.6 step remains a real fidelity gap, on its own, for its own change.
+ */
+
+  /**
+   * The per-tick factor that turns noa's decay toward terminal into
+   * Minecraft's.
+   *
+   * Both models are geometric in the EXCESS over terminal -- noa's
+   * `v' = (v + a*dt)(1-k)` rearranges to `v' - vT = (1-k)(v - vT)` exactly --
+   * so the whole difference between them is one ratio, and applying it by hand
+   * costs nothing and moves nothing else. `retain^(20*dt)` is Minecraft's
+   * per-20-Hz-tick number resampled onto this tick rate, which is the only
+   * place in this file a retention IS allowed to convert continuously: it is
+   * a pure decay with no acceleration riding on it.
+   */
+  const sinkTransient = (t, b) => {
+    /*
+     * The retention noa ACTUALLY applied this step, not the nominal one. It
+     * differs whenever the box is partly out of the water, because noa fades
+     * its drag with `1 - (1-ratio)^2` -- and partly out of the water is
+     * precisely where a plunge begins, so using the nominal figure
+     * under-corrects the two ticks that matter most. Measured 11% over
+     * Minecraft on a 5-block drop with the nominal, and on the number below.
+     *
+     * The `inFluid` branch is not defensive: noa decides it from the box's MIN
+     * CORNER while `atFeet` scans every column the box covers, so at a
+     * shoreline they can disagree for a frame, and on that frame noa used air
+     * drag.
+     */
+    const used = b.inFluid
+      ? dragFor(t.down, t.sink) * (1 - (1 - b.ratioInFluid) ** 2)
+      : (b.airDrag >= 0 ? b.airDrag : noa.physics.airDrag)
+    return Math.min(1, t.retain ** (20 * dt) / Math.max(1 - (used * dt) / mass, 1e-6))
+  }
+
   noa.on('tick', () => {
     sample()
     const b = body()
     applyTuning(b)
 
+    const t = atFeet && TUNING[atFeet]
+    if (!t || b.gravityMultiplier === 0) return
+
     /*
-     * The climb. Minecraft's jumpInLiquid adds a flat +0.04 b/tick^2 while the
-     * jump key is held and you are in a fluid -- there is no ground check and
-     * no cooldown, which is exactly why holding space is how you swim up.
+     * BUOYANCY TOP-UP. noa applies `-gravity * density * volume * ratio`, the
+     * physically correct Archimedes force; Minecraft applies its fluid branch
+     * at full strength the instant you are in one. The header has the whole
+     * argument -- the short version is that the ratio term is what pins you
+     * 0.96 blocks under the surface with jump held and will not let you out.
      *
-     * A FORCE, not an impulse, because noa's applyForce is divided by dt in
-     * the integrator and applyImpulse is not: an impulse would make the climb
-     * rate depend on the frame rate.
+     * The deficit is `(G - down) * (1 - ratio)`: at ratio 1 it is zero and
+     * this line does nothing, which is why nothing measured deep in a shaft
+     * moves. `ratioInFluid` is noa's from the step just run rather than one
+     * computed here, because it has to be the same number noa scaled by or
+     * the two do not cancel.
      */
-    if (atFeet && noa.inputs.state.jump && b.gravityMultiplier !== 0) {
-      b.applyForce([0, MC.SWIM_UP_ACCEL * mass, 0])
+    if (b.inFluid && b.ratioInFluid < 1) {
+      b.applyForce([0, (MC.GRAVITY - t.down) * (1 - b.ratioInFluid) * mass, 0])
+    }
+
+    /*
+     * The climb, and its mirror. Minecraft's jumpInLiquid adds a flat +0.04
+     * b/tick^2 while the jump key is held and you are in a fluid; goDownInWater
+     * subtracts exactly the same 0.04 while sneak is held. Neither has a ground
+     * check and neither has a cooldown, which is why holding a key is how you
+     * swim in both directions -- and they live in separate `if`s in aiStep, so
+     * holding both really does cancel to nothing. Written the same way here
+     * rather than as an if/else for that reason.
+     *
+     * FORCES, not impulses, because noa's applyForce is divided by dt in the
+     * integrator and applyImpulse is not: an impulse would make the rate depend
+     * on the frame rate.
+     */
+    const S = noa.inputs.state
+    if (S.jump) b.applyForce([0, MC.SWIM_UP_ACCEL * mass, 0])
+    if (S.sneak) b.applyForce([0, -MC.SINK_DOWN_ACCEL * mass, 0])
+
+    /*
+     * And the entry plunge, corrected to Minecraft's decay rate.
+     *
+     * GATED THREE WAYS, and each gate is load-bearing rather than cautious.
+     * The correction's fixed point is the PASSIVE terminal, so it is only
+     * valid while passive sinking is the only thing happening: with jump held
+     * the fixed point is +3.5 and this would drag the climb down to -0.5, and
+     * with sneak held it is -4.5. And it is only applied below terminal
+     * because that is the only regime with an excess to bleed -- a body slower
+     * than terminal is accelerating INTO it, which noa's drag already does at
+     * the right rate for the speeds involved.
+     */
+    if (!S.jump && !S.sneak && b.velocity[1] < -t.sink) {
+      b.velocity[1] = -t.sink + (b.velocity[1] + t.sink) * sinkTransient(t, b)
     }
   })
 
@@ -296,14 +513,20 @@ export function createFluids(noa, move) {
 }
 
 /*
- * How far above the position point to sample for the feet.
+ * How far INTO the box to start the fluid scan.
  *
  * The position IS the bottom of the box, so sampling at exactly y reads the
  * block the player is standing on when resting on a boundary -- the same
  * off-by-a-boundary that physics.js's groundBlock and the sneak edge guard
  * both bias around, in the other direction.
+ *
+ * This was 0.1 and is now Minecraft's own 0.001, the deflation
+ * updateFluidHeightAndDoFluidPushing applies before its scan. 0.1 is a tenth
+ * of a block of water you are treated as out of while still in it, at exactly
+ * the moment -- the last tenth before the surface -- when you are trying to
+ * leave and need every scrap of climb you can get.
  */
-const FOOT_PROBE = 0.1
+const BOX_EPSILON = 0.001
 
 /* ------------------------------------------------------------------ *
  * What fluids do to you
