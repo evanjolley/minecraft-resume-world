@@ -289,8 +289,15 @@ test.describe('the screen', () => {
       await openPicker(page)
       await creative(page, "c.selectTab('building_blocks')")
       const big = await creative(page, 'return c.maxScroll()')
-      // 324 entries at 9 wide is 36 rows against a 5-row window.
-      expect(big).toBeGreaterThan(30)
+      /*
+       * 124 entries at 9 wide is 14 rows against a 5-row window, so there are
+       * 9 rows to scroll through. It used to be 324 entries and 36 rows: the
+       * difference is the 224 orientation variants that stopped being items
+       * when the owner reversed the one-slot-per-id call. Asserted as a range
+       * rather than 9 exactly, because a new block in this tab is not a
+       * regression in scrolling.
+       */
+      expect(big).toBeGreaterThan(5)
 
       await creative(page, 'c.scrollTo(4)')
       expect(await creative(page, 'return c.scrollRow()')).toBe(4)
@@ -320,8 +327,10 @@ test.describe('the screen', () => {
     expect(all).toBe(await page.evaluate(() => window.game.creative.PICKER_ITEMS.length))
 
     await page.locator('#creative-search').fill('cherry stairs')
-    // Eight stair states, all of them named "Cherry Stairs".
-    expect(await creative(page, 'return c.listing().length')).toBe(8)
+    // ONE entry, as vanilla lists it. This asserted 8 -- the eight stair
+    // states, all of them named "Cherry Stairs" -- until the owner saw them
+    // in a row and asked for the vanilla arrangement back.
+    expect(await creative(page, 'return c.listing().length')).toBe(1)
 
     await page.locator('#creative-search').fill('zzzz')
     expect(await creative(page, 'return c.listing().length')).toBe(0)
