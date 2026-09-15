@@ -334,7 +334,11 @@ noa.on('tick', () => {
 
 installHotbarControls(noa, inventory, inputLock)
 const inventoryScreen = installInventoryScreen(noa, inventory, inputLock)
-installRespawn(noa, survival, inputLock)
+// The name is passed as a thunk, not a string: it changes while the page is
+// open, and the death screen has to say whatever you are called NOW.
+installRespawn(noa, survival, inputLock, {
+  playerName: () => roster.displayNameOf(LOCAL_ID),
+})
 installHUD(noa, { inventory, survival })
 
 /*
@@ -433,6 +437,23 @@ const chat = installChat(noa, {
   // browser cooldown that follows an Escape -- reused rather than reinvented.
   requestPointerLock: () => requestLockPersistently(noa),
 })
+
+/*
+ * Death messages. The seam, stated plainly: survival publishes a CAUSE, the
+ * roster answers WHO, and chat renders the sentence. None of the three knows
+ * about the other two.
+ *
+ * This subscribes for the local player only because the local player is the
+ * only one who can die yet. On a server the socket handler makes the same
+ * call with the name of whoever died, and this line stays as the local case --
+ * which is why announceDeath takes a name instead of reading the roster itself.
+ *
+ * It lives here rather than inside installChat because chat is a VIEW; wiring
+ * it to survival there would make the overlay reach into game state, and the
+ * only reason it currently holds `survival` at all is to know not to open
+ * while you are dead.
+ */
+survival.onDeath((detail) => chat.announceDeath(roster.displayNameOf(LOCAL_ID), detail))
 
 // The whole command set is one call. /tp <plot> for the resume plots goes in
 // commands.js once the plots exist.

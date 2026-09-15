@@ -1,5 +1,6 @@
 import { SCALE, px } from './hud.js'
 import { MC } from './physics.js'
+import { deathMessage } from './deathMessages.js'
 
 /*
  * Minecraft's chat: the message log that floats above the hotbar and fades on
@@ -481,6 +482,28 @@ export function installChat(noa, {
     // multiplayer.player.joined / .left, both yellow in vanilla.
     announceJoin: (who) => addMessage({ text: `${who} joined the game`, kind: 'join' }),
     announceLeave: (who) => addMessage({ text: `${who} left the game`, kind: 'join' }),
+
+    /**
+     * Somebody died.
+     *
+     * Takes a NAME, not "the player", for the same reason announceJoin does:
+     * on a server this is called from the socket handler once per death, and
+     * most of those deaths are not yours. Nothing here reaches for the local
+     * roster entry, so the multiplayer version is the same call with a
+     * different argument.
+     *
+     * kind 'system', which is WHITE -- deliberately not 'join'. Join and leave
+     * are yellow because vanilla wraps them in §e; a death message carries no
+     * formatting code at all and renders in plain chat white. Two different
+     * flavours of system message, and collapsing them would have tinted this
+     * line yellow for no reason other than that it is also not player chat.
+     *
+     * @param {string} who  the bare name off the roster -- no rank, no `<>`.
+     * @param {{ cause?: string, fallDistance?: number }} [detail]  straight off
+     *   survival.js's death event.
+     */
+    announceDeath: (who, detail) =>
+      addMessage({ text: deathMessage(who, detail), kind: 'system' }),
     /** Vanilla's parse failure, for a command that wants to reject its args. */
     parseError,
     // For the transport that does not exist yet: read-only views of state a

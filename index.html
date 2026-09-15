@@ -281,6 +281,12 @@
     #death { position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
       gap: 14px; background: rgba(120, 0, 0, 0.45); z-index: 25; }
     #death h1 { margin: 0; font-size: 30px; text-shadow: 3px 3px 0 #000; }
+    /* The death message, under "You Died!" exactly as vanilla's DeathScreen
+       stacks it. White and small -- it is the same sentence chat just printed,
+       not a second headline. respawn.js fills it in; it is empty in the
+       markup rather than defaulted to "You died" so a missing wire shows up as
+       a visible gap instead of a plausible wrong message. */
+    #death .message { margin: 0; font-size: 14px; text-shadow: 2px 2px 0 #000; }
     #death .mc-button { width: 260px; }
 
     /* ---------------- loading ----------------
@@ -357,6 +363,7 @@
 
   <div id="death" class="hidden">
     <h1>You Died!</h1>
+    <p id="death-message" class="message"></p>
     <button id="respawn-btn" class="mc-button">Respawn</button>
   </div>
 

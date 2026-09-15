@@ -67,12 +67,25 @@ export function createSurvival(noa, {
    * red screen flash, a knockback) would have to diff the health value to
    * find out. These say it directly.
    */
-  const hurt = createEmitter()   // { amount, health, cause }
-  const died = createEmitter()   // { cause }
+  const hurt = createEmitter()   // { amount, health, cause, ...detail }
+  const died = createEmitter()   // { cause, ...detail }
   state.onHurt = hurt.on
   state.onDeath = died.on
 
-  state.damage = (amount, cause = 'generic') => {
+  /**
+   * @param detail  extra facts about THIS hit, merged into both events.
+   *
+   * It exists because the death message for a fall depends on how far you
+   * fell, and only the fall tracker below knows that number. Rejected:
+   * stashing the distance in a module-level `lastFallDistance` and reading it
+   * from the death handler. That is a second copy of state that is correct
+   * only until something else dies in between, and it would have gone stale
+   * silently rather than loudly.
+   *
+   * Rejected, harder: having survival format the sentence itself. A cause is
+   * data and a sentence is a view -- see deathMessages.js.
+   */
+  state.damage = (amount, cause = 'generic', detail = null) => {
     if (state.dead || amount <= 0) return
     // The one gate. Creative and spectator invulnerability and the fallDamage
     // game rule are all the same question asked of the same function, so
@@ -83,8 +96,8 @@ export function createSurvival(noa, {
     state.health = Math.max(0, state.health - amount)
     if (state.health === 0) state.dead = true
     changed()
-    hurt.emit({ amount, health: state.health, cause })
-    if (state.dead) died.emit({ cause })
+    hurt.emit({ amount, health: state.health, cause, ...detail })
+    if (state.dead) died.emit({ cause, ...detail })
   }
 
   state.heal = (amount) => {
@@ -125,7 +138,11 @@ export function createSurvival(noa, {
       if (peakY !== null) {
         const fallen = peakY - y
         const excess = Math.floor(fallen - MC.FALL_SAFE_BLOCKS)
-        if (excess > 0) state.damage(excess, 'fall')
+        // `fallen` rides along because vanilla's death message splits on it:
+        // over five blocks is "fell from a high place", under is "hit the
+        // ground too hard". The DAMAGE does not care, so this is the only
+        // reason the distance leaves this scope at all.
+        if (excess > 0) state.damage(excess, 'fall', { fallDistance: fallen })
         peakY = null
       }
     } else {

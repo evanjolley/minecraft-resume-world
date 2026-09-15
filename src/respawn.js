@@ -1,4 +1,5 @@
 import { SPAWN, VOID_Y } from './island.js'
+import { deathMessage } from './deathMessages.js'
 
 /*
  * Void death, input freeze, and respawn.
@@ -17,7 +18,14 @@ import { SPAWN, VOID_Y } from './island.js'
  * under it), and a world that gains a hole in its floor tomorrow -- a
  * creative-mode dig, a portal, a build -- finds this already working.
  */
-export function installRespawn(noa, survival, inputLock) {
+/**
+ * @param playerName  a FUNCTION returning the local player's bare name, not a
+ *   string. Same trap chat.js documents under `speaker`: the name changes
+ *   while the page is open (the NPC asks for it), so a string captured here
+ *   would put whatever you were called at boot on every death screen forever.
+ *   The roster stays the owner; this only asks.
+ */
+export function installRespawn(noa, survival, inputLock, { playerName = () => '' } = {}) {
   const player = noa.playerEntity
   const body = () => noa.ents.getPhysics(player).body
 
@@ -97,6 +105,25 @@ export function installRespawn(noa, survival, inputLock) {
 
   survival.onChange((s) => setFrozen(s.dead))
 
+  /*
+   * THE SAME SENTENCE CHAT GETS, under "You Died!", which is what vanilla's
+   * DeathScreen shows. Both sides call deathMessage() rather than one reading
+   * the other's rendered text, so there is exactly one place the wording lives.
+   *
+   * Hung off onDeath, not onChange, and that is the whole point of the death
+   * event existing: onChange fires for every heal and hunger tick and carries
+   * no cause, so a subscriber there could only ever write "died".
+   *
+   * ORDER, and it is subtle. survival commits state and fires changed() BEFORE
+   * died.emit, so hud.js has already unhidden #death by the time this runs.
+   * Both happen inside one tick, ahead of paint, so the screen never shows a
+   * frame with an empty line -- but the margin is one synchronous call stack,
+   * not a guarantee, which is why the text is written on the event rather than
+   * scheduled.
+   */
+  const label = document.getElementById('death-message')
+  survival.onDeath((detail) => { label.textContent = deathMessage(playerName(), detail) })
+
   const respawn = () => {
     noa.ents.setPosition(player, SPAWN)
 
@@ -116,6 +143,12 @@ export function installRespawn(noa, survival, inputLock) {
 
     // reset() flips `dead` back to false, which unfreezes via onChange.
     survival.reset()
+
+    // Cleared on the way out, not on the way in. The screen is hidden either
+    // way, so this buys nothing visually -- it buys that the element never
+    // holds a stale sentence from a death two respawns ago, which is the kind
+    // of thing that makes a later test pass for the wrong reason.
+    label.textContent = ''
 
     // MUST be called synchronously inside the click handler. Browsers only
     // grant pointer lock from a real user gesture, so deferring this into a
