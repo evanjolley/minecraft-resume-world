@@ -53,6 +53,28 @@
  * Between them: 1 says the bytes are right, 2 says 1 could have failed, 3 says
  * the number island.js is built on points at the same column.
  * ------------------------------------------------------------------------
+ * TWO DIMENSIONS, ONE CHECKER.
+ *
+ *   node scripts/terrain/verify.mjs              the overworld (terrain.bin)
+ *   node scripts/terrain/verify.mjs nether       the Nether (nether.bin)
+ *
+ * The extractors are deliberately two files (see the long note at the top of
+ * nether.mjs) and the verifier is deliberately one, which is not a
+ * contradiction. The extractors differ because they answer different
+ * questions -- where is the ground, what is the build height. The verifier
+ * asks one question, "does this asset match the region files it claims to
+ * come from", and that question has no dimension in it: every input it needs
+ * is in the manifest. Checks 1, 2 and 3 are unchanged, byte for byte, for
+ * both.
+ *
+ * Check 4 is new and is only asked of dimensions whose spawn rule this file
+ * can state. It exists because checks 1-3 share a blind spot: they prove the
+ * asset faithfully reproduces the source world, and a spawn point buried in
+ * solid netherrack is faithfully reproduced too. The overworld's spawn rule
+ * is scan-down-from-the-sky and the thing that can go wrong with it (leaves)
+ * is already a solved bug with a comment; the Nether's rule is new, so it is
+ * the one with a check under it.
+ * ------------------------------------------------------------------------
  */
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -71,9 +93,27 @@ const wantAt = (world, wx, y, wz) =>
   classify(world.block(wx, y, wz) ?? 'minecraft:air').key ?? 'air'
 
 if (import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]).href) {
-  const manifest = JSON.parse(readFileSync(join(OUT, 'terrain.json'), 'utf8'))
-  const d = decode(readFileSync(join(OUT, 'terrain.bin')))
-  const world = worldFor(join(WORK, `seed-${manifest.seed}`))
+  /*
+   * Which asset. The dimension decides three things and nothing else: the
+   * file names, which generated world directory holds the source, and which
+   * subdirectory of it the regions are in. Everything below reads those out
+   * of this table and out of the manifest, and never branches on the name
+   * again -- so a third dimension is a row here.
+   */
+  const DIMENSIONS = {
+    overworld: { asset: 'terrain', dir: seed => `seed-${seed}` },
+    nether: { asset: 'nether', dir: seed => `seed-${seed}-nether` },
+  }
+  const dimension = process.argv[2] ?? 'overworld'
+  const dim = DIMENSIONS[dimension]
+  if (!dim) {
+    console.error(`unknown dimension ${JSON.stringify(dimension)}; try: ${Object.keys(DIMENSIONS).join(', ')}`)
+    process.exit(1)
+  }
+
+  const manifest = JSON.parse(readFileSync(join(OUT, `${dim.asset}.json`), 'utf8'))
+  const d = decode(readFileSync(join(OUT, `${dim.asset}.bin`)))
+  const world = worldFor(join(WORK, dim.dir(manifest.seed)), dimension)
   const { x: x0, z: z0 } = manifest.world
 
   // The asset says which way its X runs. This file does not take that as
@@ -133,6 +173,13 @@ if (import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]
    * 3. The anchor island.js is built on. PATCH_ORIGIN_X is spawn.x, and
    * MIN_X is -PATCH_ORIGIN_X, so this is the game's own origin checked
    * against the real Minecraft column the scan chose.
+   *
+   * Both dimensions are pinned to the SAME origin on purpose -- see the patch
+   * corner note in nether.mjs -- so this check is what holds that pinning
+   * true. A Nether asset extracted from the wrong corner fails here even
+   * though every one of its 2,097,152 voxels is a faithful copy of the
+   * region files, because check 1 knows nothing about where the patch is
+   * supposed to be.
    */
   const sp = manifest.spawn
   const anchorWant = wantAt(world, sp.worldX, sp.y - 1, sp.worldZ)
@@ -147,6 +194,43 @@ if (import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]
                 `but the manifest's spawn is (${sp.x}, ${sp.z})`)
   }
 
+  /*
+   * 4. Nether only: is the spawn a place a player can actually be?
+   *
+   * The rule pickNetherSpawn implements is written out in full at its
+   * definition; this restates only the parts that are observable in the
+   * finished asset, and restates them from the ASSET rather than from the
+   * source world so that an encoder that lost the floor still fails.
+   *
+   *   - the block under the feet is solid, and it is not lava
+   *   - the two blocks at the feet and the head are air
+   *   - four more blocks of air above that, the headroom clause
+   *   - and the roof over the whole patch is bedrock, which is the one-line
+   *     proof that the vertical range is not off by one. A patch shifted down
+   *     a layer would put air at yTop in most columns; shifted up, netherrack.
+   */
+  const spawnIssues = []
+  if (dimension === 'nether') {
+    const at = (ax, y, az) => d.palette[d.cols[az * d.width + ax][y - d.yMin]]
+    const under = at(sp.x, sp.y - 1, sp.z)
+    if (under === 'air' || under === 'lava') {
+      spawnIssues.push(`spawn stands on ${under}; the rule requires a solid non-lava floor`)
+    }
+    for (let dy = 0; dy < 6; dy++) {
+      const b = at(sp.x, sp.y + dy, sp.z)
+      if (b !== 'air') spawnIssues.push(`spawn headroom blocked at +${dy} by ${b} (six clear required)`)
+    }
+    let roof = 0
+    for (let i = 0; i < d.width * d.depth; i++) {
+      if (d.palette[d.cols[i][d.yTop - d.yMin]] === 'bedrock') roof++
+    }
+    if (roof !== d.width * d.depth) {
+      spawnIssues.push(`the top layer y=${d.yTop} is bedrock in ${roof} of ${d.width * d.depth} columns, ` +
+                       `not all of them -- the vertical range is wrong`)
+    }
+    console.log(`bedrock roof: ${roof}/${d.width * d.depth} columns at y=${d.yTop}`)
+  }
+
   console.log(`decoded ${d.magic} ${d.width}x${d.depth}, y ${d.yMin}..${d.yTop}, ${d.palette.length} keys`)
   console.log(`checked ${checked.toLocaleString()} voxels against the region files`)
   console.log(`${asymmetric.toLocaleString()} voxels differ from their own X reflection ` +
@@ -159,6 +243,10 @@ if (import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]
   }
   if (anchor.length) {
     console.error(`SPAWN ANCHOR:\n  ${anchor.join('\n  ')}`)
+    process.exit(1)
+  }
+  if (spawnIssues.length) {
+    console.error(`SPAWN RULE:\n  ${spawnIssues.join('\n  ')}`)
     process.exit(1)
   }
   /*

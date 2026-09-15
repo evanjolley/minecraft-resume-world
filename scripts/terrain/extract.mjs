@@ -219,20 +219,32 @@ export function encode({ cols, size, yMin, yTop, seed, worldX, worldZ, version, 
  * and rename into place, so a rebuild that dies partway through never leaves
  * a half-written world for a running dev server to load.
  */
-export function emit(outDir, data, manifest) {
+export function emit(outDir, data, manifest, name = 'terrain') {
   mkdirSync(outDir, { recursive: true })
   const stage = join(outDir, '.staging')
   rmSync(stage, { recursive: true, force: true })
   mkdirSync(stage, { recursive: true })
 
-  writeFileSync(join(stage, 'terrain.bin'), data)
-  writeFileSync(join(stage, 'terrain.json'), JSON.stringify(manifest, null, 2))
-  // Records that this world came from Mojang's generator rather than from
-  // island.js, mirroring public/textures/.source. A deploy check can read it
-  // without parsing the manifest.
+  writeFileSync(join(stage, `${name}.bin`), data)
+  writeFileSync(join(stage, `${name}.json`), JSON.stringify(manifest, null, 2))
+  /*
+   * Records that this world came from Mojang's generator rather than from
+   * island.js, mirroring public/textures/.source. A deploy check can read it
+   * without parsing the manifest.
+   *
+   * ONE .source FOR THE WHOLE DIRECTORY, not one per asset, and rewritten
+   * identically by every dimension's build. It answers "where did the data in
+   * public/terrain/ come from", and the answer -- vanilla 1.21.8, seed 12345
+   * -- is a property of the generated world rather than of which dimension of
+   * it was sliced. Per-asset .source files would have said the same sentence
+   * twice and given a deploy check two places to look and two chances to
+   * check the wrong one. Every asset in here is from one seed by
+   * construction; the day that stops being true this line has to change, and
+   * that is the right place for it to become visible.
+   */
   writeFileSync(join(stage, '.source'), `vanilla-${manifest.minecraftVersion}-seed-${manifest.seed}\n`)
 
-  for (const f of ['terrain.bin', 'terrain.json', '.source']) {
+  for (const f of [`${name}.bin`, `${name}.json`, '.source']) {
     const live = join(outDir, f)
     if (existsSync(live)) rmSync(live, { force: true })
     renameSync(join(stage, f), live)

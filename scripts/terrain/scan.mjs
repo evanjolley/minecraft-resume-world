@@ -148,4 +148,24 @@ export function bestWindows(s, keep = 3) {
   return out.slice(0, keep)
 }
 
-export const worldFor = dir => new World(join(dir, 'world', 'region'))
+/*
+ * The region directory for one dimension of one generated world.
+ *
+ * The overworld's regions sit at `world/region`; every other dimension gets a
+ * `DIM<n>` subdirectory, which is a Beta-era naming scheme Mojang never
+ * cleaned up. Only the two this repo can produce are listed, because a name
+ * this function does not know is a typo and should say so rather than hand
+ * back a World over a directory that does not exist -- an absent region
+ * directory reads as "every block is air", which is the one failure mode this
+ * pipeline cannot see.
+ */
+const REGION_DIR = {
+  overworld: ['world', 'region'],
+  nether: ['world', 'DIM-1', 'region'],
+}
+
+export const worldFor = (dir, dimension = 'overworld') => {
+  const parts = REGION_DIR[dimension]
+  if (!parts) throw new Error(`worldFor: unknown dimension ${JSON.stringify(dimension)}`)
+  return new World(join(dir, ...parts))
+}

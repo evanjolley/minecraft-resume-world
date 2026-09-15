@@ -47,7 +47,7 @@ const JAVA = existsSync(LAUNCHER_JRE) ? LAUNCHER_JRE : 'java'
 // issued as a grid of at-most-16x16-chunk commands.
 const MAX_SIDE = 16
 
-const properties = seed => [
+const properties = (seed, { nether = false } = {}) => [
   `level-seed=${seed}`,
   /*
    * Port 0 means "let the OS pick a free one". Nothing ever connects to these
@@ -71,7 +71,15 @@ const properties = seed => [
   'simulation-distance=2',
   'spawn-protection=0',
   'max-players=1',
-  'allow-nether=false',
+  /*
+   * allow-nether is a PLAYER gate, not a generator gate -- it stops a client
+   * walking through a portal, and the server still owns a Nether either way.
+   * It is off for the overworld runs because nothing should generate that we
+   * did not ask for, and on for a Nether run because `execute in
+   * minecraft:the_nether` is refused outright while it is false. That refusal
+   * is silent in the console log, which is how it cost twenty minutes.
+   */
+  `allow-nether=${nether}`,
   'spawn-monsters=false',
   'spawn-npcs=false',
   'spawn-animals=true',
@@ -95,9 +103,23 @@ const properties = seed => [
  * Returns the world directory. Idempotent: an already-generated seed is
  * reused unless `fresh` is set.
  */
-export async function generateSeed(seed, radius, { fresh = false, log = console.log } = {}) {
-  const dir = join(WORK, `seed-${seed}`)
-  const region = join(dir, 'world', 'region')
+export async function generateSeed(seed, radius, { fresh = false, log = console.log, dimension = 'overworld' } = {}) {
+  const nether = dimension === 'nether'
+  /*
+   * A Nether run gets its OWN world directory rather than a second dimension
+   * inside the existing one, even though a real save keeps both under one
+   * level.dat and that is where `DIM-1/region` would normally live.
+   *
+   * The reason is npm run terrain:verify. It reads the overworld's region
+   * files back and compares them voxel-for-voxel against the shipped asset,
+   * so those files are effectively a test fixture. Booting a server on that
+   * directory ticks the overworld spawn chunks and saves them again, and a
+   * re-save that changes one block turns the verifier from a check into a
+   * mystery. Same seed generates the same Nether in a fresh directory, so the
+   * isolation is free.
+   */
+  const dir = join(WORK, nether ? `seed-${seed}-nether` : `seed-${seed}`)
+  const region = nether ? join(dir, 'world', 'DIM-1', 'region') : join(dir, 'world', 'region')
   if (fresh) rmSync(dir, { recursive: true, force: true })
   if (existsSync(region)) { log(`  seed ${seed}: already generated, reusing`); return dir }
 
@@ -105,7 +127,7 @@ export async function generateSeed(seed, radius, { fresh = false, log = console.
   // Mojang requires explicit EULA acceptance; without it the server writes a
   // fresh eula.txt and exits immediately, which looks exactly like a crash.
   writeFileSync(join(dir, 'eula.txt'), 'eula=true\n')
-  writeFileSync(join(dir, 'server.properties'), properties(seed))
+  writeFileSync(join(dir, 'server.properties'), properties(seed, { nether }))
 
   const cMin = Math.floor(-radius / 16)
   const cMax = Math.floor((radius - 1) / 16)
@@ -116,12 +138,15 @@ export async function generateSeed(seed, radius, { fresh = false, log = console.
       const z2 = Math.min(cz + MAX_SIDE - 1, cMax)
       // forceload takes BLOCK coordinates and resolves them to the containing
       // chunk, so chunk corners are multiplied back up by 16.
-      commands.push(`forceload add ${cx * 16} ${cz * 16} ${x2 * 16} ${z2 * 16}`)
+      // forceload runs in the executing dimension, and the console executes
+      // in the overworld. `execute in` is the only way to aim it elsewhere.
+      const force = `forceload add ${cx * 16} ${cz * 16} ${x2 * 16} ${z2 * 16}`
+      commands.push(nether ? `execute in minecraft:the_nether run ${force}` : force)
     }
   }
 
   const started = Date.now()
-  log(`  seed ${seed}: generating ${radius * 2}x${radius * 2} blocks in ${commands.length} forceload batches`)
+  log(`  seed ${seed} (${dimension}): generating ${radius * 2}x${radius * 2} blocks in ${commands.length} forceload batches`)
 
   await new Promise((resolve, reject) => {
     const proc = spawn(JAVA, ['-Xmx3G', '-jar', JAR, 'nogui'], { cwd: dir })
