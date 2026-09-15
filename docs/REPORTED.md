@@ -44,6 +44,43 @@ record that connected and attached shapes are a structural problem, because noa
 draws a custom block mesh as a thin instance and every voxel of an id shares one
 geometry. Unverified guess; read those notes before starting.
 
+TRIAGED 2026-09-15, and the verdict is WAIT FOR LIGHT. Never implemented, as
+guessed: `torch` is in `UNPLACEABLE` in `src/items.js` with the reasoning
+already written there, there is no torch in `src/blocks.js`, and the texture
+build emits `item/torch.png` only. Nothing is broken.
+
+The guess about WHY is wrong in an interesting direction, so it is worth
+correcting rather than deleting. A wall torch is not a fence. A fence needs
+different geometry per neighbour and no transform relates the cases; a wall
+torch IS a transform of a floor torch, and `blockMeshes.js` already ships four
+horizontal facings per stair with `installPlacementOrientation` choosing one at
+placement time. Five ids -- floor plus four walls -- and the machinery exists.
+
+What actually stands in the way, cheapest first:
+
+  - No alpha. Every non-cube material here is an opaque frozen
+    `StandardMaterial` (createMaterialCache). A torch is a 16x16 sprite that is
+    mostly transparent, so it needs a cutout material, which is a change to a
+    cache shared by all 280 slab and stair variants.
+  - Collision is the same box list as the mesh, by design, and that is the
+    invariant the whole file exists to protect. A torch has to be walked
+    through, so it needs to opt out of the thing that keeps the two in step.
+  - The 22.5-degree tilt. Shapes here are axis-aligned boxes. A wall torch
+    leans; an axis-aligned approximation reads as a stick glued to a wall.
+  - Attachment. Mine the wall and the torch has to pop, which is the first
+    neighbour-dependent BEHAVIOUR in this world (as against neighbour-dependent
+    geometry, which is the fence problem).
+
+And then the reason to do none of it yet: **5**. A torch that lights nothing is
+the glowstone complaint arriving a second time, from a player who has just
+mined coal and crafted the thing specifically to see in a cave. Build the light
+engine, then the torch is worth building; build the torch first and it ships as
+a decoration that reads as broken.
+
+Rejected: a floor-only torch as a cheap first half. It is not cheap -- it needs
+three of the four items above -- and it is not useful, because floor-only is
+exactly the half that has nowhere to go in a cave.
+
 **4. Returning from the Escape menu leaves the cursor on screen.**
 > "when I press esc or back to game on the esc menu, my cursor should not be
 > visible, should go back to the crosshair."
@@ -54,6 +91,34 @@ Browsers impose a cooldown after the *user* presses Escape, which is why the
 retry loop exists at all. **Check whether the fix made it give up too early.**
 Unverified, but this is the first place to look, and it is a regression risk
 from a fix landed the same day.
+
+TRIAGED 2026-09-15: NOT REPRODUCED, and NOT caused by `f1fa89d`. That change
+made the retry loop cancellable and refused to run two of them at once; neither
+shortens it. The budget is still 14 tries at 150 ms, still ~2.1 s, and the only
+caller that cancels it is death.
+
+Driven three ways. Headed, with `page.bringToFront()` so the grant is real:
+closing the menu by Escape and by Back to Game both take the lock back, in two
+milliseconds -- because Playwright's Escape does not start the browser cooldown
+the retry loop exists for, so a headed run proves the loop works in a world
+where it is never needed. Then with the cooldown faked at Chrome's documented
+1.25 s (`test/37-menu-cursor.spec.js`): both paths win, with seven of the
+fourteen tries still unspent.
+
+So the loop has margin, and something outside this repo is eating it. What is
+left un-ruled-out, in order:
+
+  - A cooldown longer than ~2.3 s. Then the loop loses, gives up silently, and
+    the cursor sits over a live menu-less world until you click -- which is
+    the report exactly. The budget is a guessed number racing a browser timer
+    it cannot see, and it fails closed with no second attempt.
+  - Not Chrome. Nothing here has been run in Safari or Firefox; only Chromium
+    is installed for the suite.
+
+Next step is a number, not a patch: get the browser and version, and what the
+console says when the menu closes (a refused request logs). 37 pins the
+behaviour meanwhile and fails loudly if the budget is ever cut -- dropping it
+to two tries fails both cases with the cursor still on screen.
 
 **5. Glowstone emits no light.**
 Not a glowstone bug. **noa has no light engine at all** — ambient occlusion plus
