@@ -1,6 +1,7 @@
 import { createItemIcon } from './blockIcon.js'
 import { SCALE as HUD_SCALE, FONT_PX, px } from './hud.js'
-import { stackMax, armorOf, ARMOR_SLOTS, itemId } from './items.js'
+import { stackMax, armorOf, ARMOR_SLOTS, itemId, itemName, item } from './items.js'
+import { TABS, tabItems, searchItems, creativeListClick, fullStack } from './creative.js'
 import { findRecipe, consumeGrid } from './crafting.js'
 
 /*
@@ -831,11 +832,19 @@ const CRAFT_TABLE_LABELS = [
 /** Minecraft's container label colour, 0x404040. */
 const LABEL_COLOR = '#404040'
 
-export function installInventoryScreen(noa, inv, inputLock) {
+/*
+ * `gamemode` is here for ONE question: does E open the survival screen or the
+ * creative picker. It is optional so the model-only callers and the older
+ * tests keep working -- absent, this behaves exactly as it did, which is the
+ * survival screen for everybody.
+ */
+export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
   const screen = document.getElementById('inventory')
   const panel = document.getElementById('inv-panel')
   const tableScreen = document.getElementById('crafting')
   const tablePanel = document.getElementById('craft-panel')
+  const creativeScreen = document.getElementById('creative')
+  const creativePanel = document.getElementById('creative-panel')
   const carried = document.getElementById('inv-carried')
 
   carried.style.width = carried.style.height = px(SLOT_SIZE)
@@ -889,6 +898,12 @@ export function installInventoryScreen(noa, inv, inputLock) {
      * containers get drawn next to it.
      */
     cell.className = `gui-slot gui-slot-${area}${area === 'main' ? ' slot' : ''}`
+    // The address, on the element. The creative screen's pick-block listener
+    // sits on the PANEL rather than on each cell (it has to run before the
+    // cell's own handler), so it finds a cell by hit-test and needs to ask it
+    // what it addresses.
+    cell.dataset.area = area
+    cell.dataset.index = index
     const hint = SLOT_HINTS[area]?.[index]
     if (hint) cell.dataset.hint = `url(/ui/slot_${hint}.png)`
     cell.style.left = px(gx)
@@ -986,7 +1001,17 @@ export function installInventoryScreen(noa, inv, inputLock) {
    * container open", not "which one". Adding a second flag would mean finding
    * and updating all of them, in files this change does not own.
    */
-  let current = null // null | 'inventory' | 'table'
+  /*
+   * The creative picker, built here rather than in its own installer so it
+   * can be handed makeCell and paintSlot -- the player's nine hotbar slots
+   * appear on BOTH screens, and they must click identically on both.
+   */
+  const creative = buildCreativeScreen(inv, {
+    screen: creativeScreen, panel: creativePanel, makeCell, paintSlot,
+    repaint: () => inv.emitChange(),
+  })
+
+  let current = null // null | 'inventory' | 'creative' | 'table'
 
   const show = (which) => {
     if (current === which) return
@@ -1001,6 +1026,8 @@ export function installInventoryScreen(noa, inv, inputLock) {
     inv.open = !!which
     screen.classList.toggle('hidden', which !== 'inventory')
     tableScreen.classList.toggle('hidden', which !== 'table')
+    creativeScreen.classList.toggle('hidden', which !== 'creative')
+    if (which === 'creative') creative.opened()
     document.body.classList.toggle('inv-open', inv.open)
 
     // Set on CLOSE as well as on open. `craft.size` is how the model knows
@@ -1020,7 +1047,15 @@ export function installInventoryScreen(noa, inv, inputLock) {
     inv.emitChange()
   }
 
-  const setOpen = (open) => show(open ? 'inventory' : null)
+  /*
+   * Which screen E opens. `infiniteResources` rather than a mode-name test,
+   * because that is the capability the picker IS -- gamemode.js's whole point
+   * is that nothing outside it names a mode, and a fifth mode with infinite
+   * resources should get this screen without an edit here.
+   */
+  const playerScreen = () => (gamemode?.caps?.infiniteResources ? 'creative' : 'inventory')
+
+  const setOpen = (open) => show(open ? playerScreen() : null)
 
   /*
    * noa's default bindings put KeyE on "alt-fire" (place block) alongside
@@ -1037,7 +1072,7 @@ export function installInventoryScreen(noa, inv, inputLock) {
   // E CLOSES whichever screen is open, rather than swapping a crafting table
   // for the inventory. That is Minecraft's behaviour and it is the one a
   // player's hands already know.
-  noa.inputs.down.on('inventory', () => show(current ? null : 'inventory'))
+  noa.inputs.down.on('inventory', () => show(current ? null : playerScreen()))
 
   document.addEventListener('keydown', (e) => {
     if (e.code === 'Escape' && current) show(null)
@@ -1060,7 +1095,16 @@ export function installInventoryScreen(noa, inv, inputLock) {
     return true
   }
 
-  const api = { setOpen, useBlock, openCraftingTable: () => show('table'), current: () => current }
+  const api = {
+    setOpen, useBlock, openCraftingTable: () => show('table'), current: () => current,
+    /*
+     * The picker's handle, for the test suite and the console. Exposed rather
+     * than reached through the DOM because "which tab is showing" and "how far
+     * is it scrolled" are state, and a spec that asserts on them by reading
+     * class names is a spec that breaks when the CSS changes.
+     */
+    creative,
+  }
 
   /*
    * Hung off the model as well as returned.
@@ -1074,4 +1118,387 @@ export function installInventoryScreen(noa, inv, inputLock) {
    */
   inv.screen = api
   return api
+}
+
+/* ==================================================================== *
+ * The creative item picker.
+ *
+ * A SECOND SCREEN, not a change to the first. In creative, E opens this
+ * instead of the survival inventory; the survival screen, its crafting grid
+ * and its shift-click rules are untouched and still what every other mode
+ * gets. Road not taken: one screen with a creative "mode" flag, which would
+ * have put a `if (creative)` inside clickSlot -- the one function in this
+ * file whose rules are transcribed from vanilla and must stay that way.
+ *
+ * GEOMETRY is vanilla's CreativeModeInventoryScreen / ItemPickerMenu, in GUI
+ * pixels, same discipline as the survival panel above:
+ *
+ *   panel        195 x 136
+ *   item grid    9 x 5 at x = 9 + col*18, y = 18 + row*18
+ *   hotbar       x = 9 + i*18, y = 112        (the player's own 0-8)
+ *   scroll track x = 175, y = 18, 12 wide, 112 tall; scroller 12 x 15
+ *   search box   x = 82, y = 6, 80 x 9
+ *   tabs         26 x 32 at a pitch of 28; the top row at y = -28 so its
+ *                bottom four pixels overlap the panel, the bottom row at
+ *                y = 132 so its top four do
+ *
+ * DRAWN, NOT BLITTED, and this is the one deliberate departure from the
+ * "match Minecraft's sprite grid" rule the rest of the GUI follows. The art
+ * for this screen lives at gui/container/creative_inventory/ and
+ * gui/sprites/container/creative_inventory/, and NEITHER SOURCE CAN SUPPLY
+ * IT for both builds: the vanilla jar has it, and the CE pack -- which is
+ * what a deploy ships, because build:deploy runs textures:ce -- has no
+ * creative_inventory directory at all (it has four GUI files: widgets,
+ * icons, inventory, crafting_table). A sprite that exists in development and
+ * 404s in production is worse than no sprite, so the panel, the slot recesses
+ * and the tabs are built from Minecraft's GUI palette in CSS instead, at the
+ * same GUI-pixel scale. It looks identical in both builds, which is the
+ * property that mattered.
+ *
+ * Those colours are Minecraft's own, not picked by eye: panel #c6c6c6, the
+ * highlight #ffffff, the shadow #555555, a slot recess #8b8b8b with #373737
+ * above-left and #ffffff below-right.
+ * ==================================================================== */
+const CREATIVE_W = 195, CREATIVE_H = 136
+const LIST_COLS = 9, LIST_ROWS = 5
+const LIST_ORIGIN = { x: 9, y: 18 }
+const CREATIVE_BAR_Y = 112
+const SCROLL = { x: 175, y: 18, w: 12, h: 112, thumb: 15 }
+const DESTROY_SLOT = { x: 173, y: CREATIVE_BAR_Y }
+const SEARCH_BOX = { x: 82, y: 6, w: 80, h: 9 }
+const TAB_W = 26, TAB_H = 32, TAB_PITCH = 28, TAB_OVERLAP = 4
+
+/*
+ * The Survival Inventory tab's extra containers.
+ *
+ * Vanilla lays its 27 main slots at y = 18 and its hotbar at y = 112, which
+ * is what the constants above already give, and then sits the armor and
+ * offhand around a live player preview on tab_inventory.png. There is no such
+ * sprite here (see the note above), and no preview to arrange them around, so
+ * the four armor slots and the offhand go down the right-hand column -- the
+ * strip the scrollbar occupies on every other tab and which is empty on this
+ * one. Flagged rather than quietly done: it is the one place this screen's
+ * layout is not vanilla's.
+ */
+const INV_TAB_ARMOR_X = 173
+const INV_TAB_ARMOR_Y = 18
+
+/**
+ * The creative screen.
+ *
+ * Takes the same `makeCell`/`paintSlot` machinery the survival panel uses, as
+ * arguments rather than by importing anything: one cell factory means one set
+ * of click semantics for the player's own slots on both screens, which is the
+ * property that stops the two drifting apart.
+ */
+function buildCreativeScreen(inv, { screen, panel, makeCell, paintSlot, repaint }) {
+  panel.style.width = px(CREATIVE_W)
+  panel.style.height = px(CREATIVE_H)
+
+  let tab = TABS[0]
+  let scrollRow = 0
+  let query = ''
+
+  /* ---- title, which is just the tab's name ---- */
+  const title = document.createElement('div')
+  title.className = 'gui-label'
+  title.style.left = px(8)
+  title.style.top = px(6)
+  title.style.fontSize = `${FONT_PX}px`
+  title.style.color = LABEL_COLOR
+  panel.appendChild(title)
+
+  /* ---- the search field, shown only on the Search tab ---- */
+  const search = document.createElement('input')
+  search.id = 'creative-search'
+  search.type = 'text'
+  search.spellcheck = false
+  search.style.left = px(SEARCH_BOX.x)
+  search.style.top = px(SEARCH_BOX.y - 2)
+  search.style.width = px(SEARCH_BOX.w)
+  search.style.height = px(SEARCH_BOX.h + 3)
+  search.style.fontSize = `${FONT_PX}px`
+  panel.appendChild(search)
+
+  /* ---- the 45 visible list cells ----
+   * FORTY-FIVE, for 731 entries. The cells are a WINDOW onto the list, not
+   * the list: `scrollRow` decides which entries they show. Building a cell
+   * per entry would be 731 divs rebuilt on every tab change, and the icons
+   * are three transformed faces each. */
+  const listCells = []
+  for (let r = 0; r < LIST_ROWS; r++) {
+    for (let c = 0; c < LIST_COLS; c++) {
+      const el = document.createElement('div')
+      el.className = 'gui-slot drawn-slot creative-cell'
+      el.style.left = px(LIST_ORIGIN.x + c * SLOT_PITCH)
+      el.style.top = px(LIST_ORIGIN.y + r * SLOT_PITCH)
+      el.style.width = el.style.height = px(SLOT_SIZE)
+      panel.appendChild(el)
+      listCells.push(el)
+    }
+  }
+
+  /* ---- the player's own slots, through the shared cell factory ---- */
+  const hotbarCells = []
+  for (let i = 0; i < HOTBAR_SIZE; i++) {
+    hotbarCells.push(makeCell(panel, 'main', i, LIST_ORIGIN.x + i * SLOT_PITCH, CREATIVE_BAR_Y))
+  }
+  const invTabCells = []
+  for (let i = HOTBAR_SIZE; i < TOTAL_SLOTS; i++) {
+    const n = i - HOTBAR_SIZE
+    invTabCells.push(makeCell(panel, 'main', i,
+      LIST_ORIGIN.x + (n % 9) * SLOT_PITCH, LIST_ORIGIN.y + Math.floor(n / 9) * SLOT_PITCH))
+  }
+  for (let i = 0; i < ARMOR_SLOTS.length; i++) {
+    invTabCells.push(makeCell(panel, 'armor', i, INV_TAB_ARMOR_X, INV_TAB_ARMOR_Y + i * SLOT_PITCH))
+  }
+  invTabCells.push(makeCell(panel, 'offhand', 0, INV_TAB_ARMOR_X, INV_TAB_ARMOR_Y + 4 * SLOT_PITCH))
+  for (const el of [...hotbarCells, ...invTabCells]) el.classList.add('drawn-slot')
+
+  /*
+   * The destroy slot. Vanilla puts it on the Survival Inventory tab only, at
+   * (173, 112) -- the space to the right of the hotbar, which on every other
+   * tab is the bottom of the scrollbar.
+   *
+   * Not a `makeCell`, because it is not a slot: nothing is ever stored in it.
+   * It is a bin with a lid drawn on it, and giving it an (area, index) would
+   * have meant inventing a sixth container for something that holds nothing.
+   */
+  const destroy = document.createElement('div')
+  destroy.className = 'gui-slot drawn-slot creative-destroy'
+  destroy.style.left = px(DESTROY_SLOT.x)
+  destroy.style.top = px(DESTROY_SLOT.y)
+  destroy.style.width = destroy.style.height = px(SLOT_SIZE)
+  destroy.title = 'Destroy Item (shift-click to clear your inventory)'
+  panel.appendChild(destroy)
+
+  /* ---- the scrollbar ---- */
+  const track = document.createElement('div')
+  track.className = 'creative-track'
+  track.style.left = px(SCROLL.x)
+  track.style.top = px(SCROLL.y)
+  track.style.width = px(SCROLL.w)
+  track.style.height = px(SCROLL.h)
+  const thumb = document.createElement('div')
+  thumb.className = 'creative-thumb'
+  thumb.style.width = px(SCROLL.w)
+  thumb.style.height = px(SCROLL.thumb)
+  track.appendChild(thumb)
+  panel.appendChild(track)
+
+  /* ---- the tabs ---- */
+  const tabEls = new Map()
+  for (const t of TABS) {
+    const el = document.createElement('div')
+    el.className = `gui-tab gui-tab-${t.row}`
+    el.style.left = px(t.column * TAB_PITCH)
+    el.style.top = px(t.row === 'top' ? -(TAB_H - TAB_OVERLAP) : CREATIVE_H - TAB_OVERLAP)
+    el.style.width = px(TAB_W)
+    el.style.height = px(TAB_H)
+    el.title = t.label
+    const icon = createItemIcon(itemId(t.icon), SLOT_SIZE * HUD_SCALE)
+    icon.classList.add('gui-tab-icon')
+    el.appendChild(icon)
+    el.addEventListener('mousedown', (e) => { e.preventDefault(); selectTab(t) })
+    panel.appendChild(el)
+    tabEls.set(t.id, el)
+  }
+
+  /** The item ids the current tab is showing, in order. */
+  const listing = () => (tab.special === 'search' ? searchItems(query)
+    : tab.special ? [] : tabItems(tab.id))
+
+  const maxScroll = () => Math.max(0, Math.ceil(listing().length / LIST_COLS) - LIST_ROWS)
+
+  /*
+   * Paint the 45 cells from the window at `scrollRow`.
+   *
+   * The item id is stashed on the element rather than looked up again by the
+   * click handler, because "what is in this cell" is a question about the
+   * scroll position at the moment you clicked, and re-deriving it from a
+   * scroll that a wheel event may already have moved is how you place the
+   * wrong block.
+   */
+  const paintList = () => {
+    const ids = listing()
+    const first = scrollRow * LIST_COLS
+    listCells.forEach((el, i) => {
+      const id = ids[first + i]
+      el.dataset.item = id ?? ''
+      // The KEY, not the name: eight of the ten entries in a stair family
+      // share the name "Oak Stairs" and differ only here. See the note in
+      // creative.js on why all ten are listed.
+      el.title = id ? `${itemName(id)}  (${item(id)?.key ?? ''})` : ''
+      paintSlot(el, id ? { id, count: 1 } : null)
+      // A count of 1 on every entry would be 45 little white "1"s. The list
+      // is an infinite source; a number on it means nothing.
+      el.querySelector('.count')?.remove()
+    })
+    const max = maxScroll()
+    thumb.style.transform = `translateY(${max ? (scrollRow / max) * (SCROLL.h - SCROLL.thumb) * HUD_SCALE : 0}px)`
+    // Vanilla has a whole second sprite for this (scroller_disabled.png), so
+    // a tab that fits on one page says so rather than showing a thumb that
+    // will not move.
+    thumb.classList.toggle('disabled', max === 0)
+  }
+
+  const selectTab = (t) => {
+    tab = t
+    scrollRow = 0
+    title.textContent = t.label
+    for (const [id, el] of tabEls) el.classList.toggle('selected', id === t.id)
+    const isInventory = t.special === 'inventory'
+    const isSearch = t.special === 'search'
+    panel.classList.toggle('on-inventory-tab', isInventory)
+    search.classList.toggle('hidden', !isSearch)
+    // The edit box sits where the title does, so vanilla drops the title on
+    // this one tab rather than drawing text under a text field.
+    title.classList.toggle('hidden', isSearch)
+    for (const el of listCells) el.classList.toggle('hidden', isInventory)
+    for (const el of invTabCells) el.classList.toggle('hidden', !isInventory)
+    destroy.classList.toggle('hidden', !isInventory)
+    track.classList.toggle('hidden', isInventory)
+    // Vanilla's Search tab takes focus the moment you open it, so you can
+    // start typing without aiming at the field first.
+    if (isSearch) search.focus()
+    else search.blur()
+    paintList()
+  }
+
+  const scrollBy = (rows) => {
+    const next = Math.max(0, Math.min(maxScroll(), scrollRow + rows))
+    if (next === scrollRow) return
+    scrollRow = next
+    paintList()
+  }
+
+  panel.addEventListener('wheel', (e) => {
+    e.preventDefault()
+    // One row per notch, as vanilla does. 731 entries is 82 rows, which is a
+    // long way at one row a notch -- which is what Search is for, and what
+    // dragging the thumb is for.
+    scrollBy(Math.sign(e.deltaY))
+  }, { passive: false })
+
+  /* Dragging the thumb, and clicking the track to jump. Both resolve to the
+   * same "which row is this Y" question, so both go through one function. */
+  const scrollToY = (clientY) => {
+    const box = track.getBoundingClientRect()
+    const half = (SCROLL.thumb * HUD_SCALE) / 2
+    const span = box.height - SCROLL.thumb * HUD_SCALE
+    const f = span > 0 ? (clientY - box.top - half) / span : 0
+    scrollRow = Math.max(0, Math.min(maxScroll(), Math.round(f * maxScroll())))
+    paintList()
+  }
+  let dragging = false
+  track.addEventListener('mousedown', (e) => { e.preventDefault(); dragging = true; scrollToY(e.clientY) })
+  document.addEventListener('mousemove', (e) => { if (dragging) scrollToY(e.clientY) })
+  document.addEventListener('mouseup', () => { dragging = false })
+
+  search.addEventListener('input', () => { query = search.value; scrollRow = 0; paintList() })
+  // The search field swallows keys that would otherwise reach the game -- E
+  // would close the screen mid-word, and the digits are the hotbar.
+  search.addEventListener('keydown', (e) => { if (e.code !== 'Escape') e.stopPropagation() })
+
+  /* ---- clicking the list ---- */
+  for (const el of listCells) {
+    el.addEventListener('contextmenu', e => e.preventDefault())
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      const id = Number(el.dataset.item)
+      if (!id) return
+      // Middle-click is pick-block: "middle-clicking a slot in an inventory
+      // grabs a full stack of the item while leaving the item in the slot"
+      // (minecraft.wiki/w/Inventory). On an infinite list, "leaving it" is
+      // free.
+      inv.carried = e.button === 1
+        ? fullStack(id)
+        : creativeListClick(inv.carried, id, {
+          button: e.button === 2 ? 'right' : 'left', shift: e.shiftKey,
+        })
+      inv.emitChange()
+    })
+  }
+
+  /*
+   * Middle-click on one of the PLAYER's slots, which the shared cell factory
+   * does not handle: it only knows left and right. Vanilla's pick-block works
+   * on any slot in any inventory in creative and copies rather than moves, so
+   * this is a capture-phase listener on the panel -- it runs before the
+   * cell's own handler and stops it, rather than the cell needing to know
+   * what mode the game is in.
+   */
+  panel.addEventListener('mousedown', (e) => {
+    if (e.button !== 1) return
+    const cell = e.target.closest('.gui-slot-main, .gui-slot-armor, .gui-slot-offhand')
+    if (!cell) return
+    e.preventDefault()
+    e.stopPropagation()
+    const stack = inv.stackAt({ area: cell.dataset.area, index: Number(cell.dataset.index) })
+    if (stack) { inv.carried = fullStack(stack.id); inv.emitChange() }
+  }, true)
+
+  /*
+   * The destroy slot. Plain click bins what you are carrying; shift-click
+   * empties the lot -- "Shift + clicking on the button clears the entire
+   * inventory, including the hotbar, off-hand slot, and armor slots"
+   * (minecraft.wiki/w/Creative). It really is every container, which is why
+   * this writes through the arrays rather than looping the 36.
+   */
+  destroy.addEventListener('contextmenu', e => e.preventDefault())
+  destroy.addEventListener('mousedown', (e) => {
+    e.preventDefault()
+    if (e.shiftKey) {
+      inv.slots.fill(null)
+      inv.armor.fill(null)
+      inv.offhand.fill(null)
+    }
+    inv.carried = null
+    inv.emitChange()
+  })
+
+  /*
+   * Number keys over the list: "Pressing a number key while hovering over an
+   * item instantly places one full stack of that item into the hotbar slot
+   * that corresponds with the number" (minecraft.wiki/w/Creative_inventory).
+   *
+   * On `document` rather than per cell, because a keydown goes to the focused
+   * element and a div is never focused -- the hovered cell is found by
+   * elementFromPoint at press time instead.
+   */
+  let pointer = { x: 0, y: 0 }
+  document.addEventListener('mousemove', (e) => { pointer = { x: e.clientX, y: e.clientY } })
+  document.addEventListener('keydown', (e) => {
+    if (screen.classList.contains('hidden')) return
+    if (document.activeElement === search) return
+    const n = /^Digit([1-9])$/.exec(e.code)
+    if (!n) return
+    const el = document.elementFromPoint(pointer.x, pointer.y)
+    if (!el?.classList.contains('creative-cell')) return
+    const id = Number(el.dataset.item)
+    if (!id) return
+    inv.slots[Number(n[1]) - 1] = fullStack(id)
+    inv.emitChange()
+  })
+
+  // No onChange here: every cell makeCell built is already in the shared
+  // `cells` list that installInventoryScreen repaints, including these.
+  selectTab(TABS[0])
+
+  return {
+    /*
+     * Called when the screen opens. Clears the query, which vanilla does NOT
+     * do -- it remembers what you typed. Reset here anyway: a stale filter is
+     * invisible until you notice the list is short, and "I opened the picker
+     * and half my blocks were gone" is a worse bug than "it forgot my search".
+     */
+    opened: () => { query = ''; search.value = ''; selectTab(tab) },
+    selectTab: (id) => selectTab(TABS.find(t => t.id === id) ?? TABS[0]),
+    currentTab: () => tab.id,
+    scrollTo: (row) => { scrollRow = Math.max(0, Math.min(maxScroll(), row)); paintList() },
+    scrollRow: () => scrollRow,
+    maxScroll,
+    listing,
+    repaint: () => { paintList(); repaint() },
+  }
 }

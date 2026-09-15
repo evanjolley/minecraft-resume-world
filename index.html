@@ -154,7 +154,7 @@
     /* Two container screens share every rule: the inventory (2x2 crafting,
        armor, offhand) and the crafting table (3x3). Only the background
        sprite and the slot positions differ, both set from inventory.js. */
-    #inventory, #crafting { position: absolute; inset: 0; display: grid; place-content: center;
+    #inventory, #crafting, #creative { position: absolute; inset: 0; display: grid; place-content: center;
       background: rgba(0,0,0,0.55); z-index: 20; }
     /* The sprite leaves the player-preview window transparent, which showed
        the page's black through it. Minecraft's panel grey sits behind so it
@@ -175,6 +175,58 @@
        made the hint outline in an empty armor or offhand slot tile 2x2 the
        moment the pointer touched it. */
     .gui-slot:hover { background-color: rgba(255,255,255,0.35); }
+    /* ---------------- creative picker ----------------
+       DRAWN rather than blitted, and inventory.js says why at length: the
+       creative_inventory art exists in the vanilla jar and does not exist in
+       the CE pack, which is the pack a deploy ships. Every colour below is
+       Minecraft's own -- panel #c6c6c6, highlight #ffffff, shadow #555555,
+       slot recess #8b8b8b between #373737 and #ffffff.
+
+       The bevels are box-shadows at 2px, which is one GUI pixel at SCALE 2.
+       They are hardcoded rather than derived because CSS cannot multiply, and
+       the alternative (setting them from JS with px()) would put four more
+       style writes in the hot repaint path to express a constant. */
+    #creative-panel { position: relative; background: #c6c6c6; image-rendering: pixelated;
+      box-shadow: inset 4px 4px 0 #ffffff, inset -4px -4px 0 #555555,
+                  0 0 0 2px #000000; }
+    /* A slot with no sprite behind it, so it has to draw its own recess.
+       The two shadows are the top-left dark edge and the bottom-right light
+       one; together they read as a 1px-inset hole, which is what the sprite
+       sheet paints. */
+    .drawn-slot { background-color: #8b8b8b;
+      box-shadow: -2px -2px 0 0 #373737, 2px 2px 0 0 #ffffff; }
+    /* The destroy slot is a slot-shaped bin. Vanilla draws a lava-and-skull
+       icon on it; there is no such sprite in either source, so it is marked
+       with a red recess instead -- unmistakably "things go here to die". */
+    .creative-destroy { background-color: #8b3b3b; }
+    .creative-destroy:hover { background-color: #c05050; }
+
+    .creative-track { position: absolute; background: #000000; }
+    .creative-thumb { background: #c6c6c6;
+      box-shadow: inset 2px 2px 0 #ffffff, inset -2px -2px 0 #555555; }
+    /* Vanilla ships a whole second sprite (scroller_disabled.png) for a tab
+       that fits on one page, so the greyed-out state is vanilla, not a
+       shortcut. */
+    .creative-thumb.disabled { background: #6b6b6b; box-shadow: none; }
+
+    /* Tabs. 26x32 at a 28 pitch, overlapping the panel by 4 GUI px -- the top
+       row hangs above it, the bottom row below. The SELECTED tab loses its
+       shadow on the panel-facing edge so its body merges into the panel with
+       no seam, which is exactly what vanilla's selected sprite does; the
+       unselected ones keep the seam and sit a shade darker. */
+    #creative-panel .gui-tab { position: absolute; display: grid; place-items: center;
+      cursor: pointer; background: #c6c6c6; filter: brightness(0.78); }
+    #creative-panel .gui-tab-top { box-shadow: inset 4px 4px 0 #ffffff, inset -4px 0 0 #555555,
+      0 0 0 2px #000000; border-radius: 6px 6px 0 0; }
+    #creative-panel .gui-tab-bottom { box-shadow: inset 4px 0 0 #ffffff, inset -4px -4px 0 #555555,
+      0 0 0 2px #000000; border-radius: 0 0 6px 6px; }
+    #creative-panel .gui-tab.selected { filter: none; z-index: 2; }
+    .gui-tab-icon { pointer-events: none; }
+
+    #creative-search { position: absolute; background: #000000; color: #e0e0e0;
+      border: 2px solid #a0a0a0; outline: none; font-family: inherit;
+      padding: 0 4px; box-sizing: border-box; }
+
     #inv-carried { position: fixed; left: 0; top: 0; display: grid; place-items: center;
       pointer-events: none; z-index: 30; }
     body.inv-open #hud, body.inv-open #crosshair,
@@ -347,6 +399,10 @@
   </div>
   <div id="crafting" class="hidden">
     <div id="craft-panel"></div>
+  </div>
+  <!-- The creative item picker. A third screen, not a mode of the first. -->
+  <div id="creative" class="hidden">
+    <div id="creative-panel"></div>
   </div>
   <div id="inv-carried" class="hidden"></div>
 

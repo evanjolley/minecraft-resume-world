@@ -6,6 +6,11 @@ import { installPhysics, installSpeedModes, MC } from './physics.js'
 import { createSurvival } from './survival.js'
 import { createFluids, installFluids } from './fluids.js'
 import { createInventory, installInventoryScreen } from './inventory.js'
+import {
+  TABS as creativeTabs, CATEGORY_TABS as creativeCategoryTabs, PICKER_ITEMS as pickerItems,
+  tabItems, ruleFor as creativeRuleFor, creativeListClick, uncategorisedItems,
+  blocksWithoutEntry,
+} from './creative.js'
 import { installInteraction, installHotbarControls } from './interact.js'
 import { installRespawn } from './respawn.js'
 import { installHUD } from './hud.js'
@@ -364,7 +369,9 @@ const dimensions = installDimensions(noa, {
 })
 
 installHotbarControls(noa, inventory, inputLock)
-const inventoryScreen = installInventoryScreen(noa, inventory, inputLock)
+// `gamemode` decides which screen E opens: the survival inventory or the
+// creative item picker. See playerScreen() in inventory.js.
+const inventoryScreen = installInventoryScreen(noa, inventory, inputLock, gamemode)
 // The name is passed as a thunk, not a string: it changes while the page is
 // open, and the death screen has to say whatever you are called NOW.
 installRespawn(noa, survival, inputLock, {
@@ -681,6 +688,20 @@ window.game = {
    */
   debug, tabList,
   authority, gamemode, commands, interaction, flight: movement.flight,
+  /*
+   * The container screens and the creative picker's tab rules, for the
+   * console and for the test suite. `creative` is the RULES -- which tab
+   * claims a key, what nothing claims, what a click on the list does -- all
+   * of which are pure and answerable without opening anything;
+   * `inventoryScreen.creative` is the open screen's state. Two different
+   * questions, so two different handles.
+   */
+  inventoryScreen,
+  creative: {
+    TABS: creativeTabs, CATEGORY_TABS: creativeCategoryTabs, PICKER_ITEMS: pickerItems,
+    tabItems, ruleFor: creativeRuleFor, listClick: creativeListClick,
+    uncategorised: uncategorisedItems, blocksWithoutEntry,
+  },
   /*
    * Identity and the agent, for the console and for the test suite. `roster`
    * is the only way to ask who anyone is; `aiEvan.session.transcript` is the
