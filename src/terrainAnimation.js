@@ -55,6 +55,7 @@ import { MaterialPluginBase } from '@babylonjs/core/Materials/materialPluginBase
 import { RawTexture2DArray } from '@babylonjs/core/Materials/Textures/rawTexture2DArray.js'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js'
 import { Constants } from '@babylonjs/core/Engines/constants.js'
+import { Color3 } from '@babylonjs/core/Maths/math.color.js'
 import { ATLAS_PAGES } from './blocks.js'
 
 /**
@@ -191,6 +192,73 @@ export function frameAt(anim, t) {
  * makes the same memory hold four times as much. `uAnimRemap[i>>2][i&3]` needs
  * GLSL ES 3.0, which noa's `texture(sampler2DArray, ...)` already requires.
  */
+/*
+ * THE FROZEN AMBIENT, and why the ambient term is a uniform of THIS plugin.
+ *
+ * The bug: a stone wall was exactly as bright at midnight as at noon.
+ * Measured, 0.350 mean luminance at both -- while the FLOOR of the same build
+ * moved 0.236 -> 0.084. So the directional light was reaching the shader and
+ * the ambient term was not.
+ *
+ * WHY. noa sets `scene.performancePriority = Intermediate` (rendering.js:129).
+ * Babylon answers that in the Material constructor by setting
+ * `checkReadyOnlyOnce` on every material the scene will ever make
+ * (material.js:1179-1181), and `isFrozen` IS `checkReadyOnlyOnce`
+ * (material.js:558). So every terrain material here reports frozen without
+ * anyone calling freeze(). StandardMaterial then guards its whole material-UBO
+ * write with
+ *
+ *     if (!ubo.useUbo || !this.isFrozen || !ubo.isSync || forceRebind)
+ *                                                    (standardMaterial.js:1116)
+ *
+ * and `vAmbientColor` is written inside it (standardMaterial.js:1212). Real
+ * UBO, frozen material, synced buffer: that runs once per material, on the
+ * first chunk that draws with it, and the number baked in then is the one the
+ * shader adds into `finalDiffuse` for the rest of the session.
+ *
+ * Lights are not affected -- they bind under `mustRebind || !this.isFrozen`
+ * (standardMaterial.js:1265) and each owns its own `Light0` UBO. Which is
+ * exactly why this hid for years of commits: while LIGHT_VECTOR was tilted,
+ * every vertical face carried a live directional term and followed the clock
+ * on the light's back. sky.js pointing the light straight down -- correctly,
+ * because vanilla's face table is symmetric and a Lambertian light cannot be
+ * -- left the four side faces on the ambient term ALONE, and exposed it.
+ *
+ * REJECTED -- `mat.unfreeze()`. Measured: the wall goes to 0.077 at noon as
+ * well as at midnight. One stuck value traded for another.
+ *
+ * REJECTED -- writing `vAmbientColor` into the material's uniform buffer from
+ * sky.js each tick (`ubo.updateColor3` + `ubo.update()`). It fixes the wall
+ * and it breaks 39-animated-textures: a lava room whose voxels were provably
+ * set (`noa.getBlock` agreed, the chunk meshes existed and reported ready)
+ * rendered as empty sky. Poking another module's uniform buffer from outside
+ * the bind it belongs to is reaching into Babylon's bookkeeping, and this is
+ * what that costs.
+ *
+ * REJECTED -- a second, hemispheric light for the ambient, whose UBO does
+ * rebind every frame. It renders correctly, but 36-face-shading derives the
+ * expected shade table from `noa.rendering.light` and `scene.ambientColor`,
+ * and it is right to: those two ARE this world's lighting model.
+ *
+ * SO: the term stays `scene.ambientColor`, and this plugin -- which already
+ * owns this material's fragment shader and already pushes `uAnimRemap` down
+ * the plain-uniform path every single frame -- renames the one use of
+ * `vAmbientColor` to a uniform of its own and sets it from `scene.ambientColor`
+ * in `bindForSubMesh`. Same expression, same clamp, one frozen UBO member
+ * swapped for a live uniform on a path this file already proves works fifteen
+ * times a second.
+ *
+ * The replacement is a regex against a line that only exists under this
+ * material's defines, and a `String.replace` that misses is silent -- the
+ * failure this whole file is a monument to. It is not unguarded: if it stops
+ * matching, the wall stops darkening and 36-face-shading's last test says so
+ * in numbers.
+ *
+ * KNOWN, AND NOT FIXED HERE: the non-cube block materials (`noncube-*`,
+ * blockMeshes.js) are frozen the same way and carry the same stale ambient.
+ * They do not go through this plugin, they are another agent's files this
+ * pass, and no spec measures them yet.
+ */
 class AnimatedTerrainPlugin extends MaterialPluginBase {
   constructor(material, texture, vec4Count) {
     super(material, 'NoaAnimatedTerrain', 200, { NOA_TWOD_ARRAY_TEXTURE: false })
@@ -204,6 +272,9 @@ class AnimatedTerrainPlugin extends MaterialPluginBase {
      * of silent shader break this file just spent an afternoon on.
      */
     this._vec4Count = vec4Count
+    this._mat = material
+    /** Scratch for the per-frame ambient product; see THE FROZEN AMBIENT. */
+    this._ambient = new Color3(0, 0, 0)
     this._enable(true)
     this._atlasTextureArray = null
     /** layer -> layer, identity until a tick says otherwise. */
@@ -269,12 +340,17 @@ class AnimatedTerrainPlugin extends MaterialPluginBase {
    * sitting in the log the whole time.
    */
   getUniforms() {
-    return { ubo: [{ name: 'uAnimRemap' }] }
+    return { ubo: [{ name: 'uAnimRemap' }, { name: 'uNoaAmbient' }] }
   }
 
   bindForSubMesh(uniformBuffer, scene, engine, subMesh) {
     if (this._atlasTextureArray) uniformBuffer.setTexture('atlasTexture', this._atlasTextureArray)
-    subMesh?.effect?.setArray4('uAnimRemap', this.remap)
+    const effect = subMesh?.effect
+    if (!effect) return
+    effect.setArray4('uAnimRemap', this.remap)
+    // The ambient term, live, every frame. THE FROZEN AMBIENT, below.
+    scene.ambientColor.multiplyToRef(this._mat.ambientColor, this._ambient)
+    effect.setColor3('uNoaAmbient', this._ambient)
   }
 
   getCustomCode(shaderType) {
@@ -293,9 +369,12 @@ class AnimatedTerrainPlugin extends MaterialPluginBase {
         `int noaLayer = int(texAtlasIndex + 0.5);
          float noaMapped = uAnimRemap[noaLayer >> 2][noaLayer & 3];
          baseColor = texture(atlasTexture, vec3(vDiffuseUV, noaMapped));`,
+      '!vec3 finalDiffuse\\=clamp\\(diffuseBase\\*diffuseColor\\+emissiveColor\\+vAmbientColor,0\\.0,1\\.0\\)\\*baseColor\\.rgb;':
+        `vec3 finalDiffuse=clamp(diffuseBase*diffuseColor+emissiveColor+uNoaAmbient,0.0,1.0)*baseColor.rgb;`,
       'CUSTOM_FRAGMENT_DEFINITIONS': `
         uniform highp sampler2DArray atlasTexture;
         uniform vec4 uAnimRemap[${this._vec4Count}];
+        uniform vec3 uNoaAmbient;
         varying float texAtlasIndex;
       `,
     }
