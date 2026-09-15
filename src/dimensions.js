@@ -236,7 +236,19 @@ export function installDimensions(noa, { sky, underwater, teleport, authority = 
    * is better than a command that reports success over a no-op.
    */
   if (authority) {
-    authority.requestDimension = (name) => enter(name)
+    /*
+     * Gated HERE as well as at the command, and not only at the command.
+     * authority.js is the single trust boundary -- commands.js is a shell
+     * that parses and prints -- so a check that lives only in the shell is a
+     * check that a console user, a future keybind or a server message walks
+     * straight past. Same reason requestTeleport refuses a non-op even though
+     * /tp is already hidden from one.
+     */
+    authority.requestDimension = (name) =>
+      authority.isOperator()
+        ? enter(name)
+        // authority.js's own wording for a command a non-op reached.
+        : Promise.resolve({ ok: false, error: 'You do not have permission to use this command' })
     authority.dimensionNames = Object.keys(DIMENSIONS)
   }
 

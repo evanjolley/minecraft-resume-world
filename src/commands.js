@@ -237,18 +237,32 @@ export function installCommands(chat, authority, { noa, playerName }) {
    * Portals are the real answer and are out of scope; the accounting for what
    * one would still need is at the top of src/dimensions.js.
    *
-   * Open to everyone rather than operator-only. It moves you and nobody else,
-   * it cannot destroy anything, and the reason to go to the Nether is to look
-   * at it -- gating sightseeing behind op would be gating the feature behind
-   * the feature. Contrast /setblock, which changes the world for every player
-   * in it.
+   * OPERATOR-ONLY, and this went the other way first.
+   *
+   * The argument for opening it to everyone was decent: it moves you and
+   * nobody else, it cannot destroy anything, and the reason to visit the
+   * Nether is to look at it -- so gating sightseeing behind op reads like
+   * gating the feature behind the feature.
+   *
+   * It lost to an existing spec. test/11-commands.spec.js asserts that the
+   * command list a guest can see is EXACTLY help, op and kill, and it says
+   * why: /help and the dispatcher share one predicate so the two can never
+   * disagree, and an operator command must not even be advertised. That list
+   * is a designed property of what a visitor is shown, not an incidental
+   * count -- so a fourth entry in it is a decision about the front door of
+   * the site, and it is not one to make in passing while building a
+   * dimension. Recorded rather than quietly reverted, because the open
+   * version is the better default the day that list is deliberately reopened.
+   *
+   * /tp is the honest precedent anyway: it also only moves you, it also
+   * destroys nothing, and it is op-gated.
    */
   if (authority.requestDimension) {
     chat.command('dimension', `Moves you to another dimension: ${authority.dimensionNames.join(', ')}`,
       async ([name]) => {
         if (name === undefined) return chat.parseError('/dimension')
         report(await authority.requestDimension(name))
-      })
+      }, opOnly)
   }
 
   return {

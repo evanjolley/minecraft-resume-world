@@ -38,6 +38,15 @@ import { OP_PASSPHRASE, waitFrames, waitTicks, look } from './helpers/world.js'
 
 const SHOTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screenshots')
 
+/*
+ * Straight at dimensions.enter, deliberately NOT through /dimension.
+ *
+ * The command is operator-gated (see the note in commands.js) and this file
+ * is about the switch rather than about who is allowed to ask for it. Going
+ * through the command would mean every test here also depended on the op
+ * flow, so an op regression would fail six dimension tests and name none of
+ * them. The gate itself is asserted once, below, where it is the subject.
+ */
 const enter = (page, name) => page.evaluate(n => window.game.dimensions.enter(n), name)
 
 /** Settle long enough for noa to re-request and re-mesh the player's chunk. */
@@ -223,6 +232,20 @@ test('fog arbitrates: the dimension sets a base, water wins over it', async ({ p
     return g.underwater.baseFogDensity
   })
   expect(wet).toBeCloseTo(0.035, 5)
+})
+
+test('/dimension is operator-gated at authority, not only in the command list', async ({ page }) => {
+  // A guest asking authority directly -- the path a console user or a future
+  // keybind would take, which is why the check cannot live in commands.js.
+  const denied = await page.evaluate(() => window.game.authority.requestDimension('nether'))
+  expect(denied.ok).toBe(false)
+  expect(await page.evaluate(() => window.game.dimensions.active)).toBe('overworld')
+
+  await page.evaluate(p => window.game.authority.requestOp(p), OP_PASSPHRASE)
+  const allowed = await page.evaluate(() => window.game.authority.requestDimension('nether'))
+  expect(allowed.ok).toBe(true)
+  await settleChunks(page)
+  expect(await page.evaluate(() => window.game.dimensions.active)).toBe('nether')
 })
 
 test('the Nether looks like the Nether', async ({ page }) => {
