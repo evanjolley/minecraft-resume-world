@@ -4,6 +4,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Vector4 } from '@babylonjs/core/Maths/math.vector'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { trackEntityLight } from './entityLight.js'
+import { MC } from './physics.js'
 
 /*
  * The Minecraft player model, UV-mapped to a standard 64x64 skin.
@@ -273,6 +274,38 @@ export function createFirstPersonArm(noa, material) {
   box.isPickable = false
   noa.rendering.addMeshToScene(box)
   return box
+}
+
+/*
+ * THE STRIDE CLOCK, which is what actually makes the legs move.
+ *
+ * `limbSwing` is a DISTANCE, not a time. Minecraft's LivingEntity accumulates
+ * `walkDist` from how far the body moved this tick, and HumanoidModel reads
+ * that -- which is why sprinting quickens the stride and why standing still
+ * leaves the legs where they are instead of pedalling on the spot. Driving it
+ * off a timer is the one wrong answer that still looks animated.
+ *
+ * `limbSwingAmount` is the AMPLITUDE, chased rather than set, so the legs open
+ * and close over a few frames instead of snapping to full stride on the tick
+ * you start walking. 0.9 is vanilla's cap.
+ *
+ * It lives here, next to poseModel, because it is half of the same animation:
+ * poseModel is the shape of a step and this is when the step happens.
+ * perspective.js still has these three lines inline and should be moved onto
+ * this function -- that file belongs to another pass, so for now the two are
+ * the same arithmetic in two places and this comment is the thing that says
+ * so. Rejected: leaving it inline in npc.js too, which is how the constant
+ * 2.0 would have become three numbers that only look the same.
+ *
+ * @param {{ swing: number, amount: number }} stride  mutated in place
+ * @param {number} speed  horizontal speed, blocks/sec
+ * @param {number} secs   tick length
+ */
+export function advanceStride(stride, speed, secs) {
+  stride.swing += speed * secs * 2.0
+  const target = Math.min(speed / MC.WALK_SPEED, 1) * 0.9
+  stride.amount += (target - stride.amount) * Math.min(1, secs * 10)
+  return stride
 }
 
 /*

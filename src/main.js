@@ -549,7 +549,17 @@ const evanY = (() => {
   }
   return SPAWN[1]
 })()
-const EVAN_POS = [EVAN_XZ[0], evanY, EVAN_XZ[1]]
+/*
+ * WHERE HE IS DROPPED, not where he stands.
+ *
+ * The scan above still earns its place -- gravity does not know a leaf from a
+ * floor, so a drop into a treetop lands ON the treetop and the leaf rule is
+ * what keeps the column honest. What changed is what this array MEANS: it is
+ * a column handed to installNPC, which releases him a little above it and
+ * lets the collision solver settle him. `aiEvan.position` is where he
+ * actually is, and it moves when he walks.
+ */
+const EVAN_DROP = [EVAN_XZ[0], evanY, EVAN_XZ[1]]
 
 /** Minecraft's compass, from noa's heading (direction = sin h, cos h). */
 const FACING = ['south', 'west', 'north', 'east']
@@ -559,7 +569,7 @@ const facingName = (heading) =>
 const aiEvan = installNPC(noa, {
   roster,
   id: EVAN_ID,
-  position: EVAN_POS,
+  position: EVAN_DROP,
   /*
    * Evan's real appearance, converted from his account's pre-1.8 64x32 sheet
    * by scripts/build-textures.mjs. Only HE wears it -- the player above
@@ -587,6 +597,13 @@ const aiEvan = installNPC(noa, {
       playerId: () => LOCAL_ID,
       setName: (id, name) => roster.setName(id, name),
       nameOf: (id) => roster.displayNameOf(id),
+      /*
+       * The one tool whose side effect is in the WORLD rather than in the
+       * roster. It is a thin forward on purpose: the walking lives in npc.js
+       * where the body is, and this file's job is to hand the tool layer a
+       * function, not to know how legs work.
+       */
+      walkTo: ({ x, z }) => aiEvan.walkTo([x, z]),
       playerState: () => {
         const [x, y, z] = noa.ents.getPosition(noa.playerEntity)
         const target = noa.targetedBlock
@@ -594,7 +611,9 @@ const aiEvan = installNPC(noa, {
           position: [x, y, z],
           facing: facingName(noa.camera.heading),
           lookingAt: target ? itemName(target.blockID) : null,
-          distanceToEvan: Math.hypot(x - EVAN_POS[0], z - EVAN_POS[2]),
+          // Live, because he moves now. Reading the drop column here would
+          // report a distance to a place he left.
+          distanceToEvan: Math.hypot(x - aiEvan.position[0], z - aiEvan.position[2]),
           yourName: roster.displayNameOf(LOCAL_ID),
         }
       },
@@ -716,7 +735,16 @@ window.game = {
    * proves the rename went through a TOOL CALL rather than through a regex
    * in a chat handler.
    */
-  roster, aiEvan, LOCAL_ID, EVAN_ID, EVAN_POS,
+  roster, aiEvan, LOCAL_ID, EVAN_ID,
+  /*
+   * A GETTER, and it has to be. This used to be a frozen `[x, y, z]` written
+   * at boot; he has a physics body now, so the constant would go stale the
+   * first time he fell an inch and wrong the first time he walked. The name
+   * stays because it is what everything already asks for, and the question it
+   * answers -- where is Evan standing -- is the same one.
+   */
+  get EVAN_POS() { return aiEvan.position },
+  EVAN_DROP,
   // Key -> item id, for the console and for the test suite. Item ids above
   // ITEM_BASE are positional, so anything outside this module that wants an
   // iron pickaxe has to ask rather than hardcode 1040-something.

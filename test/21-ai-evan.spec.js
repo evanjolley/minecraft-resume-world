@@ -407,7 +407,14 @@ test('the second tool reads world state rather than writing it', async ({ page }
 
 test('the tools are published in Anthropic\'s format', async ({ page }) => {
   const schemas = await page.evaluate(() => window.game.aiEvan.toolSchemas)
-  expect(schemas.map((s) => s.name)).toEqual(['set_player_name', 'get_player_state'])
+  /*
+   * An EXHAUSTIVE list, and it is meant to fail when a tool is added -- which
+   * is what it just did. `walk_to` is the third one (see aiEvan.js); it is
+   * appended rather than inserted, because the two assertions below index
+   * into this list and the first tool is the one with a required argument.
+   */
+  expect(schemas.map((s) => s.name))
+    .toEqual(['set_player_name', 'get_player_state', 'walk_to'])
   for (const schema of schemas) {
     // What goes in the `tools` field of a /v1/messages request, verbatim.
     expect(Object.keys(schema).sort()).toEqual(['description', 'input_schema', 'name'])

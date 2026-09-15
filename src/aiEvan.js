@@ -89,6 +89,60 @@ export function createEvanTools(world) {
         + 'what they can see.',
       input_schema: { type: 'object', properties: {} },
     }, () => world.playerState()],
+
+    /*
+     * TOOL 3: THE FIRST ONE THAT MOVES A BODY.
+     *
+     * The seam was built on a rename and a coordinate readout -- one write to
+     * a roster, one read of it -- and neither of those touches the world the
+     * player is standing in. This one asks a simulated body to walk somewhere
+     * and does not finish until it gets there or fails, which is the first
+     * real test of whether the registry generalises past trivia: it is
+     * ASYNC, it takes SECONDS rather than microseconds, and it can fail for a
+     * reason the model has to do something about.
+     *
+     * It is deliberately the primitive and not the feature. docs/FUTURE.md's
+     * guided tour is `walk_to(plot)` -- a NAMED destination, "the No Logo
+     * build" -- and that tool is this tool plus a table of plots. The table
+     * is not here because the builds are not here; a tour to nowhere is a
+     * lookup table of coordinates pretending to be content.
+     *
+     * COORDINATES AND NOT A DIRECTION. "walk five blocks north" reads more
+     * natural and is the wrong shape: the model would be integrating its own
+     * dead reckoning, and it cannot see where he ended up. A point is
+     * checkable, and pairs with get_player_state, which already reports one.
+     *
+     * NO Y. The ground picks the height, exactly as it does for the drop. A
+     * model that could specify an altitude would be able to ask him to stand
+     * in the air, and the honest answer to that request does not exist.
+     */
+    [{
+      name: 'walk_to',
+      description:
+        'Walk to a spot in the world and stop there. Give the x and z of the '
+        + 'place on the ground -- the height is worked out for you. This takes a '
+        + 'few seconds and does not return until you have arrived. It fails if '
+        + 'something taller than one block is in the way, in which case try a '
+        + 'closer or clearer spot rather than the same one again.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          x: { type: 'number', description: 'Target x, in world coordinates.' },
+          z: { type: 'number', description: 'Target z, in world coordinates.' },
+        },
+        required: ['x', 'z'],
+      },
+    }, async ({ x, z }) => {
+      if (!Number.isFinite(x) || !Number.isFinite(z)) {
+        throw new Error('walk_to needs a numeric x and z')
+      }
+      // Throws on failure, and that is the point: agent.js turns a throw into
+      // `is_error` with the message, so "I could not get there because a wall
+      // is in the way" arrives as something the model can act on rather than
+      // as silence.
+      const arrived = await world.walkTo({ x, z })
+      return { ok: true, ...arrived }
+    }],
   ]
 }
 
@@ -136,6 +190,9 @@ export const LINES = {
   located: (s) =>
     `You're at ${s.position.map(Math.round).join(', ')}, ${Math.round(s.distanceToEvan)} `
     + `blocks from me, looking at ${s.lookingAt ?? 'thin air'}.`,
+  onMyWay: 'On my way.',
+  arrived: 'Here I am.',
+  cantWalk: (why) => `I can't get there -- ${why}`,
 }
 
 /*
@@ -211,6 +268,20 @@ export function parseName(text) {
  */
 const ASKS_LOCATION =
   /\b(where\s+(?:am|are)\s+(?:i|we)|where\s+i\s+am|my\s+(?:position|coord\w*|location)|am\s+i\s+standing|(?:what|which)\s+(?:block\s+)?am\s+i\s+looking\s+at|what\s+is\s+this\s+block|what's\s+this\s+block)\b/i
+/*
+ * ASKS HIM TO MOVE, which is the first intent in this table whose answer is
+ * TWO tool calls rather than one.
+ *
+ * He cannot walk to you without knowing where you are, and the stub is a pure
+ * function of the transcript -- it is not allowed to peek at the world, for
+ * the reason stubBackend's comment gives. So it does what a real model would
+ * have to do: calls get_player_state, reads the position out of the result,
+ * and calls walk_to with it. That chain is the thing worth having in the stub
+ * at all. A single hardcoded destination would have exercised the tool and
+ * proved nothing about the loop.
+ */
+const ASKS_COME =
+  /\b(come\s+(?:here|over|to\s+me)|walk\s+(?:to|over)\s+(?:to\s+)?me|follow\s+me|over\s+here)\b/i
 const ASKS_BOOKING = /\b(book|meet|meeting|schedule|call|calendar|chat|talk to|hire|time with)\b/i
 const ASKS_WORK = /\b(work|job|resume|cv|career|do you do|built|experience|portfolio)\b/i
 
@@ -301,12 +372,32 @@ export function replyTo({ messages }) {
       if (result.type !== 'tool_result') continue
       const which = toolCallNamed(messages, result.tool_use_id)
       if (result.is_error) {
-        say.push(which === 'set_player_name' ? LINES.rejected(result.content) : LINES.fallback)
+        if (which === 'set_player_name') say.push(LINES.rejected(result.content))
+        else if (which === 'walk_to') say.push(LINES.cantWalk(result.content))
+        else say.push(LINES.fallback)
         continue
       }
       const data = JSON.parse(result.content)
       if (which === 'set_player_name') say.push(LINES.welcome(data.name))
-      else if (which === 'get_player_state') say.push(LINES.located(data))
+      else if (which === 'walk_to') say.push(LINES.arrived)
+      else if (which === 'get_player_state') {
+        /*
+         * The chain. The same read tool answers two different questions, and
+         * which one it was is in what the PLAYER said, not in the result --
+         * so the intent is re-read off the last thing they typed rather than
+         * stashed in a variable this function is not allowed to have.
+         */
+        if (ASKS_COME.test(lastPlayerSaid(messages))) {
+          return {
+            content: [
+              { type: 'text', text: LINES.onMyWay },
+              toolUse('walk_to', { x: data.position[0], z: data.position[2] }),
+            ],
+            stop_reason: 'tool_use',
+          }
+        }
+        say.push(LINES.located(data))
+      }
     }
     return { content: say.map((text) => ({ type: 'text', text })), stop_reason: 'end_turn' }
   }
@@ -328,13 +419,25 @@ export function replyTo({ messages }) {
     }
   }
 
-  if (ASKS_LOCATION.test(said)) {
+  // Both of these start with the same read. See ASKS_COME.
+  if (ASKS_COME.test(said) || ASKS_LOCATION.test(said)) {
     return { content: [toolUse('get_player_state', {})], stop_reason: 'tool_use' }
   }
   const text = ASKS_BOOKING.test(said) ? LINES.booking
     : ASKS_WORK.test(said) ? LINES.work
       : LINES.fallback
   return { content: [{ type: 'text', text }], stop_reason: 'end_turn' }
+}
+
+/** The last thing the PLAYER typed, skipping the tool_result messages the
+ *  loop puts in the user role. */
+function lastPlayerSaid(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user' && typeof messages[i].content === 'string') {
+      return messages[i].content
+    }
+  }
+  return ''
 }
 
 /** Which tool produced this result -- the assistant turn that asked for it. */
