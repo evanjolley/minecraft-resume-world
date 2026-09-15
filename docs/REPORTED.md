@@ -277,6 +277,26 @@ half, and `src/inventory.js` already knows how to be a container screen with
 Minecraft's shift-click rules. **Queued behind the icon work**, which currently
 owns `inventory.js` and `items.js`.
 
+FIXED 2026-09-15, except the lit swap. Smelting is real: `src/furnace.js` is
+vanilla's `TileEntityFurnace.update` with the fuel and recipe tables in
+`recipes.js`, the screen is a fourth container in `inventory.js` drawn in CSS
+(the CE pack has no furnace GUI, same call the creative picker made), and
+`test/42-furnace.spec.js` asserts the times and quantities. Furnaces tick off
+`noa.on('tick')` whether or not anything is open.
+
+**THE LIT BLOCK SWAP IS STILL OPEN**, and it needs an edit to `src/blocks.js`,
+which that change did not own. What it needs, precisely: a block whose `front`
+is `furnace_front_on` and whose other three faces are the unlit furnace's
+(`furnace_top` / `furnace_side`), plus the same for `blast_furnace` and
+`smoker`. The texture EXISTS in the vanilla jar
+(`assets/minecraft/textures/block/furnace_front_on.png`) and `MATERIALS` is
+derived from blocks.js, so naming it there is all the extraction needs -- but
+it does NOT exist in the CE pack, whose `block/` has only
+`furnace_front{,_side,_top}`. So CE also needs a `CE_SUBSTITUTES` entry
+deriving it from `furnace_front`, the same way every post-1.16 block is
+handled. `furnaceTick()` already returns true on the tick the lit state flips,
+which is the hook to hang the `authority` block write on.
+
 **15. Fluids do not flow. Neither water nor lava.**
 > "see a random block of lava in a cave, but it isnt flowing down. Do fluids
 > flow?" ... "water doesnt either"
