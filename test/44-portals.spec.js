@@ -66,6 +66,16 @@ const portalId = (page) =>
 async function buildFrame(page, { skip = [] } = {}) {
   const skipped = new Set(skip.map(c => c.join(',')))
   const obsidian = await obsidianId(page)
+  /*
+   * Let the chunks settle before writing into them, and this is not padding.
+   * Running this file straight after 34-nether.spec.js in one worker failed
+   * the first test and passed it in isolation: a dimension round trip
+   * invalidates every chunk and noa re-requests them over the following ticks,
+   * so a setBlock issued into a chunk that is mid-re-fill is overwritten by
+   * the fill that lands after it. Nothing else in this file waits for chunks
+   * because nothing else writes the first block of a test.
+   */
+  await waitTicks(page, 6)
   await page.evaluate(([cells, id]) => {
     for (const [x, y, z] of cells) window.noa.setBlock(id, x, y, z)
   }, [FRAME.filter(c => !skipped.has(c.join(','))), obsidian])
