@@ -1034,6 +1034,30 @@ reason he cannot have both in that order.
 
 ### The Nether, and what a second dimension actually costs
 
+> **BUILT, and the blocker was not one.** Everything below stands as the
+> analysis that was right about almost all of it. Three things it left open
+> now have answers, recorded here rather than by editing the argument:
+>
+> 1. **noa swaps a world cleanly.** It is already a multi-world engine --
+>    `noa.worldName` is public, and lib/world.js's tick invalidates every
+>    chunk and re-requests it when the string changes. The request id carries
+>    the world name and stale responses are dropped, so the in-flight-chunk
+>    race this entry was really worried about is one noa already loses on
+>    purpose. `invalidateVoxelsInAABB` is the wrong tool and the reasoning is
+>    in `src/dimensions.js`. Cost is a full re-mesh, spread over ticks.
+> 2. **The asset is 402,334 bytes raw, 147,549 gzipped** -- 41% and 36% of the
+>    overworld's. "Not simply double" was right by a wider margin than
+>    expected: 128 layers against 250, and netherrack runs long (11.8 runs per
+>    column). It does not change the answer to item 8, and `public/terrain/`
+>    is still gitignored and still excluded from `dist/` over decision 1.
+> 3. **The sky's `running` flag exists and the `doDaylightCycle` hack is
+>    gone.** Built first and on its own merits, exactly as recommended.
+>
+> Still open: portals (accounting at the top of `src/dimensions.js`), and
+> `debugScreen.js:448` still hardcodes `minecraft:overworld` under a comment
+> saying there is one dimension and it can never change. That comment is now
+> false and the F3 screen is the last file that has not noticed.
+
 **Not on the critical path, and nothing here argues it onto one.** The path to
 a shippable site is the six items under "Sequencing", and the first world is
 still empty. A second world is elaboration, and the standing rule is that
