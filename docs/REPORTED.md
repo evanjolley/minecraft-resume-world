@@ -126,3 +126,29 @@ affordance.** Worth triaging together rather than one at a time:
   behind four symptoms, and it is the biggest thing not on the roadmap.
 - An item needs to show what it *is* — its name on hover (2) and its real shape
   as an icon (1). One answer covers both.
+
+---
+
+## Added 2026-09-15 — two features Evan specified while filling in the quiz
+
+Both are answers to questions in `corpus/` that turned out to describe scope
+rather than describe him. Neither is built. Neither is urgent, and they belong
+together because one is the other's escape hatch.
+
+**12. End-session flow.** When a visitor is rude, tries to jailbreak the agent,
+or fishes for something damaging, Evan leaves the game and the visitor is cut
+off — he floated an IP block. His own words end "to be scoped", and it is:
+an IP block is weak (shared and rotating addresses), it punishes a household
+rather than a person, and the session token the operations research already
+recommends is a better handle. **Still unanswered and needed first: what the
+agent actually says and what tone it takes before it goes.** Right now there is
+a mechanism with no behaviour.
+
+**13. Request-time flow.** A visitor asks for time with the real Evan and a
+request reaches him, by email or similar. This is the downstream half of two
+things the agent already promises: its fallback when it does not know, and how
+it treats recruiters. Today both point at a door that does not open.
+
+Design them together. `docs/ai-evan/02-operations.md` covers the session
+machinery both need, and the booking tools (`check_availability`, `book_meeting`)
+were already named as the next slice after the Worker lands.
