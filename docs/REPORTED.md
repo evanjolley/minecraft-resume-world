@@ -217,3 +217,46 @@ it treats recruiters. Today both point at a door that does not open.
 Design them together. `docs/ai-evan/02-operations.md` covers the session
 machinery both need, and the booking tools (`check_availability`, `book_meeting`)
 were already named as the next slice after the Worker lands.
+
+---
+
+## Added 2026-09-15, second pass — two more from play
+
+**14. Furnaces do nothing, and the inventory icon shows the wrong face.**
+The icon half went to the agent already rewriting `src/blockIcon.js`; it is the
+same class as items 1 and 2 (an item not showing what it is) and generalises to
+every block with a distinguished `front` — blast furnace, smoker, crafting
+table, dispenser, dropper, observer, loom, barrel.
+
+**Smelting itself is unbuilt and is a real feature.** It needs a container UI
+with three slots (input, fuel, output), a fuel table with burn durations, a
+smelting recipe table, per-tick progress with the two arrows, the lit/unlit
+block swap, and the fact that a furnace keeps burning while you are not looking
+at it. `src/crafting.js` and `src/recipes.js` are the precedent for the recipe
+half, and `src/inventory.js` already knows how to be a container screen with
+Minecraft's shift-click rules. **Queued behind the icon work**, which currently
+owns `inventory.js` and `items.js`.
+
+**15. Fluids do not flow. Neither water nor lava.**
+> "see a random block of lava in a cave, but it isnt flowing down. Do fluids
+> flow?" ... "water doesnt either"
+
+**Correct, and deliberate.** `src/fluids.js:155` lists it among the things
+vanilla does that this does not: *"Flowing fluids. Every fluid voxel here is a
+full still block: no levels."* It was declared a non-goal when fluids were built
+alongside sprint-swimming, enchantments and sneak-to-sink — and sneak-to-sink
+has since been built, so the list is a backlog rather than a settled boundary.
+
+What it costs here is worth knowing before anyone starts. Minecraft models flow
+as **levels 0-7 plus a falling flag**, held in block metadata. **This engine has
+no block metadata** — that is the same constraint that produced 280 separate
+slab and stair ids, because noa draws a custom block mesh as a thin instance and
+every voxel of an id shares one geometry. So each flow level is another block
+id: roughly sixteen more for water and sixteen for lava, plus the spread
+algorithm, the update scheduling (vanilla ticks water every 5 ticks and lava
+every 30 in the Overworld), source-block rules, and what happens where they
+meet.
+
+Not small, and not on the critical path, but it is the difference between water
+that exists and water that behaves. **Blocked on `src/blocks.js`**, which the
+torch work currently owns.
