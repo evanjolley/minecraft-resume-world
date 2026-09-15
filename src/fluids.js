@@ -267,8 +267,22 @@ export function createFluids(noa, move) {
    * entry transient and the burn all have to agree with that. Miss it and
    * flowing water becomes a hole you fall through.
    */
+  let sourceIds = {}
   const setIds = (ids) => {
     byId = new Map(FLUID_FLOW.map(f => [ids[f.key], f.fluid]))
+    /*
+     * The SOURCE id of each fluid, kept separately, and it has to be.
+     *
+     * `get ids()` below used to invert byId, which was exact while byId held
+     * one id per fluid. It now holds eighteen, and Object.fromEntries keeps
+     * the LAST duplicate -- so `ids.water` silently became the id of
+     * `water_falling` and every test that fills a pool or hunts for the ocean
+     * looked for a block that is not there. Eight failures across
+     * 28-underwater and 30-water-entry, all of them this one line, and none of
+     * them anywhere near the code they were testing.
+     */
+    sourceIds = Object.fromEntries(
+      FLUID_FLOW.filter(f => f.level === 0 && !f.falling).map(f => [f.fluid, ids[f.key]]))
   }
 
   /** Which fluid occupies a world point, or null. */
@@ -484,7 +498,7 @@ export function createFluids(noa, move) {
     setIds,
 
     /** key -> block id, so a test or the console can place a pool. */
-    get ids() { return Object.fromEntries([...byId].map(([id, key]) => [key, id])) },
+    get ids() { return { ...sourceIds } },
 
     /** 'water', 'lava' or null -- what the body is in. */
     get feet() { return atFeet },
