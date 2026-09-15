@@ -320,6 +320,32 @@ export function installTerrainAnimation(noa, { pages = ATLAS_PAGES } = {}) {
         renderMaterial: mat,
       })
     }
+    /*
+     * Standalone runs get a material too, and this is the line that makes the
+     * portal free.
+     *
+     * A standalone animation has no regular material to remap FROM, so
+     * atlasLayout gives it `index === base` -- its first frame layer IS the
+     * layer a material would sample. Registering that layer as a material on
+     * THIS page's animated `mat` means a block meshed with it gets the remap
+     * indirection for nothing: the per-tick write in apply() already targets
+     * `anim.index`, which is the same number. No extra shader, no extra
+     * uniform, no branch.
+     *
+     * Registered here rather than by the module that wants it (portals.js)
+     * because `mat` is local to this loop and re-creating it elsewhere would
+     * mean a second page material -- which is exactly the duplicate noa's
+     * own TerrainMatManager exists to avoid.
+     */
+    for (const anim of page.anims) {
+      if (!anim.standalone) continue
+      noa.registry.registerMaterial(anim.name, {
+        textureURL: page.file,
+        atlasIndex: anim.index,
+        texHasAlpha: page.hasAlpha,
+        renderMaterial: mat,
+      })
+    }
     installed.push({ page, mat, plugin })
   }
 

@@ -59,7 +59,10 @@
  * its cache and nothing changes. Neither failure throws.
  * ------------------------------------------------------------------------
  *
- * PORTALS ARE NOT HERE, and this is the accounting rather than a promise.
+ * PORTALS ARE NOW HERE -- in src/portals.js, installed at the bottom of this
+ * file. What follows was the accounting written before they existed, kept
+ * because every line of it turned out to be the spec, and because the one
+ * item that was called a blocker was not one. Marked up with what happened.
  *
  * THE TEXTURE IS NOW SOLVED. src/terrainAnimation.js animates the terrain
  * atlas with a layer-remap uniform, and `nether_portal` is already in it: 32
@@ -101,6 +104,31 @@
  *    a permission decision, it belongs to whoever owns authority.js, and it
  *    is the reason none of 1-4 is started here.
  *
+ *    -- AND IT WAS A FALSE DILEMMA. Both horns assume the only guest-usable
+ *    write is a FILL. It is not: `requestBlockChange` with cause 'place' is
+ *    already open to any guest whose gamemode permits building, is already
+ *    the function a server will validate, and 6 to 441 of them is exactly
+ *    what lighting a portal is. authority.js needed no change at all and was
+ *    never edited. portals.js still names the operation
+ *    `requestLightPortal` and still decorates authority with it, because the
+ *    round-trip cost the note correctly identifies is real -- when
+ *    multiplayer lands, that function's BODY becomes one message carrying the
+ *    validated cell list, and nothing that calls it changes.
+ *
+ *    Item 1 is the only part that really did need a file this pass did not
+ *    own. portals.js declares NETHER_PORTAL_ID = 700 and registers the block
+ *    at runtime, with the exact BLOCK_TYPES row blocks.js should adopt in the
+ *    comment above it. That is the compromise this paragraph warned about and
+ *    it is marked as one.
+ *
+ * 5. NOT AVAILABLE, and worth saying rather than faking: A PORTAL DOES NOT
+ *    GLOW. Vanilla's emits light level 11. This world has one directional
+ *    light and an ambient term and no propagated block light whatsoever --
+ *    the same absence the Nether's `level: 0.45` below is a workaround for.
+ *    docs/lighting.md scopes a real light engine at two to four days. Until
+ *    that exists a portal is a bright animated texture in an unlit room, and
+ *    there is no cheap trick that makes it light the obsidian around it.
+ *
  * THE DESTINATION MAPPING, which was the open design question, now has an
  * answer: ONE TO ONE, with vanilla's 16-block search radius and no
  * auto-building.
@@ -134,6 +162,8 @@ import {
   loadTerrain, setDimension as setIslandDimension, isLoaded, currentDimension,
   SPAWN, NETHER_SPAWN,
 } from './island.js'
+import { BLOCK_TYPES } from './blocks.js'
+import { installPortals } from './portals.js'
 
 /**
  * What a dimension is, in this build: an asset, a spawn, a sky and a fog.
@@ -309,7 +339,7 @@ export function installDimensions(noa, { sky, underwater, teleport, authority = 
     authority.dimensionNames = Object.keys(DIMENSIONS)
   }
 
-  return {
+  const self = {
     enter,
     get active() { return active },
     get activeId() { return DIMENSIONS[active].id },
@@ -320,4 +350,32 @@ export function installDimensions(noa, { sky, underwater, teleport, authority = 
     get worldName() { return noa.worldName },
     names: Object.keys(DIMENSIONS),
   }
+
+  /*
+   * Portals, installed from here rather than from main.js.
+   *
+   * Not a matter of taste. main.js belongs to another agent this pass with
+   * uncommitted work in it, and portals.js needs exactly two things main.js
+   * would have handed it -- `self` and `teleport` -- both of which are in
+   * scope right here. Installing from the module that owns the destination is
+   * also the honest arrangement: a portal is a way of asking for
+   * `dimensions.enter`, and nothing else in the game needs to know it exists.
+   *
+   * THE ONE UGLY LINE is `heldItemId`. Knowing whether the player is holding
+   * flint and steel needs the inventory, which installDimensions is not
+   * given, so it is read off the console handle main.js already publishes.
+   * That is a real dependency pretending not to be one. The fix is one word
+   * in main.js's installDimensions call -- `inventory,` in the deps object --
+   * and it is left undone rather than taken, because taking it means
+   * committing somebody else's half-finished file. It is injectable so that
+   * the moment that line lands, this default is simply not used.
+   */
+  const obsidian = BLOCK_TYPES.find(b => b.key === 'obsidian').id
+  const portals = installPortals(noa, {
+    authority, dimensions: self, teleport, obsidian,
+    heldItemId: () => globalThis.game?.inventory?.selectedStack?.()?.id ?? 0,
+  })
+  self.portals = portals
+
+  return self
 }
