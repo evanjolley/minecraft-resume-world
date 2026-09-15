@@ -860,3 +860,40 @@ Writing 30–50 questions a recruiter would plausibly ask and A/B-ing the two co
 formats against them is a few hours of work, and it is the only evidence that will
 actually be about Evan. That eval doubles as the regression suite the `01-*` truthfulness
 work will need anyway, so it should be built once and shared.
+
+---
+
+## Evan's standing rule on how these answers may be used
+
+Added after he began filling in the form, in his words:
+
+> "i dont want the ai agent serving my answers verbatim, as I am just slopping
+> it in there a bit."
+
+**The answers are raw source material, not copy.** He is typing fast on purpose,
+and the form is working as intended when he does — the value is in the facts and
+the reasoning, never in the prose. Anything built on this corpus extracts and
+rewrites; nothing quotes a field back to a visitor.
+
+Three reasons this is a correctness rule rather than a style preference:
+
+1. **Typos reach the visitor otherwise.** An agent that says "I graduated in
+   Septmeber" is worse than one that says nothing.
+2. **Some answers are instructions, not speech.** One reads `12M GMV, say that`
+   — the fact is the number; the rest is a direction to whoever writes the
+   prompt.
+3. **At least one answer is a rule about what to withhold**, and an agent that
+   recited it verbatim would leak precisely the thing it was told to hide. That
+   is the sharpest case, and it is the reason this is written down here rather
+   than left as an assumption.
+
+The exception: when Evan states a **decision** about what the agent must refuse,
+that refusal is binding exactly as written.
+
+This sits alongside, and reinforces, section 3 above — a corpus of his writing
+encodes writing. Groups A to D are facts and stories to be rewritten in his
+voice; the voice itself comes from Group E, spoken.
+
+The answers themselves are **not in this repository**. It is public. They live in
+the artifact database behind the quiz, with a gitignored local backup at
+`corpus/` — see `corpus/README.md`.

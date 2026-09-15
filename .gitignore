@@ -41,3 +41,9 @@ public/terrain/
 # seed in the manifest. Same rule as the textures above: fine locally, never
 # committed.
 .mcgen/
+
+# Evan's own answers for the AI Evan corpus -- name, hometown, career detail,
+# and things explicitly marked private. THIS REPO IS PUBLIC. The canonical copy
+# lives in the artifact database behind the quiz; this is a local backup and
+# must never be committed. See corpus/README.md.
+corpus/
