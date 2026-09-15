@@ -641,7 +641,14 @@ const isShears = (heldItemId) => ITEM_BY_ID.get(heldItemId)?.key === 'shears'
  */
 const DROP_RULES = [
   /* ---- never broken by a player at all ---- */
-  [/^(water|lava|barrier|bedrock)$/, NOTHING,
+  /*
+   * The `_1`..`_7` and `_falling` tails are blocks.js's sixteen fluid flow
+   * levels, which are variants of water and lava the way a north-facing stair
+   * is a variant of a stair. Widened here rather than given a rule of their
+   * own, because the reason is the SAME reason: a fluid has no item. (Added by
+   * the fluid-flow change; sounds.js's fluid rule was widened identically.)
+   */
+  [/^(water|lava)(_[1-7]|_falling)?$|^(barrier|bedrock)$/, NOTHING,
     'a fluid has no item (see BLOCK_ITEMS above), and neither the barrier nor bedrock is ever broken -- miningSeconds answers Infinity for bedrock'],
 
   /* ---- ores ---- */
