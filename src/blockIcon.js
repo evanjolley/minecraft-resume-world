@@ -50,7 +50,7 @@ export function createItemIcon(itemId, size = 32) {
  * stair hangs its step from the ceiling), and a stair's step sits on the side
  * it faces, which is a different corner for each of the four facings. Only
  * `slab_bottom` and `stairs_north_bottom` reach a slot today, because the
- * other nine are placement variants and not items -- see items.js.
+ * other eight are placement variants and not items -- see items.js.
  *
  * Road not taken: importing `shapeBoxesFor()` from blockMeshes instead of
  * SHAPE_BOXES. That reads the table installed at world load, so it answers

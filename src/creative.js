@@ -277,8 +277,8 @@ export function ruleFor(key) {
  * `isOrientationVariant`), so /give and a dropped stack agree with the picker
  * instead of each having their own idea.
  *
- * Entry count: 731 before, 479 now -- 252 fewer, which is 28 families times
- * the nine ids each of them stopped listing.
+ * Entry count: 731 before, 507 now -- 224 fewer, which is 28 families times
+ * the eight ids each of them stopped listing.
  *
  * WATER, LAVA AND THE BARRIER are the three registered blocks with no entry
  * of their own and no family to reach them through, and that is items.js's

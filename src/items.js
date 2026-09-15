@@ -251,9 +251,9 @@ function titleCase(key) {
  * It already does: blockMeshes.js's installPlacementOrientation wraps
  * noa.setBlock, takes the facing from the player's heading and the half from
  * which face you clicked and where on it, and swaps in the right variant --
- * Minecraft's own rule, asserted in test/17-non-cube.spec.js. So the item
- * only ever needs to be the family's CANONICAL id, and the nine others exist
- * below the waterline where placement picks them.
+ * Minecraft's own rule, asserted in test/17-non-cube.spec.js. So the items a
+ * family needs are its two CANONICAL ids -- one slab, one stair -- and the
+ * eight others exist below the waterline where placement picks them.
  *
  * Cutting them here rather than in creative.js is deliberate: the picker is
  * not the only window on this list. /give, the search tab, a dropped stack
@@ -261,8 +261,9 @@ function titleCase(key) {
  * given but not picked is the same bug with a smaller audience.
  *
  * A variant is a non-cube (it has a `shape`) that `drops` something other
- * than itself -- which is exactly how blocks.js marks the nine: the canonical
- * slab and stair carry no `drops` at all. Rejected: matching the key suffix,
+ * than itself -- which is exactly how blocks.js marks the eight: the
+ * canonical slab and stair carry no `drops` at all. 224 ids, 28 families of
+ * eight. Rejected: matching the key suffix,
  * which is a third copy of the regex sounds.js and creative.js already keep
  * and would silently stop matching the day a family is named differently.
  */
