@@ -16,7 +16,7 @@ rain and thunder, Fancy 3D clouds, extruded item models so tools are visible
 in hand, shift-click, game modes behind an OP-gated authority, crafting (2x2
 and 3x3), armor and an offhand, a 355-block cube palette on a paged texture
 atlas plus 280 slabs and stairs for 28 material families with real sub-voxel
-collision, and a **238-test browser suite** across 21 spec files.
+collision, and a **313-test browser suite** across 32 spec files.
 
 Four things landed since this file was last honest, and they are the reason
 several sections below now read differently:
@@ -248,12 +248,12 @@ on effort.
    sheet. Cheapest to build is the chat command, since chat already renders
    links.
 8. **The terrain asset may be too big, and nobody has decided.** `terrain.bin`
-   is 981KB raw and 405KB gzipped, against a JS bundle of 1.27MB raw and
-   313KB gzipped — so the world data is now the largest single thing a visitor
+   is 981KB raw and 414KB gzipped, against a JS bundle of 1.27MB raw and
+   333KB gzipped — so the world data is now the largest single thing a visitor
    downloads, larger than the engine. The lever is the vertical range: the
    patch is encoded from bedrock at y=-64 to y=185, and everything below about
    y=60 is stone nobody will ever mine through. Trimming the bottom is
-   mechanical and costs the caves. Whether that trade is worth 405KB has not
+   mechanical and costs the caves. Whether that trade is worth 414KB has not
    been measured against how the entry screen actually feels, and it should be
    measured before it is done.
 9. **The terrain licence question — blocks deployment, and it is not a
@@ -1019,7 +1019,7 @@ environment**, because it was not built to be one and it arrived there anyway:
 a fixed tick loop, real Minecraft physics with the constants checked against
 the wiki, fully resettable state, an observable position, a discrete action
 space that the input handling already enumerates, and an obvious reward in
-reaching a target block. The 238-test suite is a harness that can already
+reaching a target block. The 313-test suite is a harness that can already
 stand the world up headlessly and measure it.
 
 And Evan starts at Patronus AI on RL environments and LLM evaluation. So
@@ -1031,6 +1031,127 @@ it.
 The honest split: **A\* ships the tour; the environment is a separate project
 that happens to share a world.** Evan's call which he wants, and there is no
 reason he cannot have both in that order.
+
+### The Nether, and what a second dimension actually costs
+
+**Not on the critical path, and nothing here argues it onto one.** The path to
+a shippable site is the six items under "Sequencing", and the first world is
+still empty. A second world is elaboration, and the standing rule is that
+elaboration loses to anything that makes the world worth visiting. This is
+written down because the answer is not "add the Nether" — the shape of the
+work is nothing like the shape it looks like from outside, and most of it is
+not Nether work at all.
+
+**The argument for it is the seam, not the destination.** Nothing else on this
+list forces `island.js`, `authority.js`, `sky.js` and the debug screen to stop
+assuming there is exactly one world. `debugScreen.js:448` says so literally —
+`dimension: 'minecraft:overworld'`, under a comment at line 84 reading "there
+is one dimension and it can never change". A second dimension is the only
+feature that makes that comment false, and once it is false, every later idea
+of the form *walk into a build and it is its own space* — an interior that is
+not carved out of the patch, a room per resume point, a hub — becomes a
+configuration rather than a project. That is worth more than red rock, and it
+is why, if this is ever built, it should be built as **dimensions with the
+Nether as the first one** rather than as the Nether with a general case bolted
+on afterwards.
+
+**The one hard part is that noa caches a chunk forever.** `island.js` says it
+at the top of `loadTerrain`: a chunk answered once is cached by noa, so there
+is no "load it later" that does not also mean invalidate and re-mesh
+everything. A portal transition is exactly that, with the whole world data
+source swapping under a running engine. Everything else below is hours; this
+is the part nobody has costed, and whether noa 0.33 can swap a world cleanly
+is **unverified**. Underneath it the edit is small: `island.js` holds one
+patch in one module-level slot (`patch`, `idTable`, `idTableFor`) and
+`getVoxelID(x, y, z, ids)` carries no dimension. `loadTerrain` already takes a
+URL, so a second asset costs nothing — the single slot is the whole change.
+
+That signature is load-bearing for persistence, which is why this is worth
+reading before section 1c is built rather than after. The diff-based save
+rests on "same coordinate, same answer, forever", which `island.js` supplies
+by being a lookup into immutable data. A second dimension does not break that,
+but it means the diff key gains a dimension component and
+`authority.requestBlockChange` — the single place a block changes, and the
+reason 1c is cheap — stops closing over one world. Nothing is stored yet, so
+that is free to get right now and a migration later.
+
+**The extraction pipeline is most of the way there, and nobody planned that.**
+A generated world keeps its Nether in `DIM-1/region`, and
+`scripts/terrain/anvil.mjs` already takes the region directory as a
+constructor argument. Two callers hardcode the overworld path (`scan.mjs:151`
+and `generate.mjs:100`), and `generate.mjs:74` writes `allow-nether=false`
+into `server.properties`. The block mapping needs nothing at all:
+`mapping.mjs` classifies by name off `src/blocks.js`, which has carried a
+NETHER family since the palette was built, and `src/sounds.js` already
+resolves netherrack, nether bricks, nether ore and nether wood into their own
+SoundTypes. **The palette and the audio for a Nether shipped long ago. The
+dimension is the only missing piece.**
+
+Two parts of that pipeline are genuinely overworld-shaped and do not port. The
+Y range is written in — `build-terrain.mjs` reads bedrock at -64 up to 319 and
+trims to `highest + 8` — against a Nether that is 0 to 127 with a bedrock roof
+on it. And both `pickSpawn` and `scan.mjs`'s scorer find the surface by
+scanning down from the sky, which in a world with a ceiling always returns the
+ceiling. Spawn selection in the Nether is a different algorithm rather than a
+retuned one, so item 6's occlusion fix does not cover it.
+
+**Fog is already paid for, by the water work.** `src/underwater.js` sets
+`scene.fogMode` to EXP2 once at boot and never changes it, because the `FOG`
+shader define is baked into Babylon's material the first time it compiles, and
+that file records why flipping back to `FOGMODE_NONE` was rejected. The
+decision was made for water and it happens to make flat red Nether fog free:
+EXP2 is globally on, so a dimension fog is a runtime write to `scene.fogColor`
+and `scene.fogDensity` with no recompile. The only real work is arbitration.
+`underwater.js` is the sole writer of density, it writes every frame, and it
+resets to **0** on surfacing — a dimension fog needs that reset to be a base
+value instead of zero.
+
+**`src/sky.js` is where the dimension has to land, and it is the expensive
+file.** It exports one function, imported by `main.js` alone, and it owns far
+more than its name: the 24000-tick clock, the sun and moon, the cloud layer,
+`scene.clearColor`, `scene.ambientColor`, the directional light, the weather
+tint and the lightning flash — and at the end of its tick it calls
+`setEntityLight(level)`, which is what every skin and held-item material reads
+through `src/entityLight.js`. The Nether wants the sun, moon, clouds and cycle
+all off and still needs a daylight level, or every player model in the world
+freezes at whatever the clock last wrote. There is no off switch today:
+`doDaylightCycle` is enforced from `main.js` by pinning the clock back each
+tick, and main.js's own comment calls that a hack and names the honest version
+— a `running` flag inside sky.js. **That flag is already owed**, it is worth
+building on its own merits, and it is the first thing to do if this is ever
+started.
+
+**Portals need animated textures, and the Nether does not have to fund them.**
+`docs/water.md` section 3 works that question out in full — why the obvious
+approaches fail, and why a layer-remap uniform in a copied
+`TerrainMaterialPlugin` is the answer — and the argument is not repeated here.
+What matters for this entry is the accounting at the end of it: the portal's
+32 frames are among the nine textures that analysis already sizes, they land
+on an atlas page with room to spare, and **water** is what justifies the work.
+Build it for water and the portal comes along.
+
+**Lava is done, and water in the Nether is a non-problem.** `src/fluids.js`
+already carries lava with its own gravity, sink speed, forward speed and
+retention, plus the damage and the fifteen seconds on fire on the way out. The
+fluid that defines the place is the one thing needing no work. Vanilla
+evaporates water placed in the Nether, and this build models no water-lava
+interaction whatsoever — no obsidian, no cobblestone, and no flowing fluids at
+all, every fluid voxel being a full still block. Recorded so nobody scopes it:
+an imported Nether patch contains no water and a visitor has no bucket, so
+there is nothing for the rule to apply to.
+
+**It makes two open questions worse.** A second patch is a second piece of
+Mojang generator output under the same unresolved licence as the first, which
+is decision 1 in `DECISIONS.md` and is not re-argued here. And it lands on the
+wrong side of item 8: `terrain.bin` is 981KB raw and 414KB gzipped against a
+bundle of 1.27MB raw and 333KB gzipped, so the world is already the largest
+single thing a visitor downloads, by a wider margin than that item currently
+states. A Nether patch is not simply a second copy of it — the format is
+per-column run-length encoding, the Nether's 128 layers are half this patch's
+250, and a world made mostly of netherrack encodes as very long runs — but
+nobody has measured it, so "it roughly doubles the download" is a guess. Item
+8's question about trimming the vertical range gets asked a second time if
+this is ever built.
 
 ## Not worth building
 
