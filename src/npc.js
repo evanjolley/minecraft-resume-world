@@ -216,6 +216,11 @@ export function installNPC(noa, {
   /** The column he was dropped into, kept so a test (or a lost NPC) can be
    *  put back without re-deriving the ground scan in main.js. */
   const home = [position[0], position[1], position[2]]
+  const floorX = Math.floor(home[0])
+  const floorZ = Math.floor(home[2])
+
+  /** The last position at which he was resting on real ground. See the gate. */
+  let lastRest = null
 
   /*
    * The NAME, with nothing in front of it. `[Admin]` is a chat rank and it
@@ -405,16 +410,67 @@ export function installNPC(noa, {
     const secs = dt / 1000
 
     /*
-     * THE GATE. Until there is loaded terrain under him he is not falling
-     * anywhere. `noa.getBlock` answers 0 for a chunk that has not arrived, so
-     * "solid under the column he was dropped into" is both the readiness test
-     * and the sanity test, in one call.
+     * THE GATE: he does not fall while the solver has no floor to stop him.
+     *
+     * One question, asked of the PHYSICS ENGINE rather than of the world, and
+     * it turns out to be the same question twice.
+     *
+     *   1. Boot. Chunks mesh asynchronously and installNPC runs during boot,
+     *      so terrain that has not arrived reads as AIR. Release him at
+     *      construction and he falls through the island at 32 b/s^2 while the
+     *      ground he was aimed at loads in above him.
+     *   2. Spectator. gamemode.js noclips by replacing `noa.physics.testSolid`
+     *      with `() => false` -- GLOBALLY, because voxel-physics-engine has no
+     *      per-body override, and physics.js wrote that up as safe on the
+     *      grounds that there was exactly one body in the world. There are two
+     *      now. Without this, pressing into spectator sinks Evan through the
+     *      planet, and leaving it drops him back into whatever he ended up
+     *      inside.
+     *
+     * So the release condition is `testSolid` on his own floor: the solver's
+     * own answer to "would this stop him". Absent chunk, false. Noclip, false.
+     * Real ground, true. It re-arms as well as releases, which is what makes
+     * the spectator case recover instead of just not-starting.
+     *
+     * Rejected: reading `noa.getBlock` and the registry, which was the first
+     * version. It answers the boot case and is blind to the second, because
+     * the block is still solid -- it is the SOLVER that has stopped caring.
+     *
+     * AND THE TRAP: `testSolid` takes OFFSET coordinates, not world ones. The
+     * physics engine runs in noa's rebased frame and noa's own block getter
+     * adds `worldOriginOffset` back on before it looks anything up, so a
+     * world coordinate passed in here gets the offset applied twice and asks
+     * about a voxel 138 blocks away. It does not error; it answers about
+     * somewhere else, which is worse.
      */
-    if (body.gravityMultiplier === 0) {
-      const under = noa.getBlock(Math.floor(home[0]), home[1] - 1, Math.floor(home[2]))
-      if (!noa.registry.getBlockSolidity(under)) return
-      body.gravityMultiplier = 1
+    const offset = noa.worldOriginOffset
+    if (!noa.physics.testSolid(
+      floorX - offset[0], home[1] - 1 - offset[1], floorZ - offset[2])) {
+      body.gravityMultiplier = 0
+      body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
+      move.running = false
+      move.jumping = false
+      /*
+       * PUT HIM BACK, and this is the part that is not obvious.
+       *
+       * Freezing is a tick late by construction -- the flag flips outside
+       * this handler, so one physics step has already run without a floor and
+       * he is 0.035 blocks low. Harmless while frozen, and fatal on the way
+       * out: 0.035 low means his feet are INSIDE the block he was standing
+       * on, and a sweep that starts inside solid voxels does not stop at
+       * them. He fell straight through and landed a block down, every time
+       * someone toggled spectator.
+       *
+       * So he is held at the last place he actually had ground under him
+       * rather than wherever the flip left him. Before his first landing
+       * there is no such place and nothing is asserted -- that is the boot
+       * case, where standing still at the release point is already right.
+       */
+      if (lastRest) noa.ents.setPosition(entity, lastRest[0], lastRest[1], lastRest[2])
+      return
     }
+    body.gravityMultiplier = 1
+    if (body.atRestY() < 0) lastRest = [...at()]
 
     steer(secs)
     const near = distanceTo()
@@ -521,9 +577,30 @@ export function installNPC(noa, {
     get stride() { return { ...stride } },
     /** The column he was dropped into. */
     get home() { return [...home] },
-    /** Standing on something, as against falling. The physics body's own
-     *  answer, so a spec can watch him land rather than infer it from y. */
-    get grounded() { return body.atRestY() < 0 },
+    /**
+     * Standing on something, as against falling.
+     *
+     * The body's own answer FIRST, and then a second clause that exists
+     * because the body's own answer goes stale. voxel-physics-engine puts a
+     * resting body to SLEEP -- it stops stepping it entirely, which means it
+     * also stops writing `resting`, which means a man who has been standing
+     * still for a second reports exactly what a man in free fall reports.
+     * That is the whole of `bodyAsleep` in that library, and it cost an
+     * afternoon: spectator was correctly leaving him on the ground and this
+     * getter was correctly saying he was not.
+     *
+     * So the sleeping case is asked directly: nothing moving him vertically,
+     * gravity on, and a solid voxel under his feet. Offset coordinates,
+     * because `testSolid` runs in noa's rebased frame -- see the gate.
+     */
+    get grounded() {
+      if (body.atRestY() < 0) return true
+      if (body.velocity[1] !== 0 || body.gravityMultiplier === 0) return false
+      const o = noa.worldOriginOffset
+      const p = at()
+      return !!noa.physics.testSolid(
+        Math.floor(p[0]) - o[0], Math.floor(p[1]) - 1 - o[1], Math.floor(p[2]) - o[2])
+    },
     /** The tools he actually has, in Anthropic's format. For the console. */
     get toolSchemas() { return tools.schemas },
     /** Force a conversation from a test or the console, without walking. */
@@ -546,6 +623,7 @@ export function installNPC(noa, {
        * something.
        */
       body.resting[0] = body.resting[1] = body.resting[2] = 0
+      lastRest = null
       noa.ents.setPosition(entity, home[0], home[1] + SPAWN_DROP, home[2])
     },
   }

@@ -795,7 +795,17 @@ window.game = {
    * which in a world 250 blocks tall is most of it. This answers what the
    * world IS at a coordinate, resident or not, mined or not.
    */
-  voxelAt: (x, y, z) => getVoxelID(x, y, z, ids),
+  //
+  // FLOORED, because a coordinate is a POINT and a voxel query about a point
+  // means the voxel containing it -- which is what `noa.getBlock` does one
+  // paragraph up, and what this quietly did not. It answered `undefined` for
+  // a fractional y, and `undefined !== 0` is true, so "is there something
+  // solid here" came back YES for a coordinate in mid-air. That surfaced the
+  // moment Evan got a physics body: noa nudges every entity 0.002 off a
+  // voxel boundary when it rebases the world origin, so his feet stopped
+  // being at exactly 136 after the player had travelled, and a spec asserting
+  // air at his feet started reporting him buried in the floor.
+  voxelAt: (x, y, z) => getVoxelID(Math.floor(x), Math.floor(y), Math.floor(z), ids),
   /*
    * key -> engine block id, and the inverse. Exposed because a spec that wants
    * to know what it is standing on can otherwise only assert a NUMBER, and the

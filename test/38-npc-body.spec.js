@@ -1,5 +1,7 @@
 import { test, expect } from './fixtures.js'
-import { aim, teleport, waitTicks, settleOnGround, setBlock, getBlock, ID, SURFACE_Y } from './helpers/world.js'
+import {
+  aim, teleport, waitTicks, settleOnGround, setBlock, getBlock, useGamemode, ID, SURFACE_Y,
+} from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 
 /*
@@ -139,6 +141,71 @@ test('the collision solver picks his height, not the caller', async ({ page }) =
   await setBlock(page, ID.air, hx, hy, hz)
   await resetEvan(page)
   expect((await evanAt(page))[1]).toBeCloseTo(hy, 3)
+})
+
+test('a world rebase does not bury him in the floor', async ({ page }) => {
+  /*
+   * THE REGRESSION THIS CHANGE CREATED, and the one 21-ai-evan.spec.js caught
+   * in a full-suite run while passing on its own.
+   *
+   * noa rebases the scene origin as the player travels, and it NUDGES every
+   * entity 0.002 off a voxel boundary on the way past so float error cannot
+   * carry a body across one. Harmless -- until his position stopped being a
+   * frozen integer written at boot and became a live physics y. 136 became
+   * 136.004, and `game.voxelAt` was indexing a column array with a fractional
+   * y, getting `undefined`, and answering "solid" for thin air.
+   *
+   * So this asserts the query, not the number. He is allowed to sit a
+   * thousandth of a block off a boundary; what is not allowed is for asking
+   * what is at his feet to come back wrong because of it.
+   */
+  const before = await evanAt(page)
+  // Far enough up to cross a chunk boundary and force the rebase. usePad
+  // lives at y=200 for the same reason.
+  await teleport(page, 0.5, 200, 0.5)
+  await waitTicks(page, 3)
+  await teleport(page, 0.5, SURFACE_Y + 2, 0.5)
+  await settleOnGround(page)
+  await waitTicks(page, 3)
+
+  const after = await page.evaluate(() => {
+    const p = window.game.aiEvan.position
+    return {
+      pos: [...p],
+      // Deliberately the UNROUNDED position, which is the whole point.
+      atFeet: window.game.voxelAt(p[0], p[1], p[2]),
+      below: window.game.voxelAt(p[0], p[1] - 1, p[2]),
+    }
+  })
+  expect(after.pos[0]).toBeCloseTo(before[0], 1)
+  expect(after.pos[1]).toBeCloseTo(before[1], 1)
+  expect(after.atFeet, 'Evan is standing inside a block').toBe(0)
+  expect(after.below, 'nothing under Evan -- he is hovering').not.toBe(0)
+})
+
+test('spectator noclip does not sink him through the planet', async ({ page }) => {
+  /*
+   * A BUG THIS CHANGE INTRODUCED SOMEWHERE ELSE, and the reason the guard is
+   * in npc.js rather than in gamemode.js.
+   *
+   * Spectator noclips by swapping `noa.physics.testSolid` for `() => false`,
+   * globally, because voxel-physics-engine has no per-body override.
+   * physics.js says at length that this is fine because there is exactly one
+   * physics body in this world. There are two now, and the second one is a
+   * person standing on the ground.
+   */
+  const before = await evanAt(page)
+  await useGamemode(page, 'spectator')
+  await waitTicks(page, 20)
+
+  const during = await evanState(page)
+  expect(during.pos[1], 'he is falling through the island').toBeCloseTo(before[1], 1)
+
+  await useGamemode(page, 'survival')
+  await waitTicks(page, 10)
+  const after = await evanState(page)
+  expect(after.grounded).toBe(true)
+  expect(after.pos[1]).toBeCloseTo(before[1], 1)
 })
 
 test('walk_to moves him across the ground and stops him there',
@@ -408,27 +475,42 @@ test('the tool refuses a destination it cannot take a number from',
  */
 test('screenshots: Evan mid-stride', async ({ page }) => {
   const evan = await evanAt(page)
+
   /*
-   * SIDE ON, and standing level with the MIDDLE of the walk rather than with
-   * where he starts. A walk cycle photographed head-on is a man standing
-   * still, and one photographed from the end of the path is a man getting
-   * bigger. Heading pi is straight down -z, which is where he will be.
+   * SIDE ON, from four blocks along the line the walk tests above already
+   * prove is walkable -- which is the only reason this vantage is safe. He
+   * stands in dense forest, and the first four attempts at this shot were a
+   * wall of dirt or a wall of sky because every spot that LOOKS like a camera
+   * position here is inside a trunk.
    *
-   * NEGATIVE pitch, which is the sign trap in this engine: noa's camera pitch
-   * is positive looking UP, and a first attempt at 0.28 produced four frames
-   * of sky with his boots at the top of them.
+   * Rejected: spectator, which would let the camera go anywhere. It cannot be
+   * used, and the reason is the spec above -- noclip is global, so a
+   * spectating camera freezes the thing it came to photograph.
+   *
+   * He walks along Z and the camera looks along -X, so the stride is in
+   * profile. A walk cycle photographed head-on is a man standing still.
    */
-  await teleport(page, evan[0] + 3, SURFACE_Y + 2, evan[2] + 5)
+  await teleport(page, evan[0] + 4, SURFACE_Y + 2, evan[2])
   await settleOnGround(page)
-  await aim(page, { heading: Math.PI, pitch: -0.12 })
+  // Negative pitch is DOWN here: noa's camera pitch is positive looking UP,
+  // and a first attempt at +0.28 produced four frames of sky.
+  // Aimed at the MIDDLE of the walk, not at where he starts, so the whole
+  // stride happens in frame instead of leaving it on the third shot.
+  await aim(page, { heading: Math.atan2(-4, 1.5), pitch: -0.1 })
   await waitTicks(page, 3)
   await shot(page, 'npc-evan-standing')
 
-  const walk = page.evaluate((t) => window.game.aiEvan.walkTo(t), [evan[0] + 6, evan[2]])
+  /*
+   * Caught, not awaited bare. He is walking over real terrain that nothing
+   * flattened for this shot, so the walk is allowed to fail on a two-block
+   * ledge -- and the FRAMES are the point of this test, not the arrival.
+   */
+  const walk = page.evaluate(
+    (t) => window.game.aiEvan.walkTo(t).catch((e) => e.message), [evan[0], evan[2] + 3])
   // Four frames spread across the walk. One shot proves he is somewhere; a
   // sequence is the only way to show the legs are in different places.
   for (let i = 0; i < 4; i++) {
-    await waitTicks(page, 4)
+    await waitTicks(page, 3)
     await shot(page, `npc-evan-walking-${i}`)
   }
   await walk
