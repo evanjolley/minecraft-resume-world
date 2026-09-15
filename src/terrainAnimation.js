@@ -194,9 +194,18 @@ export function frameAt(anim, t) {
 class AnimatedTerrainPlugin extends MaterialPluginBase {
   constructor(material, texture, vec4Count) {
     super(material, 'NoaAnimatedTerrain', 200, { NOA_TWOD_ARRAY_TEXTURE: false })
+    /*
+     * BEFORE _enable, not after. _enable(true) reaches straight back into
+     * getCustomCode() (materialPluginManager.js:54, _collectPointNames), so
+     * anything the shader strings interpolate has to already exist. It only
+     * reads the object's KEYS at that moment, so the array size being
+     * `undefined` there did no harm -- but it is one refactor away from
+     * shipping `uniform vec4 uAnimRemap[undefined];`, which is the same class
+     * of silent shader break this file just spent an afternoon on.
+     */
+    this._vec4Count = vec4Count
     this._enable(true)
     this._atlasTextureArray = null
-    this._vec4Count = vec4Count
     /** layer -> layer, identity until a tick says otherwise. */
     this.remap = new Float32Array(vec4Count * 4)
     for (let i = 0; i < this.remap.length; i++) this.remap[i] = i
@@ -234,15 +243,33 @@ class AnimatedTerrainPlugin extends MaterialPluginBase {
    *
    * An entry with a name and no size/type still registers the NAME as a plain
    * uniform (materialPluginManager.js:211 pushes it outside the size check),
-   * and `fragment` injects the declaration at ADDITIONAL_FRAGMENT_DECLARATION.
-   * So the uniform is declared, has a location, and is set per draw with
-   * setArray4 off the sub-mesh's effect.
+   * which is what gets it into the effect's uniform list and therefore gives
+   * it a location for setArray4. That half was right and is unchanged.
+   *
+   * THE HALF THAT WAS WRONG, and it shipped broken: the DECLARATION used to
+   * ride on the same object, as `fragment: 'uniform vec4 uAnimRemap[N];'`.
+   * materialPluginManager.js:251 injects that string by replacing the token
+   * `#define ADDITIONAL_FRAGMENT_DECLARATION` --
+   *
+   *     grep -l ADDITIONAL_FRAGMENT_DECLARATION @babylonjs/core/Shaders/*.js
+   *     (nothing)
+   *
+   * -- which appears in NO shader in Babylon 6. `String.replace` on a token
+   * that is not there returns the string unchanged and reports nothing, so the
+   * declaration silently evaporated and every terrain material in the world
+   * failed to compile with `'uAnimRemap' : undeclared identifier`, followed by
+   * two cascade errors about indexing a non-array. Babylon logs that to the
+   * console and falls back rather than throwing, which is why it was possible
+   * to look at animating water and not know.
+   *
+   * The declaration therefore goes where the sampler and the varying below
+   * already go and already work: CUSTOM_FRAGMENT_DEFINITIONS, which
+   * default.fragment.js really does contain. The compile error named only
+   * `uAnimRemap` and never `atlasTexture` -- that was the tell, and it was
+   * sitting in the log the whole time.
    */
   getUniforms() {
-    return {
-      ubo: [{ name: 'uAnimRemap' }],
-      fragment: `uniform vec4 uAnimRemap[${this._vec4Count}];`,
-    }
+    return { ubo: [{ name: 'uAnimRemap' }] }
   }
 
   bindForSubMesh(uniformBuffer, scene, engine, subMesh) {
@@ -268,6 +295,7 @@ class AnimatedTerrainPlugin extends MaterialPluginBase {
          baseColor = texture(atlasTexture, vec3(vDiffuseUV, noaMapped));`,
       'CUSTOM_FRAGMENT_DEFINITIONS': `
         uniform highp sampler2DArray atlasTexture;
+        uniform vec4 uAnimRemap[${this._vec4Count}];
         varying float texAtlasIndex;
       `,
     }
