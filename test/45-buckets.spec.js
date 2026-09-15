@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures.js'
 import {
   SURFACE_Y, HEADING, aim, getBlock, setBlock, waitTicks, useGamemode, targetedBlock,
+  holdMouse,
 } from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 
@@ -211,6 +212,31 @@ test.describe('buckets', () => {
     expect(await getBlock(page, ...FACE)).toBe(ID.water)
     expect(await slot0(page)).toEqual({ id: filled, count: 1 })
   })
+
+  test('right-clicking a furnace with a bucket opens the furnace, and pours nothing',
+    async ({ page, terrain }) => {
+      /*
+       * Vanilla's precedence: USING a block beats using the item in your hand
+       * unless you are sneaking. Here that falls out of an ordering rather
+       * than a rule -- interact.js's alt-fire listener is registered first and
+       * opens the screen, which takes the inputLock synchronously, and
+       * bucket.js's listener sees the lock and stands down.
+       *
+       * Which is exactly the kind of thing that works until someone moves a
+       * line in main.js, so it is asserted rather than trusted.
+       */
+      await aimAt(page, terrain, await itemId(page, 'furnace'))
+      const filled = await itemId(page, 'water_bucket')
+      await hold(page, filled)
+      await waitTicks(page, 2)
+      await holdMouse(page, 120, 'right')
+      await waitTicks(page, 2)
+
+      expect(await page.evaluate(() => window.game.inventoryScreen.current())).toBe('furnace')
+      expect(await getBlock(page, ...FACE)).toBe(ID.air)
+      expect(await slot0(page)).toEqual({ id: filled, count: 1 })
+      await page.evaluate(() => window.game.inventoryScreen.setOpen(false))
+    })
 
   test('adventure mode refuses both halves', async ({ page, terrain }) => {
     await useGamemode(page, 'adventure')
