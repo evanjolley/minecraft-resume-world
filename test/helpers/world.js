@@ -306,6 +306,23 @@ export async function resetWorld(page) {
      */
     game.drops.list.length = 0
 
+    /*
+     * Scheduled fluid updates, for exactly the reason dropped items are
+     * cleared above -- and this one is newer and bites harder.
+     *
+     * Until fluids flowed, a pool a spec left behind was inert: the terrain
+     * fixture put the voxels back and that was the whole of it. A flowing
+     * fluid also leaves a QUEUE, and that queue keeps running after the undo
+     * restores the blocks, so the next spec's pool spreads on a schedule the
+     * previous spec set. It reads as a flake because it only appears when one
+     * fluid spec follows another, and `30-water-entry` passes 18/18 alone.
+     *
+     * Optional-chained on purpose: this helper boots worlds built from older
+     * commits during a bisect, and a missing seam should not take the harness
+     * down with it.
+     */
+    game.fluids?.flow?.reset?.()
+
     noa.ents.setPosition(noa.playerEntity, spawn)
     const body = noa.ents.getPhysics(noa.playerEntity).body
     body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
