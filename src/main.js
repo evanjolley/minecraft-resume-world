@@ -1,6 +1,6 @@
 import { Engine } from 'noa-engine'
 
-import { registerBlocks } from './blocks.js'
+import { registerBlocks, BLOCK_TYPES } from './blocks.js'
 import { getVoxelID, loadTerrain, terrainInfo, SPAWN } from './island.js'
 import { installPhysics, installSpeedModes, MC } from './physics.js'
 import { createSurvival } from './survival.js'
@@ -30,6 +30,7 @@ import { installHighlightStyle } from './highlight.js'
 import { createAuthority } from './authority.js'
 import { installGamemode } from './gamemode.js'
 import { installCommands } from './commands.js'
+import { installDimensions } from './dimensions.js'
 import { createRoster, GUEST_NAME } from './identity.js'
 import { installNPC } from './npc.js'
 import { installDebugScreen } from './debugScreen.js'
@@ -280,6 +281,26 @@ const gamemode = installGamemode({ flight: movement.flight, perspective, held })
  * half that survives that swap -- how a change that has already been approved
  * actually reaches the game.
  */
+/*
+ * Moving the player, without asking permission.
+ *
+ * Lifted out of the authority adapter below because two callers now need the
+ * same move and only one of them is a command: /tp is operator-gated by
+ * authority.js, and arriving in a dimension is not (see the note on
+ * /dimension in commands.js). Hoisting the closure rather than routing
+ * dimensions.js through requestTeleport keeps the gate exactly where it was
+ * -- on the command -- instead of forcing a second caller to be an operator
+ * to be allowed to stand somewhere.
+ */
+const movePlayer = (x, y, z) => {
+  noa.ents.setPosition(noa.playerEntity, [x, y, z])
+  const body = noa.ents.getPhysics(noa.playerEntity).body
+  body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
+  // Same trap as respawn.js: without this you land at the destination and
+  // are immediately billed for the height you were teleported from.
+  survival.clearFallTracking()
+}
+
 const authority = createAuthority({
   world: {
     /*
@@ -291,15 +312,8 @@ const authority = createAuthority({
     applyGamemode: (mode) => gamemode.apply(mode),
     setBlock: (id, x, y, z) => noa.setBlock(id, x, y, z),
     getTime: () => sky.getTime(),
-    setTime: (t) => { sky.setTime(t); pinnedTime = null },
-    teleport: (x, y, z) => {
-      noa.ents.setPosition(noa.playerEntity, [x, y, z])
-      const body = noa.ents.getPhysics(noa.playerEntity).body
-      body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
-      // Same trap as respawn.js: without this you land at the destination and
-      // are immediately billed for the height you were teleported from.
-      survival.clearFallTracking()
-    },
+    setTime: (t) => sky.setTime(t),
+    teleport: movePlayer,
     give: (id, count) => inventory.add(id, count),
     blockName: (id) => itemName(id),
     kill: () => survival.kill(),
@@ -315,21 +329,38 @@ const interaction = installInteraction(noa, inventory,
 /*
  * The doDaylightCycle game rule.
  *
- * sky.js owns the clock and advances it on its own tick, and it is not this
- * agent's file to change, so the rule is enforced by pinning the clock back
- * each tick instead of by stopping it. That reads as a hack and half is: the
- * honest version is a `running` flag inside sky.js. It is observably correct
- * -- getTime() does not move -- and it costs one comparison a tick.
+ * WAS a hack, and the comment here said so: sky.js owned the clock, had no
+ * off switch, and the rule was enforced by letting the clock advance and then
+ * pinning it back from out here every tick. That comment named the honest
+ * version -- a `running` flag inside sky.js -- and the flag now exists, so
+ * this is that.
  *
- * Registered after installSky, which matters: noa fires tick listeners in
- * registration order, so this runs after the clock has advanced and puts it
- * back, rather than before and being immediately overwritten.
+ * The difference is not tidiness. Pinning from outside was correct only while
+ * this tick listener ran AFTER sky.js's, which was true only because
+ * installSky happens to be called earlier in this file. Registration order is
+ * not a contract, and the failure mode of getting it wrong is a clock that
+ * advances one tick per tick and is put back one tick late -- which looks
+ * exactly like it working.
+ *
+ * Still a tick listener rather than a hook on /gamerule, because the rule can
+ * change from anywhere (a command, the console, a future server message) and
+ * GAMERULES is a plain table with no change event. One boolean comparison a
+ * tick is cheaper than an event bus.
  */
-let pinnedTime = null
-noa.on('tick', () => {
-  if (authority.gamerule('doDaylightCycle')) { pinnedTime = null; return }
-  if (pinnedTime === null) pinnedTime = sky.getTime()
-  sky.setTime(pinnedTime)
+noa.on('tick', () => { sky.setRunning(!!authority.gamerule('doDaylightCycle')) })
+
+/*
+ * The Nether, and the seam that made it possible.
+ *
+ * Installed after `sky` and `underwater` because it drives both, and handed
+ * `authority` to decorate -- see the note in dimensions.js, and weather.js
+ * for the same pattern. `teleport` is the one used by /tp, passed rather than
+ * re-implemented so that arriving in a dimension clears fall tracking the way
+ * arriving anywhere else does.
+ */
+const dimensions = installDimensions(noa, {
+  sky, underwater, authority,
+  teleport: movePlayer,
 })
 
 installHotbarControls(noa, inventory, inputLock)
@@ -673,7 +704,21 @@ window.game = {
   loot: { dropFor, roll: rollDrops, unmapped: unmappedDrops },
   // What actually loaded: size, palette, origin, and any palette key with no
   // block in blocks.js (which should always be empty).
-  terrain: terrainInfo(),
+  //
+  // A GETTER now, not a value. It used to be `terrainInfo()` evaluated once
+  // here, which was true for as long as there was one world; with a second
+  // dimension a frozen snapshot would go on reporting the overworld's palette
+  // from inside the Nether -- a debug handle that lies is worse than one that
+  // is missing. A getter and not a function so that every existing reader
+  // (`game.terrain.originX`) keeps working unchanged.
+  get terrain() { return terrainInfo() },
+  /*
+   * The dimension switcher, for the console and for the test suite. `enter`
+   * is the whole feature; `active`, `islandDimension` and `worldName` are the
+   * three pieces of state that must agree, exposed separately so a spec can
+   * catch them disagreeing rather than take dimensions.js's word for it.
+   */
+  dimensions,
   /*
    * The generator itself, for the console and the test suite.
    *
@@ -683,4 +728,14 @@ window.game = {
    * world IS at a coordinate, resident or not, mined or not.
    */
   voxelAt: (x, y, z) => getVoxelID(x, y, z, ids),
+  /*
+   * key -> engine block id, and the inverse. Exposed because a spec that wants
+   * to know what it is standing on can otherwise only assert a NUMBER, and the
+   * numbers are positional -- they change whenever blocks.js gains an entry,
+   * which turns a real assertion into a landmine for whoever adds a block.
+   * Doubly so across dimensions, where the same palette INDEX means different
+   * things in each patch.
+   */
+  ids,
+  blockKey: (id) => BLOCK_TYPES.find(b => ids[b.key] === id)?.key ?? 'air',
 }

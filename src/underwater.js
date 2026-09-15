@@ -210,6 +210,41 @@ export function installUnderwater(noa, { fluids }) {
   scene.fogDensity = 0
 
   /*
+   * THE BASE FOG, and why this file grew an arbitration problem.
+   *
+   * This module is the only writer of scene.fogDensity and it writes every
+   * frame, so whatever it decides is what the GPU gets. That was fine while
+   * the only fog in the world was water: dry meant zero, and zero meant no
+   * fog.
+   *
+   * The Nether breaks that in one line. It is a dimension with fog of its
+   * own -- flat red, always on, nothing to do with water -- and it costs no
+   * shader work to add because of the decision recorded at the top of this
+   * file: FOGMODE_EXP2 is already globally on, so a dimension fog is two
+   * runtime uniform writes. What it does cost is this: "dry" can no longer
+   * mean zero, or surfacing in the Nether would clear the dimension's fog
+   * and leave you looking at a sharp-edged bedrock room.
+   *
+   * So dry now means BASE, which is zero in the overworld and something red
+   * in the Nether, and the arbitration rule is one sentence: **water wins
+   * while your eyes are in it, and the base is what you come back to.**
+   *
+   * REJECTED -- taking the max of the two densities. It reads as the
+   * conservative choice and it is wrong in the case it exists for: Nether
+   * fog is denser than water fog, so max() would mean putting your head
+   * under lava-adjacent water and seeing FURTHER. Water is not a filter over
+   * the dimension, it is a different medium, and the last medium your eyes
+   * entered is the one you are looking through.
+   *
+   * REJECTED -- a stack of fog sources with priorities. Two sources, one of
+   * which is a property of the dimension and the other of which is a boolean
+   * about your head, do not need a stack. When there is a third, it will be
+   * clear what shape it wants; guessing now would be guessing.
+   */
+  let baseDensity = 0
+  const baseColor = FOG_COLOR.clone()
+
+  /*
    * The overlay plane. Parented to the camera, so it inherits position and
    * orientation for free and never has to be moved.
    *
@@ -281,7 +316,9 @@ export function installUnderwater(noa, { fluids }) {
        */
       submerged = false
       sinceEntry = 0
-      scene.fogDensity = 0
+      // Back to the dimension's own fog, not to nothing. See baseDensity.
+      scene.fogColor = baseColor
+      scene.fogDensity = baseDensity
       plane.setEnabled(false)
       return
     }
@@ -290,6 +327,10 @@ export function installUnderwater(noa, { fluids }) {
       submerged = true
       sinceEntry = 0
       fit()
+      // The colour, not just the density: in the Nether the base colour is
+      // red, and water that fades to red is a bug you have to be underwater
+      // in the Nether to see -- which is to say, one nobody would have found.
+      scene.fogColor = FOG_COLOR
       plane.setEnabled(true)
     } else {
       sinceEntry += dtSeconds
@@ -333,6 +374,26 @@ export function installUnderwater(noa, { fluids }) {
      */
     get fogDensity() { return scene.fogDensity },
     get fogMode() { return scene.fogMode },
+
+    /**
+     * The fog a dry player sees. Set by src/dimensions.js on entering a
+     * dimension; see the long note at `baseDensity` for the arbitration rule.
+     *
+     * Applied immediately when dry so a dimension change is visible in the
+     * frame it happens, and held back while submerged so it does not fight
+     * the water ramp mid-dive. The `submerged` branch is not a nicety -- a
+     * dimension change while swimming is reachable the moment /dimension
+     * exists.
+     */
+    setBaseFog({ color, density }) {
+      if (color) baseColor.set(color[0], color[1], color[2])
+      baseDensity = density
+      if (!submerged) {
+        scene.fogColor = baseColor
+        scene.fogDensity = baseDensity
+      }
+    },
+    get baseFogDensity() { return baseDensity },
     get overlayEnabled() { return plane.isEnabled() },
     get overlayAlpha() { return mat.alpha },
     dispose() {
@@ -342,5 +403,6 @@ export function installUnderwater(noa, { fluids }) {
       mat.dispose()
       scene.fogDensity = 0
     },
+
   }
 }

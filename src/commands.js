@@ -222,6 +222,35 @@ export function installCommands(chat, authority, { noa, playerName }) {
       report(await authority.requestWeather(wkind, duration))
     }, opOnly)
 
+  /*
+   * /dimension -- the way you get to the Nether, for now.
+   *
+   * NOT A VANILLA COMMAND, and the wording is the only place in this file
+   * that admits it. Vanilla's spelling is `/execute in minecraft:the_nether
+   * run tp ~ ~ ~`, which is correct, unguessable, and would mean implementing
+   * /execute's selector grammar to deliver one destination. The honest
+   * alternative is a command that says plainly what it does, in vanilla's
+   * VOICE even though it is not vanilla's vocabulary -- the house style is
+   * "looks and behaves like Minecraft", and a command that lies about being
+   * vanilla is worse than one that is clearly an addition.
+   *
+   * Portals are the real answer and are out of scope; the accounting for what
+   * one would still need is at the top of src/dimensions.js.
+   *
+   * Open to everyone rather than operator-only. It moves you and nobody else,
+   * it cannot destroy anything, and the reason to go to the Nether is to look
+   * at it -- gating sightseeing behind op would be gating the feature behind
+   * the feature. Contrast /setblock, which changes the world for every player
+   * in it.
+   */
+  if (authority.requestDimension) {
+    chat.command('dimension', `Moves you to another dimension: ${authority.dimensionNames.join(', ')}`,
+      async ([name]) => {
+        if (name === undefined) return chat.parseError('/dimension')
+        report(await authority.requestDimension(name))
+      })
+  }
+
   return {
     /** For the tests and for a future tab-complete. */
     get names() { return chat.visibleCommands },

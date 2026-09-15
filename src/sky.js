@@ -442,6 +442,54 @@ export function installSky(noa) {
   let drift = 0
   let time = START_TIME
 
+  /*
+   * THE CLOCK'S OFF SWITCH.
+   *
+   * This flag is why the doDaylightCycle hack in main.js is gone. That hack
+   * let the clock advance and then put it back every tick from outside, and
+   * main.js's own comment called it a hack and named this as the honest
+   * version. It was right, and it is worth having on its own merits quite
+   * apart from the Nether: pinning from outside is correct only as long as
+   * this file's tick runs BEFORE main.js's, which is true only because of the
+   * order two installers happen to be called in. Registration order is not a
+   * contract. Not advancing is.
+   *
+   * `running` gates the ADVANCE and nothing else. Everything downstream of
+   * `time` -- sun position, light, ambient, entity light, cloud colour --
+   * still runs every tick with a frozen clock, which is what makes /time set
+   * work while the cycle is stopped. A flag that skipped the whole tick would
+   * have looked identical for one frame and then left the sun wherever it was
+   * when someone typed the command.
+   */
+  let running = true
+
+  /*
+   * THE SKY'S OFF SWITCH, which is a different question and gets a different
+   * flag.
+   *
+   * Non-null means "this dimension has no sky": no sun, no moon, no clouds,
+   * and a fixed light level instead of one derived from the clock. It carries
+   * the two numbers a skyless dimension still has to supply --
+   *
+   *   clearColor  what is behind the geometry. In the Nether you never see
+   *               it (there is a bedrock roof) but it is the colour of any
+   *               gap, and leaving it sky-blue shows through the fog at
+   *               distance as a blue haze.
+   *   level       the daylight level, 0..1, which is NOT decoration. It is
+   *               fed to setEntityLight, and entityLight.js is what every
+   *               skin and held-item material reads. Skip it and every player
+   *               model in the world freezes at whatever the clock last wrote
+   *               -- so walking into the Nether at midnight would leave you
+   *               and everyone else pitch black under a lit ceiling.
+   *
+   * The clock is NOT stopped by this. Vanilla's Nether has no cycle you can
+   * see, and it also has a time of day still ticking away in the overworld
+   * that you come back to. Freezing it here would mean the sun was where you
+   * left it however long you spent below, which is the one observable way to
+   * get this wrong.
+   */
+  let skyless = null
+
   /* Weather, as pushed in by weather.js. Owned there, applied here. */
   let rainLevel = 0
   let thunderLevel = 0
@@ -458,11 +506,56 @@ export function installSky(noa) {
     mesh.position.set(local[0], local[1], local[2])
   }
 
+  /*
+   * The skyless tick. Deliberately a hard EARLY RETURN out of the real one
+   * rather than a set of `if (skyless)` guards threaded through it.
+   *
+   * The real tick is a hundred lines of celestial arithmetic -- sun
+   * elevation, sky gradient, weather tint, lightning, cloud colour, cloud
+   * drift -- and every one of those is a statement about a dimension with a
+   * sky. Guarding them individually would have left eleven chances to forget
+   * one, and the ones you forget are invisible: a cloud layer you cannot see
+   * because it is above a bedrock roof still costs a draw call and still
+   * slides around.
+   *
+   * What it must NOT skip is the three writes the rest of the engine depends
+   * on happening every tick -- clearColor, the light, and setEntityLight --
+   * so those are restated here rather than shared. Six lines duplicated
+   * against a whole function's worth of things that would otherwise apply in
+   * a place they make no sense.
+   */
+  const tickSkyless = () => {
+    sun.mesh.setEnabled(false)
+    moon.mesh.setEnabled(false)
+    clouds.mesh.setEnabled(false)
+
+    const [r, g, b] = skyless.clearColor
+    scene_.clearColor.set(r, g, b, 1)
+
+    const level = skyless.level
+    if (light) {
+      light.intensity = level
+      /*
+       * Straight down, near enough. The Nether's light comes from lava and
+       * glowstone, which this engine has no concept of -- there are no point
+       * lights and no propagated block light, only one directional light and
+       * an ambient term. A near-vertical direction is the honest
+       * approximation: it lights floors and tops of things, leaves walls
+       * darker, and has no direction you can read a time of day off.
+       */
+      light.direction.set(0, -1, -0.15)
+    }
+    scene_.ambientColor.set(level * 0.5, level * 0.5, level * 0.5)
+    setEntityLight(level)
+  }
+
   noa.on('tick', (dt) => {
     const secs = dt / 1000
     const p = noa.ents.getPositionData(player).position
 
-    time = (time + secs * MC.TICKS_PER_SECOND) % TICKS_PER_DAY
+    if (running) time = (time + secs * MC.TICKS_PER_SECOND) % TICKS_PER_DAY
+
+    if (skyless) { tickSkyless(); return }
 
     /*
      * t=0 sunrise in the east, 6000 overhead, 12000 west, 18000 below.
@@ -600,6 +693,35 @@ export function installSky(noa) {
     getTime: () => time,
     setTime: (t) => { time = ((t % TICKS_PER_DAY) + TICKS_PER_DAY) % TICKS_PER_DAY },
     TICKS_PER_DAY,
+
+    /**
+     * Stop or start the 24000-tick clock. This is what /gamerule
+     * doDaylightCycle drives; see the note at `running`.
+     */
+    setRunning(on) { running = !!on },
+    get running() { return running },
+
+    /**
+     * Give this dimension a sky, or take it away.
+     *
+     * `null` restores the normal one. Anything else is `{ clearColor, level }`
+     * and means no sun, no moon, no clouds; see the note at `skyless`.
+     *
+     * The meshes are re-enabled HERE, on the way back, rather than in the
+     * normal tick. Putting `setEnabled(true)` in the tick would have been one
+     * line shorter and would have fought the sun's own visibility logic three
+     * times a second forever, for a transition that happens when someone
+     * types a command.
+     */
+    setSkyless(opts) {
+      skyless = opts ? { clearColor: opts.clearColor, level: clamp01(opts.level) } : null
+      if (!skyless) {
+        sun.mesh.setEnabled(true)
+        moon.mesh.setEnabled(true)
+        clouds.mesh.setEnabled(true)
+      }
+    },
+    get skyless() { return skyless },
 
     /**
      * Weather, pushed in by weather.js. Levels are 0..1 and already ramped --
