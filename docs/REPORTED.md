@@ -204,6 +204,15 @@ and the consequences. Note `items.js` already has a `bucket` item and vanilla
 has no water *item*, only the bucket — which is why fluids are filtered out of
 the block-item list.
 
+FIXED 2026-09-15. `src/bucket.js`, with `water_bucket` and `lava_bucket` as
+items. It carries its own fluid raycast because noa's crosshair deliberately
+cannot see a fluid, which is the same problem vanilla solves with
+`ClipContext.Fluid.SOURCE_ONLY` — and only the two SOURCE ids can be picked
+up, so a flow level from `fluids.js` is refused by the same comparison that
+refuses stone. The lava bucket is in `FUELS` at its real 20000 ticks now and
+leaves the empty bucket in the slot. `test/45-buckets.spec.js`, and
+`test/screenshots/45-bucket-pours-a-source.png`.
+
 **10. Nether portals.**
 The Nether exists and is reachable by `/dimension nether`. Portals are recorded
 as out of scope at the top of `src/dimensions.js`, and what they still need is
@@ -277,7 +286,13 @@ half, and `src/inventory.js` already knows how to be a container screen with
 Minecraft's shift-click rules. **Queued behind the icon work**, which currently
 owns `inventory.js` and `items.js`.
 
-FIXED 2026-09-15, except the lit swap. Smelting is real: `src/furnace.js` is
+FIXED 2026-09-15, except the lit swap. Breaking one drops its contents as of
+the same day: `authority.js` announces every block that stops existing
+(`onBlockDestroyed`) because it is the one function every block change passes
+through, and `installFurnaceDrops` in `furnace.js` is the subscriber — a
+coordinate no longer haunts the next furnace built in it, and `/setblock` over
+one voids the contents the way vanilla does rather than dropping them.
+Smelting is real: `src/furnace.js` is
 vanilla's `TileEntityFurnace.update` with the fuel and recipe tables in
 `recipes.js`, the screen is a fourth container in `inventory.js` drawn in CSS
 (the CE pack has no furnace GUI, same call the creative picker made), and
