@@ -432,6 +432,13 @@ export function installNPC(noa, {
      * Real ground, true. It re-arms as well as releases, which is what makes
      * the spectator case recover instead of just not-starting.
      *
+     * It asks about his HOME column rather than about whatever is under his
+     * feet right now, and that is on purpose: under his feet is legitimately
+     * air whenever he is mid-hop or stepping off a ledge, and freezing him
+     * there would be the walk breaking itself. Home is a fixed reference that
+     * is always resident and always solid, so a `false` from it means the
+     * solver has no world at all rather than that he is airborne.
+     *
      * Rejected: reading `noa.getBlock` and the registry, which was the first
      * version. It answers the boot case and is blind to the second, because
      * the block is still solid -- it is the SOLVER that has stopped caring.
