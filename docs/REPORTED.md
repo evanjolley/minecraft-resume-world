@@ -155,6 +155,46 @@ doing first. Note `limbSwing` in `src/npc.js` is declared, passed to
 `poseModel`, and never incremented: the walk cycle already exists and has never
 been asked to run.
 
+BUILT 2026-09-15, in three pieces, and the third one stops where the roadmap
+says to stop.
+
+**Gravity.** He is a real noa entity now with the player's own two components
+-- a `physics` body in voxel-physics-engine and noa's `movement` controller --
+and he is DROPPED into his column rather than asserted into it: released 2.5
+blocks up, settled by the collision solver. The leaf-aware ground scan in
+`main.js` stays, because gravity cannot tell a leaf from a floor and a drop
+into a canopy lands on the canopy. What changed is what its answer MEANS. It
+is a column, not an altitude, and a column that is wrong by a block no longer
+leaves him hovering or buried. `EVAN_POS` on `window.game` is a getter now;
+the frozen array went stale the moment he could walk.
+
+One thing that is only obvious once: a body created during boot must not be
+released until its chunk has loaded. noa answers AIR for an absent chunk, so
+an NPC released at construction falls through the island at 32 b/s^2 while
+the ground he was aimed at meshes in above him. He is held at
+`gravityMultiplier = 0` until there is something solid under the column.
+
+**The legs.** `limbSwing` is incremented now, off his real speed read from the
+physics body, through `advanceStride` in `playerModel.js` -- the same
+distance-based cadence `perspective.js` drives the player with, which is why
+sprinting quickens a stride and standing still stops one. `perspective.js`
+still has those three lines inline and should be moved onto the shared
+function; that file belonged to another pass.
+
+**`walk_to`**, and nothing past it. A third tool on the seam beside
+`set_player_name` and `get_player_state`, and the first that moves a body
+rather than a roster entry -- async, seconds long, and able to fail, which is
+a better test of the registry than either of the first two. He steers at the
+point, hops a one-block step, and rejects with a sentence when something
+taller is in the way. NO PATHFINDER: section 2 settles that the tour's
+navigation is A* with jump-aware movement rules, and a search started and not
+finished would be worse than a straight walk that reports failure honestly.
+
+The tour itself is deliberately NOT built. `walk_to(plot)` is this tool plus a
+table of named destinations, and there is nothing to walk to yet -- a tour to
+nowhere is a coordinate table pretending to be content. Evidence in
+`test/38-npc-body.spec.js` and `test/screenshots/npc-evan-walking-*.png`.
+
 **8. Boats.**
 
 **9. Buckets — water, lava, and the mechanics.**
