@@ -38,6 +38,8 @@ const CONTROLS = [
   ['Esc', 'This menu'],
 ]
 
+let lockTimer = null
+
 /*
  * Re-acquiring pointer lock after the menu closes.
  *
@@ -51,12 +53,30 @@ const CONTROLS = [
  * activation.
  */
 export function requestLockPersistently(noa) {
+  // One loop at a time. Two overlapping calls -- close the menu, then close
+  // chat -- used to leave two intervals racing, and only the second was
+  // reachable to cancel.
+  cancelPersistentLock()
   noa.container.setPointerLock(true)
   let tries = 0
-  const timer = setInterval(() => {
-    if (noa.container.hasPointerLock || ++tries > 14) return clearInterval(timer)
+  lockTimer = setInterval(() => {
+    if (noa.container.hasPointerLock || ++tries > 14) return cancelPersistentLock()
     noa.container.setPointerLock(true)
   }, 150)
+}
+
+/**
+ * Stop asking. Called on death (respawn.js) so a retry started while you were
+ * alive does not keep pestering the browser for two seconds over your corpse.
+ *
+ * respawn.js already refuses any lock that lands while dead, so this is not
+ * what keeps the cursor on the death screen -- that invariant is. This only
+ * stops the pointless request/refuse churn it would otherwise sit through,
+ * which is visible as a flickering cursor.
+ */
+export function cancelPersistentLock() {
+  clearInterval(lockTimer)
+  lockTimer = null
 }
 
 export function installMenu(noa, { inputLock, inventory, inventoryScreen, survival }) {

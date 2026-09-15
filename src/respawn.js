@@ -1,5 +1,6 @@
 import { SPAWN, VOID_Y } from './island.js'
 import { deathMessage } from './deathMessages.js'
+import { cancelPersistentLock } from './menu.js'
 
 /*
  * Void death, input freeze, and respawn.
@@ -96,6 +97,9 @@ export function installRespawn(noa, survival, inputLock, { playerName = () => ''
     if (on) inputLock.lock('dead')
     else inputLock.unlock('dead')
     if (on) {
+      // Ask for the lock to be dropped, and cancel anything still asking for
+      // it. Neither is load-bearing on its own -- see the invariant below.
+      cancelPersistentLock()
       noa.container.setPointerLock(false)
       stopCorpse()
     } else {
@@ -104,6 +108,44 @@ export function installRespawn(noa, survival, inputLock, { playerName = () => ''
   }
 
   survival.onChange((s) => setFrozen(s.dead))
+
+  /*
+   * THE INVARIANT, rather than a fourth guard: while `survival.dead` is true,
+   * the pointer is never locked.
+   *
+   * setFrozen above releases the lock on the way into death, and that is
+   * enough only when nothing is already asking for it. The case it cannot
+   * cover is `/kill`, and it is worth spelling out because it looks like it
+   * should already work:
+   *
+   *   Enter submits the chat line -> chat.js closes the bar and, because you
+   *   are still alive at that instant, asks for pointer lock back -> the
+   *   command then runs and kills you -> setFrozen calls setPointerLock(false).
+   *
+   * That last call does nothing at all. Browsers grant pointer lock
+   * ASYNCHRONOUSLY, so the request is still in flight and
+   * `document.pointerLockElement` is still null. micro-game-shell compares
+   * what you want against that -- `if (!!want === hasPL) return` -- decides
+   * you already have no lock, and never reaches exitPointerLock. A moment
+   * later the browser grants the lock that was asked for while you were
+   * alive, and the death screen is up with no cursor to press Respawn with.
+   * Same shape for menu.js's requestLockPersistently, whose retry timer can
+   * outlive by two seconds the menu-close that started it.
+   *
+   * So it is enforced where it cannot be raced instead of at each caller: the
+   * ONLY way to become locked is a grant, and every grant emits this event.
+   * Hand the lock straight back if it lands on a corpse and no future caller
+   * has to remember that death exists. This runs on pointerlockchange, ahead
+   * of paint, so there is no frame drawn with the cursor missing.
+   *
+   * Rejected: another `if (survival.dead) return` in chat.js and menu.js.
+   * Three files already reason about pointer lock, and a guard only covers
+   * the callers you thought of -- whereas this bug is a request made
+   * legitimately, while alive, that simply lands too late.
+   */
+  noa.container.on('gainedPointerLock', () => {
+    if (survival.dead) noa.container.setPointerLock(false)
+  })
 
   /*
    * THE SAME SENTENCE CHAT GETS, under "You Died!", which is what vanilla's
