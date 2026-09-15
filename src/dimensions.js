@@ -60,18 +60,75 @@
  * ------------------------------------------------------------------------
  *
  * PORTALS ARE NOT HERE, and this is the accounting rather than a promise.
- * A nether portal needs an animated 32-frame texture, which this build cannot
- * draw: the terrain atlas is static and every block samples one fixed layer.
- * docs/water.md section 3 works the problem out in full and lands on a
- * layer-remap uniform in a copied TerrainMaterialPlugin, and its conclusion
- * is that WATER is what justifies that work and the portal comes along free
- * once it exists. Beyond the texture a portal would also need: obsidian frame
- * detection (this world models no block-shape rules at all), a per-block
- * trigger volume that notices you standing in it, the four-second dwell timer
- * vanilla uses, and a destination mapping -- vanilla's 8:1 coordinate scale,
- * which is meaningless across two patches that share one 128x128 frame. That
- * last one is a design question, not an implementation one, and nobody has
- * answered it. None of that is started here.
+ *
+ * THE TEXTURE IS NOW SOLVED. src/terrainAnimation.js animates the terrain
+ * atlas with a layer-remap uniform, and `nether_portal` is already in it: 32
+ * frames, frametime 1, sitting on the alpha page at layers 63..94 as a
+ * STANDALONE run -- frames with no material of their own, put there precisely
+ * so the portal does not have to wait for a block to exist. `standaloneSlot()`
+ * hands back the page, the layer and the page's material. That part is done
+ * and costs the portal nothing.
+ *
+ * WHAT IS STILL MISSING, in the order it has to be built:
+ *
+ * 1. A BLOCK. `nether_portal` needs an entry in BLOCK_TYPES in src/blocks.js:
+ *    an id, `all: 'nether_portal'`, `alpha: true` (the artwork's own alpha runs
+ *    155-232), non-solid and non-opaque. It could be registered at runtime
+ *    from here instead -- noa's registry does not care who calls it -- and it
+ *    should NOT be, because block ids are save data and an id allocated
+ *    outside the one table that assigns them is an id that collides the day
+ *    someone adds a block. Obsidian is already there, id 28.
+ *
+ * 2. FRAME DETECTION, and the real rule, from the wiki rather than from
+ *    memory: obsidian, 4x5 minimum and 23x23 maximum counting the frame, so
+ *    an interior of 2x3 up to 21x21. CORNERS ARE NOT REQUIRED -- the game
+ *    builds them, and a hand-built portal without them lights and works. The
+ *    frame must stand in one vertical plane, on the X axis or the Z axis.
+ *
+ * 3. A DWELL. 80 game ticks (4 seconds) in survival, 1 tick in creative.
+ *    Both confirmed; vanilla's `getPortalWaitTime` is the source of the
+ *    asymmetry and this world already knows which gamemode it is in.
+ *
+ * 4. LIGHTING IT, which is the one that blocks everything else and is not a
+ *    rendering problem at all. Filling a frame's interior with portal blocks
+ *    is a world write, nothing outside src/authority.js may call
+ *    `noa.setBlock`, and the only fill that authority exposes --
+ *    `requestFill` -- is operator-gated because it backs /fill. So either a
+ *    portal is something only an operator can light (defensible: Evan builds
+ *    the world, visitors walk through it) or authority.js grows a narrow
+ *    `requestLightPortal` that a guest may call and that can only ever write
+ *    portal blocks into an interior detection has already validated. That is
+ *    a permission decision, it belongs to whoever owns authority.js, and it
+ *    is the reason none of 1-4 is started here.
+ *
+ * THE DESTINATION MAPPING, which was the open design question, now has an
+ * answer: ONE TO ONE, with vanilla's 16-block search radius and no
+ * auto-building.
+ *
+ * Walk into a portal at (x, y, z) and you come out at (x, y, z) in the other
+ * dimension -- after looking for an existing portal within 16 blocks to
+ * arrive in, which is vanilla's own search radius and the one number in its
+ * algorithm that still means anything when the scale factor is 1. If there
+ * is no portal there, you arrive at that dimension's spawn, which this file
+ * already has.
+ *
+ * REJECTED -- vanilla's 8:1 scale. It exists because the Nether is a
+ * shortcut across a world that is effectively infinite. Both dimensions here
+ * are the same 128x128 patch, so dividing by 8 collapses the entire island
+ * into a 16x16 corner of the Nether and every portal on it lands within two
+ * chunks of every other. The rule would still be vanilla and the result
+ * would be nonsense.
+ *
+ * REJECTED -- a fixed pair of linked portals, hard-coded one per dimension.
+ * The cheapest and most reliable option, and it makes the portal set dressing
+ * rather than a mechanic: you could not build one, and both ends would have
+ * to be authored into an imported terrain asset that nothing in this repo can
+ * edit.
+ *
+ * 1:1 is also the only mapping that makes the two patches legible as the same
+ * island. The resume point you were standing next to in the overworld is the
+ * one you are standing next to in the Nether, which is the whole reason
+ * FUTURE.md argued for the seam.
  */
 import {
   loadTerrain, setDimension as setIslandDimension, isLoaded, currentDimension,
