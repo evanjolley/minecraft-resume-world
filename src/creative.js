@@ -248,44 +248,44 @@ export function ruleFor(key) {
 }
 
 /* ------------------------------------------------------------------ *
- * The entries: EVERY item, including all 280 slab and stair variants.
+ * The entries: every item, which is now one entry per slab/stair FAMILY.
  *
- * THIS DIVERGES FROM VANILLA ON PURPOSE, AT THE OWNER'S EXPLICIT REQUEST --
- * "yes, one slot for each, give me access to all blocks". It is not an
- * approximation of vanilla and it is not an oversight, so here is both sides.
+ * THIS REVERSES AN EARLIER DECISION, and the reversal is the owner's:
  *
- * What vanilla does: lists ONE "Oak Stairs". A stair there is a single item
- * whose facing and half are a blockstate decided when you place it, so there
- * is nothing else to list.
+ *   "why are there different blocks for different orientations? There is a
+ *    top variant? Not even sure what that means, direction of a stair should
+ *    depend on how you place it like real minecraft. If that is not currently
+ *    the case that should definitely be the case"
  *
- * What this world does: blocks.js generates a non-cube family as TEN ids --
- * two slabs and eight stairs -- because a block id is the only per-voxel
- * state noa has, so orientation has to BE the id. The machinery to hide that
- * already exists and works: every variant `drops` the family's canonical id,
- * and blockMeshes.js's installPlacementOrientation picks the variant back out
- * from where you are looking. Collapsing the family to its canonical entry
- * would therefore have been both easy and vanilla-accurate.
+ * It was already the case. blockMeshes.js's installPlacementOrientation takes
+ * the facing from the player's heading and the half from the face clicked --
+ * vanilla's rule, asserted in test/17-non-cube.spec.js -- so the ten ids in a
+ * family were never something a player had to choose between. This picker was
+ * the only place they were visible, because an earlier reading of "yes, one
+ * slot for each, give me access to all blocks" took it to mean one slot per
+ * registered ID rather than access to the whole palette.
  *
- * The owner asked for the other thing, and the reason is that this picker is
- * how HE reaches the palette: he wants every id placeable directly rather
- * than reachable only through a placement rule that guesses from his camera
- * angle. Placing `oak_stairs_south_top` by hand is a thing you can now do.
+ * The cost of that reading, in his words: he clicked what looked like a
+ * prismarine block and got upside-down stairs. Ten entries deep in a scroll
+ * of 82 rows, sharing one name and one texture, with the block key in a
+ * tooltip doing all the work.
  *
- * The cost, named so it is not a surprise: ten entries in a row that share
- * one texture and one display name, because `nonCubeSet` gives all eight
- * stairs the name "Oak Stairs". The picker puts the block KEY in each slot's
- * tooltip for exactly this reason -- it is the only thing that tells them
- * apart, and without it those ten slots are unusable.
+ * So the ten collapse to two -- one Slab, one Stairs -- and that is vanilla's
+ * arrangement exactly. The nine variant ids still exist, because a noa block
+ * mesh is a thin instance and orientation therefore HAS to be the id; they
+ * are simply not items any more, and items.js is where that is decided (see
+ * `isOrientationVariant`), so /give and a dropped stack agree with the picker
+ * instead of each having their own idea.
  *
- * And the volume: 732 entries rather than 508. That is what makes the Search
- * tab load-bearing rather than a nicety, and why it shipped in the first
- * commit instead of the second.
+ * Entry count: 731 before, 479 now -- 252 fewer, which is 28 families times
+ * the nine ids each of them stopped listing.
  *
- * WATER, LAVA AND THE BARRIER are the three registered blocks with no entry,
- * and that is items.js's call rather than this file's: none of the three has
- * an ITEM at all. Vanilla has no water or lava item either (it has a bucket,
- * which is a different object with different rules), and a barrier is
- * `invisible`, so there is no icon to draw. See the note above BLOCK_ITEMS.
+ * WATER, LAVA AND THE BARRIER are the three registered blocks with no entry
+ * of their own and no family to reach them through, and that is items.js's
+ * call rather than this file's: none of the three has an ITEM at all. Vanilla
+ * has no water or lava item either (it has a bucket, which is a different
+ * object with different rules), and a barrier is `invisible`, so there is no
+ * icon to draw. See the note above BLOCK_ITEMS.
  * ------------------------------------------------------------------ */
 export const PICKER_ITEMS = ITEMS
 
@@ -431,5 +431,11 @@ export const fullStack = (id) => ({ id, count: stackMax(id) })
  */
 export const blocksWithoutEntry = () => {
   const have = new Set(PICKER_ITEMS.map(i => i.id))
-  return BLOCK_TYPES.filter(b => !have.has(b.id)).map(b => b.key)
+  // REACHABLE, not listed. An orientation variant has no entry of its own on
+  // purpose and is reached by placing its family's entry, which is what
+  // `drops` points at -- the same redirection the loot table uses. Asking for
+  // "no entry" instead would report 280 blocks that are working correctly,
+  // and a report nobody can read is a report nobody checks.
+  const reachable = (b) => have.has(b.id) || (b.drops !== undefined && have.has(b.drops))
+  return BLOCK_TYPES.filter(b => !reachable(b)).map(b => b.key)
 }

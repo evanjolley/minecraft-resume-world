@@ -31,15 +31,16 @@
     #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; margin-top: -1px; }
 
     /* ---------------- block icons ---------------- */
+    /* `--face` is ONE WHOLE BLOCK, not one face. A slab's faces are half of
+       it, and blockIcon.js sizes and places every face from the same box list
+       that builds the real mesh -- so the size, position, transform and
+       texture crop are all inline and none of them belong here. What is left
+       is the camera (fixed, above-left, Minecraft's own angle) and the 3D
+       context the faces need to sort against each other. */
     .block-icon { position: relative; width: var(--icon-size, 32px); height: var(--icon-size, 32px);
       transform-style: preserve-3d; transform: rotateX(-30deg) rotateY(-45deg);
       --face: calc(var(--icon-size, 32px) * 0.58); pointer-events: none; }
-    .icon-face { position: absolute; width: var(--face); height: var(--face);
-      left: calc(50% - var(--face) / 2); top: calc(50% - var(--face) / 2);
-      background-size: 100% 100%; }
-    .icon-top { transform: rotateX(90deg) translateZ(calc(var(--face) / 2)); }
-    .icon-front { transform: translateZ(calc(var(--face) / 2)); }
-    .icon-side { transform: rotateY(90deg) translateZ(calc(var(--face) / 2)); }
+    .icon-face { position: absolute; background-repeat: no-repeat; }
     /* The stack-size badge, drawn over an icon in a slot. Three containers use
        it -- the hotbar, the container panels and the carried stack -- which is
        why it lives up here with the icons rather than in any one of them.
@@ -229,6 +230,35 @@
 
     #inv-carried { position: fixed; left: 0; top: 0; display: grid; place-items: center;
       pointer-events: none; z-index: 30; }
+
+    /* ---------------- item tooltip ----------------
+       Vanilla's, and inventory.js records where each number came from. The
+       two layers are how vanilla draws it: a background rect, and a 1px frame
+       inset 1px inside it, so a ring of background shows outside the frame.
+
+       `border-image` with a slice of 1 is what paints a GRADIENT frame -- the
+       gradient's top row becomes the top border, its bottom row the bottom
+       border, and the strip between them stretches down the sides, which is
+       exactly the four fills vanilla does. Road not taken: four absolutely
+       positioned 2px divs, which is the same picture and four more elements.
+
+       2px is one GUI pixel at SCALE 2, the same hardcoding (and the same
+       reason -- CSS cannot multiply) as the bevels above. Sits above the
+       carried stack at z-index 30, because a tooltip is the topmost thing on
+       a container screen in vanilla too. */
+    #gui-tooltip { position: fixed; left: 0; top: 0; z-index: 31; pointer-events: none;
+      padding: 2px; background: rgba(16, 0, 16, 0.941); white-space: nowrap; }
+    #gui-tooltip .tip-inner { padding: 4px; border: 2px solid transparent;
+      border-image: linear-gradient(to bottom,
+        rgba(80, 0, 255, 0.314), rgba(40, 0, 127, 0.314)) 1; }
+    /* 8 GUI px of text on a 10 GUI px pitch, which is vanilla's line spacing,
+       expressed as a 4px gap so a one-line tooltip stays 8 px tall. */
+    #gui-tooltip .tip-line { height: 16px; line-height: 16px; color: #fff;
+      text-shadow: 2px 2px 0 #3f3f3f; }
+    #gui-tooltip .tip-line + .tip-line { margin-top: 4px; }
+    /* Vanilla's ChatFormatting.DARK_GRAY, 0x555555, with the shadow it always
+       draws under text: the colour scaled by a quarter, 0x151515. */
+    #gui-tooltip .tip-dim { color: #555555; text-shadow: 2px 2px 0 #151515; }
     body.inv-open #hud, body.inv-open #crosshair,
     body.menu-open #hud, body.menu-open #crosshair { display: none; }
 

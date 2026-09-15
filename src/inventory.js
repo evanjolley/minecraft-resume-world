@@ -1,6 +1,6 @@
 import { createItemIcon } from './blockIcon.js'
 import { SCALE as HUD_SCALE, FONT_PX, px } from './hud.js'
-import { stackMax, armorOf, ARMOR_SLOTS, itemId, itemName, item } from './items.js'
+import { stackMax, armorOf, ARMOR_SLOTS, itemId, itemName } from './items.js'
 import { TABS, tabItems, searchItems, creativeListClick, fullStack } from './creative.js'
 import { findRecipe, consumeGrid } from './crafting.js'
 
@@ -832,6 +832,113 @@ const CRAFT_TABLE_LABELS = [
 /** Minecraft's container label colour, 0x404040. */
 const LABEL_COLOR = '#404040'
 
+/* ------------------------------------------------------------------ *
+ * The hover tooltip.
+ *
+ * Reported from play: "When I hover over a block in inv i think it should say
+ * the name of it? I believe this is true minecraft behavior." It is, in every
+ * container -- and what this world had was `el.title`, the BROWSER's tooltip,
+ * on the creative list and the tabs only. That is why the report exists: the
+ * native one appears after a second of stillness, in the OS's font, nowhere
+ * near where Minecraft puts it, and the survival inventory, the crafting
+ * grid, the armor slots and the hotbar row had none at all.
+ *
+ * WHERE THE NUMBERS COME FROM. minecraft.wiki/w/Tooltip describes behaviour
+ * and not pixels ("next to the cursor"; "Long tooltips no longer get cut off
+ * at the edge of the screen" in 1.19.3 22w42a), so the colours below were
+ * SAMPLED from vanilla's own sprites, which the wiki does host:
+ * minecraft.wiki/w/Java_Edition_GUI_textures lists tooltip/background.png and
+ * tooltip/frame.png, and reading their pixels gives
+ *
+ *   background   0xF0100010   #100010 at alpha 240/255
+ *   frame        0x505000FF at the top fading to 0x5028007F at the bottom,
+ *                a 1px line inset 1px from the background's edge
+ *
+ * which are the constants everyone quotes at Minecraft's tooltips, confirmed
+ * against the art rather than copied from memory.
+ *
+ * The geometry is vanilla's layout: the text origin is 12 GUI px right and
+ * 12 GUI px ABOVE the cursor, the box reaches 4 GUI px beyond the text on
+ * every side (1 px of background, the 1 px frame, then 2 px of gap), and
+ * lines are 10 GUI px apart. Near an edge the box flips to the cursor's left
+ * and is clamped on screen rather than being allowed to run off it, which is
+ * the 22w42a behaviour above.
+ *
+ * NOT reproduced: vanilla notches one pixel out of each corner of the
+ * background so it reads as rounded. Four 2px corners on a box this size is
+ * invisible next to the cost of four more elements per tooltip.
+ * ------------------------------------------------------------------ */
+const TIP_CURSOR_OFFSET = 12
+const TIP_PAD = 4
+function createTooltip() {
+  const el = document.createElement('div')
+  el.id = 'gui-tooltip'
+  el.className = 'hidden'
+  const inner = document.createElement('div')
+  inner.className = 'tip-inner'
+  el.appendChild(inner)
+  document.body.appendChild(el)
+
+  const hide = () => el.classList.add('hidden')
+
+  /** @param {string[]} lines first is the name, any rest are dimmed. */
+  const show = (lines, clientX, clientY) => {
+    inner.textContent = ''
+    for (const [i, text] of lines.entries()) {
+      const line = document.createElement('div')
+      line.className = 'tip-line'
+      line.textContent = text
+      line.style.fontSize = `${FONT_PX}px`
+      if (i > 0) line.classList.add('tip-dim')
+      inner.appendChild(line)
+    }
+    el.classList.remove('hidden')
+    move(clientX, clientY)
+  }
+
+  /*
+   * Positioned only after the text is in, because the flip-at-the-edge test
+   * needs the width, and the width is whatever the longest line measured to.
+   * `offsetWidth` here is a forced layout -- once per tooltip move, on a
+   * screen where the world is the only thing animating, which is the cheap
+   * end of a trade that would otherwise mean measuring text by hand.
+   */
+  const move = (clientX, clientY) => {
+    const w = el.offsetWidth, h = el.offsetHeight
+    const edge = TIP_PAD * HUD_SCALE
+    let left = clientX + (TIP_CURSOR_OFFSET - TIP_PAD) * HUD_SCALE
+    if (left + w > window.innerWidth) {
+      left = Math.max(edge, clientX - (TIP_CURSOR_OFFSET - TIP_PAD) * HUD_SCALE - w)
+    }
+    const top = clientY - (TIP_CURSOR_OFFSET + TIP_PAD) * HUD_SCALE
+    el.style.transform = `translate(${Math.round(left)}px, ${
+      Math.round(Math.min(Math.max(top, edge), window.innerHeight - h - edge))}px)`
+  }
+
+  /**
+   * Make an element show a tooltip while the pointer is over it.
+   *
+   * `lines()` is asked on every move rather than once at attach: a slot's
+   * contents change under a motionless pointer every time you click, and the
+   * creative list's 45 cells are a scrolling WINDOW onto 731 entries, so the
+   * item under the pointer changes with the wheel and not with the mouse.
+   * Returning null means "nothing to say", which is how an empty slot and a
+   * cell past the end of the listing both stay silent.
+   */
+  const attach = (target, lines) => {
+    const update = (e) => {
+      const text = lines()
+      if (!text) return hide()
+      show(text, e.clientX, e.clientY)
+    }
+    target.addEventListener('mouseenter', update)
+    target.addEventListener('mousemove', update)
+    target.addEventListener('mouseleave', hide)
+  }
+
+  return { attach, hide }
+}
+
 /*
  * `gamemode` is here for ONE question: does E open the survival screen or the
  * creative picker. It is optional so the model-only callers and the older
@@ -883,6 +990,14 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
    * of this for the crafting table, which is how the two screens would end up
    * with subtly different click semantics.
    */
+  /*
+   * ONE tooltip element for every container on every screen, created here and
+   * handed to the creative screen below along with makeCell -- same reasoning
+   * as the cell factory. Two of them would be two things that can disagree
+   * about where Minecraft puts a tooltip.
+   */
+  const tooltip = createTooltip()
+
   const cells = []
   const makeCell = (host, area, index, gx, gy) => {
     const cell = document.createElement('div')
@@ -917,6 +1032,18 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
       inv.clickSlot(index, e.button === 2 ? 'right' : 'left', area, e.shiftKey)
     })
     cell.addEventListener('contextmenu', e => e.preventDefault())
+    /*
+     * The name of what is in the slot -- and NOTHING while you are carrying a
+     * stack, which is vanilla: AbstractContainerScreen only renders the
+     * hovered slot's tooltip when the cursor is empty, because otherwise the
+     * box sits under the stack you are dragging and covers where you are
+     * about to drop it.
+     */
+    tooltip.attach(cell, () => {
+      if (inv.carried) return null
+      const stack = inv.stackAt({ area, index })
+      return stack ? [itemName(stack.id)] : null
+    })
     host.appendChild(cell)
     cells.push({ el: cell, area, index })
     return cell
@@ -1007,7 +1134,7 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
    * appear on BOTH screens, and they must click identically on both.
    */
   const creative = buildCreativeScreen(inv, {
-    screen: creativeScreen, panel: creativePanel, makeCell, paintSlot,
+    screen: creativeScreen, panel: creativePanel, makeCell, paintSlot, tooltip,
     repaint: () => inv.emitChange(),
   })
 
@@ -1028,6 +1155,10 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
     tableScreen.classList.toggle('hidden', which !== 'table')
     creativeScreen.classList.toggle('hidden', which !== 'creative')
     if (which === 'creative') creative.opened()
+    // A tooltip outlives the screen it was drawn over otherwise: the pointer
+    // never leaves the cell, it is the cell that goes away, so no mouseleave
+    // ever fires and the box is still sitting there over the world.
+    tooltip.hide()
     document.body.classList.toggle('inv-open', inv.open)
 
     // Set on CLOSE as well as on open. `craft.size` is how the model knows
@@ -1191,7 +1322,7 @@ const INV_TAB_ARMOR_Y = 18
  * of click semantics for the player's own slots on both screens, which is the
  * property that stops the two drifting apart.
  */
-function buildCreativeScreen(inv, { screen, panel, makeCell, paintSlot, repaint }) {
+function buildCreativeScreen(inv, { screen, panel, makeCell, paintSlot, tooltip, repaint }) {
   panel.style.width = px(CREATIVE_W)
   panel.style.height = px(CREATIVE_H)
 
@@ -1233,6 +1364,17 @@ function buildCreativeScreen(inv, { screen, panel, makeCell, paintSlot, repaint 
       el.style.left = px(LIST_ORIGIN.x + c * SLOT_PITCH)
       el.style.top = px(LIST_ORIGIN.y + r * SLOT_PITCH)
       el.style.width = el.style.height = px(SLOT_SIZE)
+      /*
+       * The NAME, and only the name. This line used to carry the block key as
+       * well, because ten entries in a stair family shared one name and the
+       * key was the only thing that told them apart. The family is one entry
+       * now (see the note at the top of creative.js), so there is nothing left
+       * to disambiguate and the tooltip is plain vanilla again.
+       */
+      tooltip.attach(el, () => {
+        if (!el.dataset.item || inv.carried) return null
+        return [itemName(Number(el.dataset.item))]
+      })
       panel.appendChild(el)
       listCells.push(el)
     }
@@ -1269,7 +1411,7 @@ function buildCreativeScreen(inv, { screen, panel, makeCell, paintSlot, repaint 
   destroy.style.left = px(DESTROY_SLOT.x)
   destroy.style.top = px(DESTROY_SLOT.y)
   destroy.style.width = destroy.style.height = px(SLOT_SIZE)
-  destroy.title = 'Destroy Item (shift-click to clear your inventory)'
+  tooltip.attach(destroy, () => ['Destroy Item', 'shift-click to clear your inventory'])
   panel.appendChild(destroy)
 
   /* ---- the scrollbar ---- */
@@ -1295,7 +1437,7 @@ function buildCreativeScreen(inv, { screen, panel, makeCell, paintSlot, repaint 
     el.style.top = px(t.row === 'top' ? -(TAB_H - TAB_OVERLAP) : CREATIVE_H - TAB_OVERLAP)
     el.style.width = px(TAB_W)
     el.style.height = px(TAB_H)
-    el.title = t.label
+    tooltip.attach(el, () => [t.label])
     const icon = createItemIcon(itemId(t.icon), SLOT_SIZE * HUD_SCALE)
     icon.classList.add('gui-tab-icon')
     el.appendChild(icon)
@@ -1325,10 +1467,6 @@ function buildCreativeScreen(inv, { screen, panel, makeCell, paintSlot, repaint 
     listCells.forEach((el, i) => {
       const id = ids[first + i]
       el.dataset.item = id ?? ''
-      // The KEY, not the name: eight of the ten entries in a stair family
-      // share the name "Oak Stairs" and differ only here. See the note in
-      // creative.js on why all ten are listed.
-      el.title = id ? `${itemName(id)}  (${item(id)?.key ?? ''})` : ''
       paintSlot(el, id ? { id, count: 1 } : null)
       // A count of 1 on every entry would be 45 little white "1"s. The list
       // is an infinite source; a number on it means nothing.

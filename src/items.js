@@ -234,9 +234,42 @@ function titleCase(key) {
  */
 // `invisible` joins `fluid` here for the same reason: a barrier has no
 // texture to draw as an icon and nothing should ever be holding one.
-const BLOCK_ITEMS = BLOCK_TYPES.filter(b => !b.fluid && !b.invisible).map(b => ({
-  id: b.id, key: b.key, name: b.name, places: b.id, block: b,
-}))
+/*
+ * And the third exclusion, which is the newest and the one with a story:
+ * ORIENTATION VARIANTS.
+ *
+ * blocks.js generates a slab/stair family as ten block ids, because noa draws
+ * a custom block mesh as a thin instance and every voxel of an id therefore
+ * shares one geometry -- a north-facing stair cannot be the same id as a
+ * south-facing one. That is an ENGINE CONSTRAINT and it stays.
+ *
+ * It is not a thing a player should ever meet. Reported from play: "why are
+ * there different blocks for different orientations? There is a top variant?
+ * Not even sure what that means, direction of a stair should depend on how
+ * you place it like real minecraft."
+ *
+ * It already does: blockMeshes.js's installPlacementOrientation wraps
+ * noa.setBlock, takes the facing from the player's heading and the half from
+ * which face you clicked and where on it, and swaps in the right variant --
+ * Minecraft's own rule, asserted in test/17-non-cube.spec.js. So the item
+ * only ever needs to be the family's CANONICAL id, and the nine others exist
+ * below the waterline where placement picks them.
+ *
+ * Cutting them here rather than in creative.js is deliberate: the picker is
+ * not the only window on this list. /give, the search tab, a dropped stack
+ * and the hotbar all read ITEMS, and an `oak_stairs_north_top` that can be
+ * given but not picked is the same bug with a smaller audience.
+ *
+ * A variant is a non-cube (it has a `shape`) that `drops` something other
+ * than itself -- which is exactly how blocks.js marks the nine: the canonical
+ * slab and stair carry no `drops` at all. Rejected: matching the key suffix,
+ * which is a third copy of the regex sounds.js and creative.js already keep
+ * and would silently stop matching the day a family is named differently.
+ */
+const isOrientationVariant = (b) => b.shape !== undefined && b.drops !== undefined
+const BLOCK_ITEMS = BLOCK_TYPES
+  .filter(b => !b.fluid && !b.invisible && !isOrientationVariant(b))
+  .map(b => ({ id: b.id, key: b.key, name: b.name, places: b.id, block: b }))
 
 const NON_BLOCK = [...MATERIALS, ...UNPLACEABLE, ...TOOLS, ...ARMOR, ...GEAR]
   .map((def, i) => ({
@@ -280,7 +313,14 @@ export const itemPlaces = (id) => ITEM_BY_ID.get(id)?.places ?? 0
 /** Whether this item has a block, which is also whether it renders as a cube. */
 export const isBlockItem = (id) => itemPlaces(id) !== 0
 
-export const itemName = (id) => ITEM_BY_ID.get(id)?.name ?? String(id)
+/*
+ * Falls through to the BLOCK's name, which matters for exactly one caller and
+ * matters a lot to it: the F3 screen names whatever you are looking at by
+ * block id, and nine ids in every slab/stair family now have no item. Without
+ * this, looking at an upside-down stair reported the number 358.
+ */
+export const itemName = (id) =>
+  ITEM_BY_ID.get(id)?.name ?? BLOCK_BY_ID.get(id)?.name ?? String(id)
 
 export const stackMax = (id) => ITEM_BY_ID.get(id)?.stack ?? DEFAULT_STACK
 

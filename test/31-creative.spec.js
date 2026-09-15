@@ -56,24 +56,35 @@ test.describe('the categories, which are rules and not a list', () => {
     expect(distinct).toBe(total)
   })
 
-  test('every block that has an item is reachable, all 280 stair and slab variants included',
+  test('every registered block is reachable, and a stair family is ONE entry',
     async ({ page }) => {
       /*
-       * The owner's call, and the one place this diverges from vanilla:
-       * vanilla lists ONE Oak Stairs and decides the facing when you place
-       * it, and here every one of the ten ids in a family gets its own slot.
+       * REWRITTEN, and the reason is the owner reversing his own earlier call
+       * rather than anything this file got wrong. It used to assert the
+       * opposite -- "all 280 stair and slab variants included", one slot per
+       * registered id -- and then he played it:
+       *
+       *   "why are there different blocks for different orientations? There
+       *    is a top variant? ... direction of a stair should depend on how you
+       *    place it like real minecraft"
+       *
+       * It does, and always did (test/17-non-cube.spec.js). The variants are
+       * an engine constraint -- a noa block mesh is a thin instance, so
+       * orientation has to be the block id -- and the picker was the only
+       * place that constraint was visible. Now it is not.
        *
        * Water, lava and the barrier are the three registered blocks with no
-       * entry, and that is items.js's rule rather than the picker's -- none
-       * of the three has an ITEM at all.
+       * entry AND no family to reach them through, and that is items.js's
+       * rule rather than the picker's -- none of the three has an ITEM.
        */
       const missing = await page.evaluate(() => window.game.creative.blocksWithoutEntry())
       expect(missing.sort()).toEqual(['barrier', 'lava', 'water'])
 
-      // And the eight oak stair states really are eight separate entries.
-      const oakStairs = await page.evaluate(() => window.game.creative.PICKER_ITEMS
-        .filter(i => i.key.startsWith('oak_stairs')).length)
-      expect(oakStairs).toBe(8)
+      // One Oak Stairs and one Oak Slab, exactly as vanilla lists them.
+      const family = await page.evaluate(() => window.game.creative.PICKER_ITEMS
+        .filter(i => i.key.startsWith('oak_stairs') || i.key.startsWith('oak_slab'))
+        .map(i => i.key).sort())
+      expect(family).toEqual(['oak_slab', 'oak_stairs'])
     })
 
   test('a slab inherits its tab from the cube it was cut from', async ({ page }) => {
