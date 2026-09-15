@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures.js'
-import { useGamemode, waitTicks } from './helpers/world.js'
+import { useGamemode, waitTicks, teleport, look, settleOnGround } from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 
 /*
@@ -233,6 +233,81 @@ test.describe('the icon draws the block\'s real shape', () => {
       .toEqual(['prismarine_brick_stairs'])
   })
 })
+
+/* ------------------------------------------------------------------ *
+ * Picking one, and placing it.
+ *
+ * The end-to-end version of the collapse: the picker hands you the family's
+ * canonical id and PLACEMENT chooses the variant, which is what makes one
+ * entry enough. test/17-non-cube.spec.js owns the orientation table itself;
+ * what is new here is the path from a click in the list to a correctly
+ * oriented stair, with no variant ever named.
+ * ------------------------------------------------------------------ */
+
+const STAIRS_AT = { x: -2, y: 137, z: -3 }
+
+test('picking stairs from the list places them oriented, four ways',
+  async ({ page, terrain }) => {
+    await terrain.keep([STAIRS_AT.x, STAIRS_AT.y, STAIRS_AT.z],
+      [STAIRS_AT.x + 3, STAIRS_AT.y, STAIRS_AT.z])
+
+    await openPicker(page)
+    await search(page, 'prismarine_brick_stairs')
+    // A real click on the real cell, through the real handler.
+    const nth = await page.evaluate(() => {
+      const byId = new Map(window.game.creative.PICKER_ITEMS.map(i => [i.id, i.key]))
+      return [...document.querySelectorAll('.creative-cell')]
+        .findIndex(c => byId.get(Number(c.dataset.item)) === 'prismarine_brick_stairs')
+    })
+    const box = await page.locator('.creative-cell').nth(nth).boundingBox()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down({ button: 'middle' })   // middle-click: a full stack
+    await page.mouse.up({ button: 'middle' })
+    await page.mouse.move(400, 600)               // drop it into hotbar slot 0
+    await page.locator('#creative-panel .gui-slot-main').first().click()
+    await closeScreen(page)
+
+    const held = await page.evaluate(async () => {
+      const { BLOCK_TYPES } = await import('/src/blocks.js')
+      const stack = window.game.inventory.slots[0]
+      return BLOCK_TYPES.find(b => b.id === stack.id)?.key
+    })
+    // What you are holding is the FAMILY, not a variant. Nothing in the UI
+    // ever offered `_north_top` and nothing put it in your hand.
+    expect(held).toBe('prismarine_brick_stairs')
+
+    const placed = await page.evaluate(async ({ x, y, z }) => {
+      const noa = window.noa
+      const { BLOCK_BY_ID } = await import('/src/blocks.js')
+      const id = window.game.inventory.slots[0].id
+      const out = []
+      // Clicking the top face of the block below, from four directions --
+      // the same four quarter turns test/17-non-cube.spec.js uses.
+      for (const [i, heading] of [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2].entries()) {
+        noa._pickResult.position[1] = y
+        noa.targetedBlock = { position: [x + i, y - 1, z], normal: [0, 1, 0], adjacent: [x + i, y, z] }
+        noa.camera.heading = heading
+        noa.setBlock(id, x + i, y, z)
+        out.push(BLOCK_BY_ID.get(noa.getBlock(x + i, y, z)).shape)
+      }
+      noa.targetedBlock = null
+      noa.camera.heading = 0
+      return out
+    }, STAIRS_AT)
+
+    // Four placements, four orientations, all of them bottom-half stairs --
+    // and the player chose none of them.
+    expect(placed).toEqual(['stairs_south_bottom', 'stairs_west_bottom',
+      'stairs_north_bottom', 'stairs_east_bottom'])
+
+    await teleport(page, STAIRS_AT.x + 1.5, STAIRS_AT.y + 2, STAIRS_AT.z + 6)
+    await settleOnGround(page)
+    // Pitch is POSITIVE downward here, and six blocks back is far enough that
+    // all four read at once.
+    await look(page, { heading: Math.PI, pitch: 0.15 })
+    await waitTicks(page, 3)
+    await shot(page, 'stairs-placed-from-picker')
+  })
 
 /* ------------------------------------------------------------------ *
  * The hover tooltip.
