@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures.js'
-import { measureFps } from './helpers/world.js'
+import { measureFps, teleport } from './helpers/world.js'
 
 /*
  * Flowing water and flowing lava.
@@ -57,6 +57,39 @@ const ID = {
  */
 const TRAY_Y = 170
 async function buildTray(page, half = 12) {
+  /*
+   * STAND THERE FIRST, AND THEN CHECK THE FLOOR IS REALLY THERE.
+   *
+   * Two separate lessons, both paid for. noa.setBlock is a NO-OP on a chunk
+   * that is not loaded, and y=170 is outside the vertical load range around
+   * spawn until something is up there to pull it in -- 39-animated-textures
+   * learned the same thing at y=200. So: teleport up first.
+   *
+   * And then do not trust it. Loading is asynchronous and no event says "the
+   * chunk you are about to write to has arrived", so the only honest gate is
+   * the one the world itself publishes: write the floor and read it back,
+   * which makes the retry and the check the same statement. Polling a
+   * condition rather than waiting a duration is what helpers/world.js insists
+   * on in its own header, and this is why.
+   *
+   * REJECTED -- pinning the player up there for the duration, the way
+   * 39-animated-textures does. The pin is a tick handler, this suite REUSES
+   * the page between tests, and a pin left running holds the player in the air
+   * so the next test's reset() waits forever for him to land on ground. Five
+   * of eleven tests timed out in a helper none of them call. The teleport is
+   * enough to pull the chunks in; nothing after it needs the player.
+   */
+  await teleport(page, 0.5, TRAY_Y + 9, 0.5)
+
+  await page.waitForFunction(([y, h]) => {
+    // Write, then read back. A write that lands on an unloaded chunk is
+    // silently dropped, so the retry and the gate are the same statement.
+    const noa = window.noa
+    noa.setBlock(3, 0, y - 1, 0)
+    noa.setBlock(3, h, y - 1, h)
+    return noa.getBlock(0, y - 1, 0) === 3 && noa.getBlock(h, y - 1, h) === 3
+  }, [TRAY_Y, half], { timeout: 30_000, polling: 100 })
+
   await page.evaluate(([y, h]) => {
     const noa = window.noa
     for (let x = -h; x <= h; x++) {

@@ -772,6 +772,23 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
 
   const pending = new Map()
   let now = 0
+  /*
+   * OFF SWITCH, and it exists for one caller that is not this file.
+   *
+   * test/39-animated-textures.spec.js proves the layer-remap animation is real
+   * by FREEZING it and asserting the water pixels then stop changing. Its
+   * fixture fills a block of water and carves an air pocket for the camera --
+   * and the walls of that pocket now flow into it, correctly, so the control
+   * sees pixels move with the animation stopped and the proof stops proving
+   * anything. That test is right and this engine is right; they just cannot
+   * both run.
+   *
+   * So the seam is here rather than a flag in their file: `flow.setEnabled`
+   * is one line at the top of that fixture. Not a gamerule, because a player
+   * has no business turning physics off, and not a build flag, because the
+   * thing being suppressed is exactly the thing every other test exercises.
+   */
+  let enabled = true
   /** Updates applied since install. The tests read it; so does the debug HUD. */
   let applied = 0
 
@@ -969,7 +986,7 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
    */
   function tick(dtMs) {
     now += dtMs
-    if (pending.size === 0) return 0
+    if (!enabled || pending.size === 0) return 0
     let done = 0
     /*
      * Collected before applying, because update() schedules -- iterating the
@@ -1071,6 +1088,9 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
   return {
     tick,
     seedChunk,
+    /** Stop or restart the simulation. See `enabled` above for the one caller. */
+    setEnabled(on) { enabled = !!on; if (!on) pending.clear() },
+    get enabled() { return enabled },
     schedule: (x, y, z) => scheduleAround(x, y, z),
     /** id -> level info, for the HUD, the tests and underwater.js. */
     metaOf: (id) => metaById.get(id) ?? null,
