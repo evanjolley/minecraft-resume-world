@@ -44,6 +44,7 @@ import { ITEM_TEXTURES } from '../src/items.js'
 import {
   BLOCK_TYPES, MATERIALS, ATLAS_PAGES, MATERIAL_RECIPES, faceMaterials,
 } from '../src/blocks.js'
+import { ANIMATIONS, STANDALONE, atlasLayout } from '../src/terrainAnimation.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC = join(ROOT, 'public')
@@ -367,6 +368,60 @@ async function decode(file) {
     .raw().toBuffer()
 }
 
+/**
+ * Decode an animation strip to N separate 16x16 frames.
+ *
+ * Vanilla ships an animated texture as a vertical stack of square frames, so
+ * frame i is the square at y = i * width. `decode()` above deliberately takes
+ * only the first one; this takes them all, and is the only reason this build
+ * can produce a moving texture at all.
+ *
+ * If the source is too short -- which is every substituted CE texture, since
+ * CE ships no animated fluids -- frame 0 is repeated. The layout stays
+ * identical either way, which is what lets src/terrainAnimation.js compute
+ * layer indices without asking the build what it managed to find.
+ */
+async function decodeFrames(file, count) {
+  const { width, height } = await sharp(file).metadata()
+  const available = Math.floor(height / width)
+  const out = []
+  for (let i = 0; i < count; i++) {
+    const top = Math.min(i, available - 1) * width
+    out.push(await sharp(file)
+      .extract({ left: 0, top, width, height: width })
+      .resize(TILE, TILE, { kernel: 'nearest' })
+      .ensureAlpha()
+      .raw().toBuffer())
+  }
+  return out
+}
+
+/**
+ * Check this build's idea of an animation against the pack's own `.mcmeta`.
+ *
+ * src/terrainAnimation.js carries frame counts and timings as constants
+ * because the runtime needs them synchronously, before any fetch. Constants
+ * copied out of a jar rot. This is what stops them: every build that has a
+ * `.mcmeta` to read compares it field by field and throws on a disagreement,
+ * so the numbers are verified rather than trusted.
+ */
+function verifyMcmeta(dir, name, anim) {
+  const meta = join(dir, `${name}.png.mcmeta`)
+  if (!existsSync(meta)) return false
+  const a = JSON.parse(readFileSync(meta, 'utf8')).animation
+  if (!a) return false
+  const want = (label, mine, theirs) => {
+    if (JSON.stringify(mine) !== JSON.stringify(theirs)) {
+      throw new Error(`${name}: terrainAnimation.js says ${label} ${JSON.stringify(mine)}, `
+        + `${name}.png.mcmeta says ${JSON.stringify(theirs)}`)
+    }
+  }
+  want('frametime', anim.frametime, a.frametime ?? 1)
+  want('order', anim.order, a.frames ?? null)
+  want('interpolate', anim.interpolate, !!a.interpolate)
+  return true
+}
+
 /** Force every non-transparent pixel's alpha, in place. Fully transparent
  *  pixels stay transparent -- a cutout texture must not gain a ghost. */
 function setAlpha(buf, a) {
@@ -497,7 +552,58 @@ async function decodeAll(dir, allowSubstitutes) {
       composite(buf, over)
     }
   }
+  /*
+   * Animation frames, stashed on the Map the callers already pass around.
+   *
+   * A property on `raw` rather than a second return value because both source
+   * paths do `decodeAll(...)` -> `writeTextures(raw)` -> `buildHeldAtlases(raw)`
+   * and only the middle one wants frames. Changing the shape would have edited
+   * four call sites to tell three of them something they do not use.
+   */
+  const frames = new Map()
+  let verified = 0
+  for (const [name, anim] of Object.entries(ANIMATIONS)) {
+    if (!raw.has(name)) continue
+    const s = substituted.get(name)
+    const bufs = await decodeFrames(file(s ? s.from : name), anim.frames)
+    if (!s && verifyMcmeta(dir, name, anim)) verified++
+    const recipe = MATERIAL_RECIPES[name] || {}
+    // The greyscale test has to run on the UNTOUCHED frame: `raw` was tinted
+    // in place by the loop above, so asking it whether it is grey enough to
+    // tint now answers "no" for exactly the textures that were.
+    const tint = recipe.tint && chroma(bufs[0]) < GREY_ENOUGH_TO_TINT
+    for (const buf of bufs) {
+      if (s) multiply(buf, s.mul)
+      if (tint) multiply(buf, recipe.tint)
+      if (recipe.alpha !== undefined) setAlpha(buf, recipe.alpha)
+    }
+    frames.set(name, bufs)
+  }
+
+  /*
+   * Standalone runs have no material in blocks.js to hang off, so they are
+   * decoded by name and their absence is survivable: CE ships no portal
+   * texture, and a flat purple tile is a better failure than a crash in a
+   * build whose whole point is that both sources produce the same world.
+   */
+  for (const [name, anim] of Object.entries(STANDALONE)) {
+    if (existsSync(file(name))) {
+      frames.set(name, await decodeFrames(file(name), anim.frames))
+      verifyMcmeta(dir, name, anim)
+    } else {
+      const flat = Buffer.alloc(TILE * TILE * 4)
+      for (let i = 0; i < flat.length; i += 4) {
+        flat[i] = 94; flat[i + 1] = 27; flat[i + 2] = 152; flat[i + 3] = 200
+      }
+      frames.set(name, Array.from({ length: anim.frames }, () => Buffer.from(flat)))
+    }
+  }
+  raw.frames = frames
+
+  const frameCount = [...frames.values()].reduce((n, f) => n + f.length, 0)
   console.log(`  decoded ${raw.size} textures (${substituted.size} substituted, ${tinted} biome-tinted)`)
+  console.log(`  ${frameCount} animation frames across ${frames.size} textures `
+    + `(${verified} verified against .mcmeta)`)
   return raw
 }
 
@@ -520,12 +626,18 @@ async function writeTextures(raw) {
    * vertically are already contiguous scanlines in that order, so there is
    * no compositing to do.
    */
-  for (const page of ATLAS_PAGES) {
-    const strip = Buffer.concat(page.names.map(n => raw.get(n)))
-    await toPng(strip, TILE, TILE * page.names.length).toFile(join(OUT, page.file))
+  const layout = atlasLayout()
+  for (const page of layout) {
+    // The page's materials first, at the indices noa meshed them with, then
+    // every animation frame appended after them. Nothing static moves, which
+    // is why adding frames does not invalidate a save or a chunk.
+    const tiles = page.names.map(n => raw.get(n))
+    for (const { name, frame } of page.extra) tiles.push(raw.frames.get(name)[frame])
+    await toPng(Buffer.concat(tiles), TILE, TILE * tiles.length).toFile(join(OUT, page.file))
   }
-  console.log(`  ${MATERIALS.length} textures, ${ATLAS_PAGES.length} atlas pages `
-    + `(${ATLAS_PAGES.map(p => p.names.length).join('+')} layers)`)
+  console.log(`  ${MATERIALS.length} textures, ${layout.length} atlas pages `
+    + `(${layout.map(p => p.layers).join('+')} layers, `
+    + `${layout.reduce((n, p) => n + p.extra.length, 0)} of them animation frames)`)
 }
 
 async function buildHeldAtlases(raw) {

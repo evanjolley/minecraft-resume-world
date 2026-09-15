@@ -24,6 +24,7 @@ import { installPerspective } from './perspective.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky, LIGHT_VECTOR } from './sky.js'
 import { installUnderwater } from './underwater.js'
+import { installTerrainAnimation } from './terrainAnimation.js'
 import { createArmorReduction } from './armor.js'
 import { itemName, itemId, dropFor, rollDrops, unmappedDrops } from './items.js'
 import { itemModelStats } from './itemModel.js'
@@ -155,6 +156,14 @@ const noa = new Engine({
 noa.setMaxListeners?.(32)
 
 const ids = registerBlocks(noa)
+
+/*
+ * Animated block textures. On the line after registerBlocks, and that is not
+ * cosmetic: it re-registers each atlas page's materials with a `renderMat`
+ * that carries the layer-remap shader, and noa caches the page material the
+ * first time a chunk containing it is meshed. Late means never.
+ */
+const terrainAnim = installTerrainAnimation(noa)
 
 // noa asks for chunk contents whenever its loader decides it needs them and
 // expects setChunkData in response. Forget that call and the chunk simply
@@ -699,6 +708,9 @@ window.game = {
   fluids,
   inventory, survival, move, sky, menu, chat, inputLock, perspective,
   skinMaterial, sounds, particles, drops, weather, underwater,
+  // The layer-remap animation driver. A spec that wants to prove a texture is
+  // MOVING has to be able to stop it, which is what `setPaused` is for.
+  terrainAnim,
   /*
    * The viewmodel and the extrusion counters, for the console and the test
    * suite. `held` was not exposed before because nothing outside main.js
