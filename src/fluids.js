@@ -1011,15 +1011,47 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
     return n
   }
 
-  /** Cheap enough to run on every fluid voxel of a loading chunk. */
-  function hasSomewhereToGo(x, y, z, m) {
-    if (get(x, y - 1, z) === 0) return true
-    const out = (m.level === 0 || m.falling) ? 0 : m.level
-    if (out >= MAX_LEVEL) return false
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      if (get(x + dx, y, z + dz) === 0) return true
-    }
-    return false
+  /**
+   * DOWNWARD ONLY, and the number below is why seedChunk is not wired up.
+   *
+   * The obvious version also wakes a fluid with AIR BESIDE IT. On this world
+   * that is a disaster: the terrain is a real imported Minecraft patch, its
+   * oceans and rivers are already at equilibrium, and every surface block along
+   * a shore has air beside it. Waking them floods every beach seven blocks
+   * inland and leaves a four-figure frontier in the queue forever. Measured:
+   * 1,251 pending after one second, still climbing past 2,900 ten seconds
+   * later, with a tray of water beside it crawling two blocks in the time it
+   * should have gone seven, starved behind an ocean going nowhere.
+   *
+   * So: air UNDERNEATH, which is the reported bug exactly -- "see a random
+   * block of lava in a cave, but it isnt flowing down". And that is still not
+   * enough, which is the finding worth writing down. Measured on the real
+   * patch, waking only unsupported fluid: 46 updates in the first second,
+   * 6,575 by the eighth, pending climbing 17 -> 790 and accelerating. Sampling
+   * the queue says what it is -- water_falling at (20, 66..70, 45) and a
+   * source at (1, 64, 11) with air under it. The patch contains aquifer water
+   * sitting over open cave, and once it is allowed to move it drains into the
+   * cave system and keeps draining. That is not a bug in the spread: it is the
+   * correct physics of terrain that was never in equilibrium in the first
+   * place, and there is no amount of budget that makes an emptying aquifer
+   * cheap.
+   *
+   * The fix is not here. It is either the terrain importer refusing to write
+   * unsupported fluid, or a bounded settle pass run ONCE at import time and
+   * baked into the asset -- which is what Minecraft's own generator does, and
+   * why a vanilla chunk does not flood itself the moment it loads. Both are
+   * bigger than this change and neither is in fluids.js.
+   *
+   * So seedChunk is kept, tested and NOT SUBSCRIBED. Everything the player
+   * touches flows, because the setBlock wrap wakes it -- pour a bucket, mine
+   * the wall of a pool, /setblock a source, and it goes. The lava that was
+   * already in the cave starts moving the moment anything disturbs it, and
+   * sits there until then. That is a smaller world than vanilla's and a
+   * truthful one; the alternative measured above is a world that floods
+   * itself on load.
+   */
+  function hasSomewhereToGo(x, y, z, _m) {
+    return get(x, y - 1, z) === 0
   }
 
   return {
@@ -1030,6 +1062,16 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
     metaOf: (id) => metaById.get(id) ?? null,
     idOf,
     get pendingCount() { return pending.size },
+    /** Test seam: a sample of what is still queued, for diagnosing churn. */
+    peek(n = 12) {
+      const out = []
+      for (const k of pending.keys()) {
+        if (out.length >= n) break
+        const [x, y, z] = k.split(',').map(Number)
+        out.push({ k, id: get(x, y, z) })
+      }
+      return out
+    },
     get applied() { return applied },
     /** Test seam: drain the queue synchronously instead of over real time. */
     run(steps = 200, dtMs = 50) {
@@ -1082,11 +1124,14 @@ function installFluidFlow(noa, { blockIds, authority }) {
   })
 
   /*
-   * Seeding. The bug report was a lava block ALREADY IN A CAVE, which no
-   * player action ever touches -- so the terrain has to wake it up as it
-   * loads, and chunkAdded is the only moment that is true exactly once.
+   * NOT SUBSCRIBED TO chunkAdded, deliberately, and the measurement that
+   * decided it is written out above hasSomewhereToGo. Short version: this
+   * patch's imported terrain holds aquifer water over open cave, and waking it
+   * on load drains that aquifer into the cave system -- a frontier that grows
+   * without bound and starves every pour the player makes. `flow.seedChunk` is
+   * still here and still tested, for the day the importer stops shipping
+   * unsupported fluid, or for a console call.
    */
-  noa.world.on('chunkAdded', (chunk) => flow.seedChunk(chunk))
 
   /*
    * Waking. Any block change anywhere schedules its own cell and its six
