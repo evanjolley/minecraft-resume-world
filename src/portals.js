@@ -5,13 +5,37 @@
  * WHY THIS IS A SEPARATE FILE AND NOT MORE OF dimensions.js
  *
  * dimensions.js answers "what is a dimension and how do you move between
- * them". That question is done. This one answers "what does a player have to
- * BUILD to earn that move", which is a completely different kind of code --
- * a shape rule over voxels, a timer, and an item that does something. The
- * only thing the two share is the one call `dimensions.enter`.
+ * them". That question is done. This one answers "what has to be true of the
+ * world before that move is allowed", which is a completely different kind of
+ * code -- a shape rule over voxels, a timer, and an item that does something.
+ * The only thing the two share is the one call `dimensions.enter`.
  *
  * /dimension is operator-only and stays that way (see commands.js). That is
  * exactly why this exists: without a portal, a visitor has no Nether at all.
+ *
+ * ------------------------------------------------------------------------
+ * WHO DOES WHAT, and it is not what the job description sounded like.
+ *
+ * `DEFAULT_GAMEMODE` is 'adventure' (gamemode.js:21). A visitor to this world
+ * may not break a block and may not place one. So "a portal is the route a
+ * visitor is meant to use" cannot mean a visitor BUILDS one -- they cannot
+ * place the obsidian, cannot mine it, and cannot craft the flint and steel.
+ * It means a portal that already exists is one a visitor may WALK THROUGH.
+ *
+ * The two halves are gated in opposite directions, on purpose:
+ *
+ *   LIGHTING requires mayBuild, which adventure does not have. Vanilla agrees
+ *   -- flint and steel setting a fire is a block placement, and adventure
+ *   refuses it. So the person who lights a portal here is whoever built the
+ *   island, which is the right answer for a resume world: Evan lays the two
+ *   ends out, the same way he laid out everything else you can walk on.
+ *
+ *   TRAVELLING asks the authority nothing at all. The tick handler below
+ *   checks a voxel and a timer and calls `dimensions.enter`. No capability,
+ *   no operator check, no command. That is deliberate and it is the whole
+ *   feature: the gate on /dimension is a gate on TELEPORTING ANYWHERE AT
+ *   WILL, not a gate on the Nether, and a portal is the un-gated version --
+ *   it only takes you to the place someone already built a door to.
  *
  * ------------------------------------------------------------------------
  * THE FRAME RULE, from minecraft.wiki/w/Nether_portal rather than memory:
