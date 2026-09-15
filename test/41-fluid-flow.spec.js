@@ -55,7 +55,20 @@ const ID = {
  * far it spread would be measuring a waterfall instead. y=170 is above the
  * highest terrain in the patch and inside the loaded column.
  */
-const TRAY_Y = 170
+/*
+ * y=240, AND NOT 170, which cost an afternoon.
+ *
+ * 30-water-entry fills a water shaft at x,z = 10..12 from y=170 to y=200. That
+ * is INSIDE a tray of half-width 12 centred on the origin at y=170, this suite
+ * shares a page across spec files, and the shaft is not always gone by the time
+ * this file runs. The symptom was every cell of the pool reading as FALLING
+ * water -- correct behaviour, for a pool with somebody else's column standing
+ * in it -- and it only ever happened when another spec had run first, which is
+ * the signature of shared world state and not of a race.
+ *
+ * 240 is above everything any other spec builds and above the patch's terrain.
+ */
+const TRAY_Y = 240
 async function buildTray(page, half = 12) {
   /*
    * STAND THERE FIRST, AND THEN CHECK THE FLOOR IS REALLY THERE.
@@ -81,16 +94,25 @@ async function buildTray(page, half = 12) {
    */
   await teleport(page, 0.5, TRAY_Y + 9, 0.5)
 
-  await page.waitForFunction(([y, h]) => {
-    // Write, then read back. A write that lands on an unloaded chunk is
-    // silently dropped, so the retry and the gate are the same statement.
-    const noa = window.noa
-    noa.setBlock(3, 0, y - 1, 0)
-    noa.setBlock(3, h, y - 1, h)
-    return noa.getBlock(0, y - 1, 0) === 3 && noa.getBlock(h, y - 1, h) === 3
-  }, [TRAY_Y, half], { timeout: 30_000, polling: 100 })
+  /*
+   * STOP THE WORLD'S CLOCK. Every test below winds the simulation by hand with
+   * advance() or settle(), and noa's own 30 Hz tick was winding it as well,
+   * in the gaps between one page.evaluate and the next. Harmless for a test
+   * that only asks "did it finish", fatal for the one that compares lava's
+   * RATE against water's: under load the real ticks handed lava the block the
+   * assertion says it has not earned yet. `run` deliberately bypasses this
+   * switch, so the engine is off to the world and fully drivable from here.
+   */
+  await page.evaluate(() => {
+    const flow = window.game.fluids.flow
+    flow.setEnabled(false)
+    // ...and drop whatever an earlier spec file left queued. The suite shares
+    // a page, the BUDGET is per tick, and a frontier inherited from somebody
+    // else's ocean spends it before this tray gets a turn.
+    flow.reset()
+  })
 
-  await page.evaluate(([y, h]) => {
+  await page.waitForFunction(([y, h]) => {
     const noa = window.noa
     for (let x = -h; x <= h; x++) {
       for (let z = -h; z <= h; z++) {
@@ -105,7 +127,18 @@ async function buildTray(page, half = 12) {
         noa.setBlock(3, -h, y + dy, i); noa.setBlock(3, h, y + dy, i)
       }
     }
-  }, [TRAY_Y, half])
+    /*
+     * Probe the CORNERS, and build INSIDE the poll. The tray is 25 across and
+     * spans several chunks that arrive independently, so writing once and
+     * gating on the middle built three quarters of a tray and called it done
+     * -- which failed as "water did not spread" whenever this file ran after
+     * another spec in the same worker, and passed every time it ran alone.
+     * Every corner reading back means every chunk under the tray is present,
+     * and the whole build being the retry means nothing partial survives.
+     */
+    return [[0, 0], [h, h], [-h, -h], [h, -h], [-h, h]]
+      .every(([a, b]) => noa.getBlock(a, y - 1, b) === 3)
+  }, [TRAY_Y, half], { timeout: 30_000, polling: 100 })
 }
 
 /**
@@ -120,6 +153,32 @@ async function buildTray(page, half = 12) {
  */
 const advance = (page, ms, step = 50) =>
   page.evaluate(([m, s]) => window.game.fluids.flow.run(Math.ceil(m / s), s), [ms, step])
+
+/**
+ * Wind the clock until the fluid has STOPPED, rather than for a fixed number
+ * of milliseconds.
+ *
+ * `advance(a big number)` is a duration, and helpers/world.js's header is
+ * explicit that a duration is not a readiness gate. It failed exactly that
+ * way: run after another spec in the same worker the pool reached level 5 and
+ * the last two cells were still queued, which reads as "water only spread five
+ * blocks" and passed every time the file ran alone. An empty queue is the
+ * condition the simulation itself publishes for "there is nothing left to do",
+ * so that is what this waits for.
+ *
+ * The cap is a cap, not a timeout: if the queue is still busy after this much
+ * simulated time something is oscillating, and the assertion that follows
+ * should fail rather than this hanging.
+ */
+const settle = (page, capMs = 120_000, step = 50) =>
+  page.evaluate(([cap, s]) => {
+    const flow = window.game.fluids.flow
+    for (let t = 0; t < cap; t += s) {
+      flow.run(1, s)
+      if (flow.pendingCount === 0) return t
+    }
+    return -1
+  }, [capMs, step])
 
 /** The fluid level at a cell, as the simulation sees it, or null. */
 const levelAt = (page, x, y, z) => page.evaluate(([a, b, c]) => {
@@ -138,9 +197,7 @@ test.describe('flowing water', () => {
     await buildTray(page)
     await page.evaluate(([y]) => window.noa.setBlock(636, 0, y, 0), [TRAY_Y])
 
-    // Generous: 7 blocks at 250 ms each is 1.75 s of game time, and the
-    // de-spread pass needs a few more rounds to settle.
-    await advance(page, MC.WATER_MS_PER_BLOCK * 40)
+    await settle(page)
 
     const row = await rowEast(page, TRAY_Y, 0, 11)
 
@@ -201,7 +258,7 @@ test.describe('flowing water', () => {
         noa.setBlock(636, 0, y, 0)
       }, [TRAY_Y])
 
-      await advance(page, MC.WATER_MS_PER_BLOCK * 60)
+      await settle(page)
 
       // The column under the source is falling, all the way down.
       for (let dy = 1; dy <= 3; dy++) {
@@ -231,7 +288,7 @@ test.describe('flowing water', () => {
       noa.setBlock(636, -1, y, 0)
       noa.setBlock(636, 1, y, 0)
     }, [TRAY_Y])
-    await advance(page, MC.WATER_MS_PER_BLOCK * 20)
+    await settle(page)
 
     expect(await levelAt(page, 0, TRAY_Y, 0))
       .toEqual({ fluid: 'water', level: 0, falling: false })
@@ -244,7 +301,7 @@ test.describe('flowing water', () => {
       noa.setBlock(637, -1, y, 0)
       noa.setBlock(637, 1, y, 0)
     }, [TRAY_Y])
-    await advance(page, MC.LAVA_MS_PER_BLOCK * 20)
+    await settle(page)
 
     const middle = await levelAt(page, 0, TRAY_Y, 0)
     expect(middle.fluid).toBe('lava')
@@ -257,11 +314,11 @@ test.describe('flowing water', () => {
     // source being scooped out.
     await buildTray(page)
     await page.evaluate(([y]) => window.noa.setBlock(636, 0, y, 0), [TRAY_Y])
-    await advance(page, MC.WATER_MS_PER_BLOCK * 40)
+    await settle(page)
     expect(await levelAt(page, 5, TRAY_Y, 0)).not.toBeNull()
 
     await page.evaluate(([y]) => window.noa.setBlock(0, 0, y, 0), [TRAY_Y])
-    await advance(page, MC.WATER_MS_PER_BLOCK * 60)
+    await settle(page)
 
     const left = await page.evaluate(([y]) => {
       const noa = window.noa; const f = window.game.fluids.flow
@@ -285,7 +342,7 @@ test.describe('flowing lava', () => {
      */
     await buildTray(page)
     await page.evaluate(([y]) => window.noa.setBlock(637, 0, y, 0), [TRAY_Y])
-    await advance(page, MC.LAVA_MS_PER_BLOCK * 30)
+    await settle(page)
 
     const levels = await page.evaluate(([y]) => {
       const noa = window.noa; const f = window.game.fluids.flow
@@ -341,7 +398,7 @@ test.describe('water meeting lava', () => {
       window.noa.setBlock(637, 3, y, 0)
       window.noa.setBlock(636, 0, y, 0)
     }, [TRAY_Y])
-    await advance(page, MC.WATER_MS_PER_BLOCK * 30)
+    await settle(page)
 
     expect(await page.evaluate(([y]) => window.noa.getBlock(3, y, 0), [TRAY_Y]))
       .toBe(ID.obsidian)
@@ -355,7 +412,7 @@ test.describe('water meeting lava', () => {
       window.noa.setBlock(636, -4, y, 0)
       window.noa.setBlock(637, 4, y, 0)
     }, [TRAY_Y])
-    await advance(page, MC.LAVA_MS_PER_BLOCK * 30)
+    await settle(page)
 
     const found = await page.evaluate(([y]) => {
       const noa = window.noa
@@ -385,7 +442,7 @@ test.describe('cost', () => {
      */
     await buildTray(page)
     await page.evaluate(([y]) => window.noa.setBlock(636, 0, y, 0), [TRAY_Y])
-    await advance(page, MC.WATER_MS_PER_BLOCK * 80)
+    await settle(page)
     expect(await page.evaluate(() => window.game.fluids.flow.pendingCount)).toBe(0)
   })
 

@@ -985,8 +985,20 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
    * @param dtMs milliseconds since the last call.
    */
   function tick(dtMs) {
+    if (!enabled) return 0
+    return step(dtMs)
+  }
+
+  /*
+   * The tick, minus the enabled check. `run` goes through here rather than
+   * through tick(), so a caller that has switched the engine OFF can still
+   * wind it by hand -- which is the whole point of the switch for a test: stop
+   * the world's clock from interleaving, then drive the simulation from a
+   * clock you control. tick() is the world's clock; this is the mechanism.
+   */
+  function step(dtMs) {
     now += dtMs
-    if (!enabled || pending.size === 0) return 0
+    if (pending.size === 0) return 0
     let done = 0
     /*
      * Collected before applying, because update() schedules -- iterating the
@@ -1089,7 +1101,16 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
     tick,
     seedChunk,
     /** Stop or restart the simulation. See `enabled` above for the one caller. */
-    setEnabled(on) { enabled = !!on; if (!on) pending.clear() },
+    setEnabled(on) { enabled = !!on },
+    /*
+     * Forget everything queued. A test seam, and a specific one: this suite
+     * shares a page across spec files, so a pool built by an earlier file
+     * leaves its frontier in the queue, and the BUDGET then spends itself on
+     * somebody else's ocean while the tray in front of you does not fill. It
+     * is not a "clear the world" -- the blocks stay exactly where they are,
+     * only the intention to look at them again is dropped.
+     */
+    reset() { pending.clear() },
     get enabled() { return enabled },
     schedule: (x, y, z) => scheduleAround(x, y, z),
     /** id -> level info, for the HUD, the tests and underwater.js. */
@@ -1110,7 +1131,7 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
     /** Test seam: drain the queue synchronously instead of over real time. */
     run(steps = 200, dtMs = 50) {
       let total = 0
-      for (let i = 0; i < steps; i++) total += tick(dtMs)
+      for (let i = 0; i < steps; i++) total += step(dtMs)
       return total
     },
   }
