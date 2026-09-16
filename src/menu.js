@@ -105,6 +105,14 @@ export function installMenu(noa, { inputLock, inventory, inventoryScreen, surviv
     // Only one screen at a time. Escape normally closes the inventory before
     // ever reaching here, but nothing else guarantees it.
     if (open && inventory.open) inventoryScreen.setOpen(false)
+    /*
+     * ...and that close now starts a persistent re-lock, which would spend
+     * the next two seconds trying to recapture the mouse while this menu is
+     * up. Killing the timer here is the price of the inventory owning its own
+     * cursor handoff; setPointerLock(false) below alone would not do it,
+     * because the loop simply asks again 150 ms later.
+     */
+    if (open) cancelPersistentLock()
     screen.classList.toggle('hidden', !open)
     document.body.classList.toggle('menu-open', open)
     if (open) {

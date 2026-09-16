@@ -4,6 +4,15 @@ import { stackMax, armorOf, ARMOR_SLOTS, itemId, itemName } from './items.js'
 import { TABS, tabItems, searchItems, creativeListClick, fullStack } from './creative.js'
 import { findRecipe, consumeGrid, smeltingResult, burnTicks } from './crafting.js'
 import { createFurnaces, FURNACE_BLOCKS, INPUT, FUEL, OUTPUT } from './furnace.js'
+/*
+ * Not a layering violation despite the direction it points: menu.js exports
+ * these two as free functions over `noa` and imports nothing back, so the
+ * dependency is one-way and the retry loop stays a single shared timer. The
+ * alternative -- inventory.js growing its own copy of the loop -- gives two
+ * timers that can fight over the lock, which is exactly the bug the "one loop
+ * at a time" note in menu.js exists to prevent.
+ */
+import { requestLockPersistently, cancelPersistentLock } from './menu.js'
 
 /*
  * Inventory model + the container screens.
@@ -1472,9 +1481,24 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
     // lock is what brings the cursor back. The world keeps ticking, so the sky
     // moves and other players would keep walking behind it, as in Minecraft
     // multiplayer.
+    /*
+     * Closing ASKS PERSISTENTLY for the lock instead of once.
+     *
+     * inputLock.unlock() only restores look sensitivity; it does not bring
+     * the mouse back under the crosshair. A single setPointerLock(true) did
+     * ask -- but when the close came from Escape the browser is inside its
+     * ~1.25 s post-Escape cooldown and silently rejects it, so the screen
+     * went away and the OS cursor stayed. See the note above
+     * requestLockPersistently in menu.js.
+     *
+     * Cancelling on OPEN matters just as much: without it, a close followed
+     * quickly by a reopen leaves the old retry loop still asking, and it
+     * would grab the lock out from under the screen you just opened.
+     */
     if (inv.open) inputLock.lock('inventory')
     else inputLock.unlock('inventory')
-    noa.container.setPointerLock(!inv.open)
+    if (inv.open) { cancelPersistentLock(); noa.container.setPointerLock(false) }
+    else requestLockPersistently(noa)
     inv.emitChange()
   }
 
@@ -1505,9 +1529,46 @@ export function installInventoryScreen(noa, inv, inputLock, gamemode = null) {
   // player's hands already know.
   noa.inputs.down.on('inventory', () => show(current ? null : playerScreen()))
 
+  /*
+   * Escape closes the open screen, and that is ALL it does. While a screen is
+   * up, this handler OWNS the key: capture phase on document, copied from
+   * chat.js, which sees the event before every bubbling listener on the page
+   * and stops it there. menu.js's Escape handler, interact.js, perspective.js
+   * and noa's own bindings all listen in the bubble phase, so one
+   * stopPropagation is enough and it does not depend on the order main.js
+   * happens to install them in.
+   *
+   * WHY IT MATTERS, because it is one keypress doing two jobs: this used to
+   * bubble, and main.js installs the inventory screen before the menu, so on
+   * one Escape this ran first and cleared `inv.open` -- and every guard
+   * downstream that reads `inventory.open` to decide "a screen is already
+   * handling this" was then reading a flag that had just been falsified by
+   * the handler ahead of it. menu.js's own keydown guard is the one that
+   * looks like that, and it survives the race only because that handler can
+   * only ever CLOSE the pause menu. Owning the key outright is cheaper than
+   * auditing every future reader of the flag.
+   *
+   * NOT covered by this, and worth knowing: the pause menu does not open on a
+   * keydown at all. main.js opens it from `lostPointerLock`, because Chrome
+   * eats the Escape that exits pointer lock. A browser that DOES deliver that
+   * keydown (Firefox does) while the inventory somehow holds the lock would
+   * run this handler synchronously and main.js's async lock guard afterwards,
+   * against an `inventory.open` this already cleared. Fixing that means
+   * widening the guard in main.js, which is not this file's to widen.
+   *
+   * Rejected: installing the menu before the inventory in main.js. It works
+   * by accident and breaks the next time someone moves a line.
+   * Rejected: a "who owns Escape" arbiter module. One more indirection for
+   * two screens; revisit at three.
+   *
+   * keyup is deliberately not touched -- see chat.js's note on why swallowing
+   * it leaves noa with a key latched down.
+   */
   document.addEventListener('keydown', (e) => {
-    if (e.code === 'Escape' && current) show(null)
-  })
+    if (e.code !== 'Escape' || !current) return
+    e.stopPropagation()
+    show(null)
+  }, true)
 
   /**
    * Right-clicking a block that has a screen.
