@@ -10,7 +10,7 @@ import { MC } from './physics.js'
 import { FLUID_FLOW } from './blocks.js'
 import { installFluidGeometry, cornerHeight, flowVector, ownHeight } from './fluidGeometry.js'
 import { currentDimension } from './island.js'
-import { entityBox, entitiesInBox } from './entityBox.js'
+import { entityBox, everyBody } from './entityBox.js'
 
 /*
  * Water and lava: being in one, moving through one, and what each does to you.
@@ -251,9 +251,23 @@ export function createFluids(noa, move) {
    * drag that lands on a chosen terminal:
    *
    *   drag = a / (v + a*dt/mass)
+   *
+   * AND IT IS MASS-DEPENDENT, through that correction and only through it --
+   * which is why the mass is a parameter now rather than the closed-over
+   * player's. The steady-state half, `a/drag`, has no mass in it; the deficit
+   * `a*dt/m` does, because noa's drag multiplier is `1 - drag*dt/m`. So a
+   * heavier body given the player's coefficient would settle at a different
+   * terminal speed than the one that coefficient was fitted to.
+   *
+   * Today every body in this world has noa's default mass of 1 (nothing in
+   * src/ assigns `body.mass`, and voxel-physics-engine's addBody defaults it),
+   * so Evan's number comes out bit-identical to the player's. Parameterised
+   * anyway: the day something heavy swims, the alternative is a silently
+   * wrong terminal velocity, which is the exact failure mode this file's
+   * header spends forty lines warning about.
    */
   const dt = 1 / noa.tickRate
-  const dragFor = (accel, terminal) => accel / (terminal + (accel * dt) / mass)
+  const dragFor = (accel, terminal, m = mass) => accel / (terminal + (accel * dt) / m)
 
   /*
    * id -> key. Handed in rather than imported, so this file never needs the
@@ -322,30 +336,48 @@ export function createFluids(noa, move) {
    * vanilla's own epsilon and is there for the same off-by-a-boundary reason
    * the 0.1 was -- the position IS the bottom of the box.
    */
-  const sample = () => {
-    const dat = noa.ents.getPositionData(player)
-    const p = dat.position
-    atEyes = fluidAt(p[0], p[1] + MC.EYE_HEIGHT, p[2])
-
-    /*
-     * The box comes from the POSITION COMPONENT, not from `body.aabb`, and
-     * that is not a style preference. noa has a floating origin -- it shifts
-     * the whole scene when you wander far enough from it -- so the physics
-     * body's aabb is in LOCAL coordinates while noa.getBlock takes global
-     * ones. Reading the corners off the aabb looks right, builds, and reports
-     * "not in a fluid" everywhere, which is how this was found: the player
-     * sank straight through a pool with the climb never firing.
-     */
-    const half = dat.width / 2
-    const y = Math.floor(p[1] + BOX_EPSILON)
-    const x1 = Math.floor(p[0] + half - BOX_EPSILON)
-    const z1 = Math.floor(p[2] + half - BOX_EPSILON)
-    atFeet = null
-    for (let x = Math.floor(p[0] - half + BOX_EPSILON); x <= x1 && !atFeet; x++) {
-      for (let z = Math.floor(p[2] - half + BOX_EPSILON); z <= z1 && !atFeet; z++) {
-        atFeet = byId.get(noa.getBlock(x, y, z)) ?? null
+  /*
+   * ONE ENTITY'S FEET, and it takes an entity because it has to. This was a
+   * closed-over sample of the player alone, and that is the shape the drag
+   * bug had -- see the tick.
+   *
+   * The box comes from entityBox.js, which means from the POSITION COMPONENT
+   * rather than from `body.aabb`, and that is not a style preference. noa has
+   * a floating origin -- it shifts the whole scene when you wander far enough
+   * from it -- so the physics body's aabb is in LOCAL coordinates while
+   * noa.getBlock takes global ones. Reading the corners off the aabb looks
+   * right, builds, and reports "not in a fluid" everywhere, which is how this
+   * was found: the player sank straight through a pool with the climb never
+   * firing. entityBox.js documents the identical trap from the placement side
+   * and is the reason this is a call rather than ten lines of arithmetic --
+   * the frame conversion that never happens cannot be forgotten twice.
+   *
+   * COST: the columns the box covers, at ONE y. A 0.6-wide body is one column
+   * unless it straddles a boundary, so this is 1 to 4 `getBlock` calls per
+   * body per tick, against the ~27 the flow push's own scan already does for
+   * the same body. Rejected: handing the push's scan back here so each body
+   * is walked once. The push is installed later and only exists once the
+   * block ids do, while this tuning has to run from boot and has to be right
+   * in a STILL pool, where the push returns null and scans nothing.
+   */
+  const feetFluid = (box) => {
+    if (!box) return null
+    const y = Math.floor(box.min[1] + BOX_EPSILON)
+    const x1 = Math.floor(box.max[0] - BOX_EPSILON)
+    const z1 = Math.floor(box.max[2] - BOX_EPSILON)
+    for (let x = Math.floor(box.min[0] + BOX_EPSILON); x <= x1; x++) {
+      for (let z = Math.floor(box.min[2] + BOX_EPSILON); z <= z1; z++) {
+        const f = byId.get(noa.getBlock(x, y, z)) ?? null
+        if (f) return f
       }
     }
+    return null
+  }
+
+  const sample = () => {
+    const p = noa.ents.getPositionData(player).position
+    atEyes = fluidAt(p[0], p[1] + MC.EYE_HEIGHT, p[2])
+    atFeet = feetFluid(entityBox(noa, player))
   }
 
   /*
@@ -355,18 +387,51 @@ export function createFluids(noa, move) {
    * THE DENSITY IS GLOBAL, and that is a real limitation rather than a
    * shortcut: voxel-physics-engine has one `fluidDensity` for the whole
    * simulation, so a second physics body swimming in the other fluid at the
-   * same time would get this one's buoyancy. There is exactly one body in this
-   * world today (the player). physics.js's noclip has the identical caveat for
-   * the identical reason, and the identical fix if it ever matters: the flag
-   * has to move into the body.
+   * same time would get this one's buoyancy. physics.js's noclip has the
+   * identical caveat for the identical reason, and the identical fix if it
+   * ever matters: the flag has to move into the body.
+   *
+   * THIS PARAGRAPH USED TO SAY "there is exactly one body in this world today
+   * (the player)", and that sentence is how the drag bug happened. Evan has
+   * had a body since npc.js gave him one -- 1.85 blocks of him -- and the
+   * whole tuning tick was still reading and writing the player's. Reported
+   * from play: "I seem to flow the correct speed in water, Evan moves super
+   * fast." The flow push iterates every body and Evan got the full shove with
+   * his ground friction zeroed; nothing ever set his `fluidDrag`, so he fell
+   * through to voxel-physics-engine's default of 0.4 against the player's
+   * fitted 3.5 -- an order of magnitude less water to push through, under an
+   * identical force.
+   *
+   * Evan still shares the player's BUOYANCY, and that is the limitation above
+   * rather than a second bug: there is one global density and a humanoid in
+   * water wants roughly the player's anyway. Rejected: letting whichever body
+   * is in a fluid write the global, so Evan gets buoyancy when the player is
+   * dry. It is one variable and two writers, and the tick the player enters
+   * the water is the tick it would be wrong for the one body whose numbers
+   * this file's header says not to disturb.
    *
    * The drag does NOT have that problem -- `body.fluidDrag` is per-body, and
-   * is set per-body here precisely so only half of this is global.
+   * is set per-body here precisely so only half of this is global. That is
+   * the seam, and `tuneDrag` is it.
    */
+
+  /**
+   * The only half that is per-body: the water a body has to push through.
+   *
+   * `-1` is voxel-physics-engine's sentinel for "use the engine default", and
+   * restoring it on the way out is not tidiness. A body left with water drag
+   * on dry land keeps 3.5 of resistance in the air, which reads as walking
+   * through treacle and is nowhere near the water anyone would go looking in.
+   */
+  const tuneDrag = (b, feet) => {
+    const t = feet && TUNING[feet]
+    b.fluidDrag = t ? dragFor(t.down, t.sink, b.mass) : -1
+  }
+
   const applyTuning = (b) => {
+    tuneDrag(b, atFeet)
     const t = atFeet && TUNING[atFeet]
     if (!t) {
-      b.fluidDrag = -1              // -1 means "use the engine default"
       /*
        * And the global density back to nothing, which the first version did
        * not do. Left at water's 1.447 it is a loaded gun: noa's own inFluid
@@ -384,7 +449,27 @@ export function createFluids(noa, move) {
      * everywhere else.
      */
     noa.physics.fluidDensity = b.gravityMultiplier === 0 ? 0 : densityFor(t.down)
-    b.fluidDrag = dragFor(t.down, t.sink)
+  }
+
+  /**
+   * Everyone else in the water. Drag, and nothing else.
+   *
+   * NO BOOKKEEPING, and that is deliberate against the push's `savedFriction`
+   * Map a few hundred lines down. This runs over EVERY body EVERY tick and
+   * writes one of two answers, so "he left the water" needs no event, no
+   * remembered previous state and no cleanup when an entity is removed --
+   * the body simply stops being in the list. The push cannot do that because
+   * it has to give a borrowed value back; this owns the field outright.
+   *
+   * The player is skipped because applyTuning has already done him, with the
+   * global density he is the only one allowed to set.
+   */
+  const tuneOthers = () => {
+    for (const id of everyBody(noa)) {
+      if (id === player) continue
+      const b = noa.ents.getPhysics(id)?.body
+      if (b) tuneDrag(b, feetFluid(entityBox(noa, id)))
+    }
   }
 
   /*
@@ -441,6 +526,14 @@ export function createFluids(noa, move) {
     sample()
     const b = body()
     applyTuning(b)
+    /*
+     * BEFORE the early return below, which is the player's. Everything after
+     * this line -- the buoyancy top-up, the climb, the entry transient --
+     * reads the player's input state and the player's box, and bails when the
+     * player is dry. Evan's drag is not the player's business and must not
+     * ride on the player being wet.
+     */
+    tuneOthers()
 
     const t = atFeet && TUNING[atFeet]
     if (!t || b.gravityMultiplier === 0) return
@@ -1360,14 +1453,19 @@ const PUSH_DEFLATE_XZ = 0.001
  * WHO IS IN THE WATER.
  *
  * entityBox.js owns that question -- it was "built general because punching is
- * coming", and a fluid tick is the second caller it was built for. The box is
- * everything, because the question here really is "every simulated body":
- * unlike a placement check or a punch there is no interesting region, and the
- * list this walks is the same list that will grow when the next thing with a
- * body arrives. Writing a second `getStatesList(physics)` loop in this file
- * would be a second answer to a question that already has one.
+ * coming", and a fluid tick is the second caller it was built for. The
+ * question here is "every simulated body": unlike a placement check or a punch
+ * there is no interesting region, and the list this walks is the same list
+ * that will grow when the next thing with a body arrives. Writing a second
+ * `getStatesList(physics)` loop in this file would be a second answer to a
+ * question that already has one.
+ *
+ * This asked `entitiesInBox` for a box of +-1e7 and got the same list the slow
+ * way: a box build and three overlap tests per body, against a region nothing
+ * can be outside. `everyBody` is that query with the pretence dropped, and it
+ * is now also what the drag tuning walks -- one list, two callers, which is
+ * the arrangement that stops the two disagreeing about who is in the water.
  */
-const EVERYWHERE = 1e7
 
 export function installFluidPush(noa, { flow }) {
   let lastPush = [0, 0, 0]
@@ -1441,10 +1539,8 @@ export function installFluidPush(noa, { flow }) {
   const savedFriction = new Map()
 
   noa.on('tick', () => {
-    const lo = [-EVERYWHERE, -EVERYWHERE, -EVERYWHERE]
-    const hi = [EVERYWHERE, EVERYWHERE, EVERYWHERE]
     let seen = [0, 0, 0]
-    for (const id of entitiesInBox(noa, lo, hi)) {
+    for (const id of everyBody(noa)) {
       const a = pushOf(id)
       const body = noa.ents.getPhysics(id)?.body
       if (!a || !body) {

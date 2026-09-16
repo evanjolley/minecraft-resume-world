@@ -78,6 +78,23 @@ const overlaps = (a, b) =>
   a.min[2] < b.max[2] && a.max[2] > b.min[2]
 
 /**
+ * Every simulated body in the world, ids only, no region.
+ *
+ * Exposed because two callers genuinely have no interesting region: the fluid
+ * DRAG TUNING has to reach every body that might be standing in water, and
+ * the flow PUSH has to shove every body that is. Both used to ask for a box of
+ * +-1e7 and get this answer the long way round -- one `entityBox` build and
+ * three overlap tests per entity, against a box nothing can be outside.
+ *
+ * Rejected: letting each of them call `getStatesList` itself. The decision at
+ * the top of this file -- a body is a thing with the PHYSICS component, not
+ * the position one -- survives by being written once, and two open-coded
+ * loops are two places for it to stop being true.
+ */
+export const everyBody = (noa) =>
+  noa.ents.getStatesList(noa.ents.names.physics).map((s) => s.__id)
+
+/**
  * Every simulated body overlapping a world-space box.
  *
  * Returns the ids rather than a boolean, because the callers that are coming
@@ -92,9 +109,9 @@ const overlaps = (a, b) =>
 export function entitiesInBox(noa, min, max) {
   const box = { min, max }
   const hits = []
-  for (const state of noa.ents.getStatesList(noa.ents.names.physics)) {
-    const other = entityBox(noa, state.__id)
-    if (other && overlaps(other, box)) hits.push(state.__id)
+  for (const id of everyBody(noa)) {
+    const other = entityBox(noa, id)
+    if (other && overlaps(other, box)) hits.push(id)
   }
   return hits
 }
