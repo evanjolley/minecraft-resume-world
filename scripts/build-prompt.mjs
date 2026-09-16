@@ -326,8 +326,13 @@ function candidateTerms(text) {
    *
    * SHAPE does. A bare single capitalised word is dropped unless it contains
    * a digit or an internal capital, neither of which happens in English. That
-   * is what the term this exists for looks like, and what "Andreessen
-   * Horowitz" looks like via the multi-word rule.
+   * is what the term this exists for looks like, and a two-word firm name is
+   * what the multi-word rule is for.
+   *
+   * (An earlier draft of this comment named a real firm as the example, in a
+   * file whose entire premise is that nothing sensitive is typed into tracked
+   * source. The example is generic now. The lesson is that the rule applies
+   * to comments too.)
    *
    * The cost is a single-word, ordinarily-capitalised name -- a "Sequoia" --
    * which this will miss. That is the right way to be wrong. A false negative
