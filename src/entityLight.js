@@ -1,6 +1,6 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 
-import { MAX_LIGHT } from './blockLight.js'
+import { MAX_LIGHT, LIGHT_FLOOR } from './blockLight.js'
 
 /*
  * How bright is an entity right now.
@@ -63,9 +63,9 @@ import { MAX_LIGHT } from './blockLight.js'
  * NO LONGER REJECTED: reading light from the voxel the entity stands in, like
  * vanilla. That was rejected because noa had no light engine -- ambient
  * occlusion and one directional vector, with no per-voxel value to query.
- * src/blockLight.js shipped 2026-09-16 and exposes getBlockLight, and this
- * file now calls it. See "THE MAX, AND THE HALF OF IT THAT IS A PLACEHOLDER"
- * below for what that does and does not buy.
+ * src/blockLight.js shipped 2026-09-16 and exposes getBlockLight and
+ * getSkyLight, and this file calls both. See "THE MAX, AND BOTH HALVES OF IT
+ * ARE NOW REAL" below.
  */
 
 /** Vanilla light.glsl's `* 0.6 + 0.4`, and the reason those two sum to 1. */
@@ -73,42 +73,41 @@ export const ENTITY_FLOOR = 0.4
 export const ENTITY_DIFFUSE = 1 - ENTITY_FLOOR
 
 /*
- * THE MAX, AND THE HALF OF IT THAT IS A PLACEHOLDER.
+ * THE MAX, AND BOTH HALVES OF IT ARE NOW REAL.
  *
  * Minecraft lights an entity from `max(skyLight * daylight, blockLight)` at
- * its position. Both terms are now computed here, in `skyTerm` and
- * `blockTerm`, and `max`ed -- but only ONE of them is the real thing:
+ * its position. Both terms are computed here, in `skyTerm` and `blockTerm`,
+ * and `max`ed:
  *
- *   blockTerm  REAL. window.blockLight.getBlockLight at the entity's feet,
- *              divided by 15. A player standing next to a glowstone in a
- *              pitch-dark room is now lit by it, and walking away dims him
- *              one level per block, because that is what the BFS stored.
+ *   blockTerm  window.blockLight.getBlockLight at the entity's feet, divided
+ *              by 15. A player standing next to a glowstone in a pitch-dark
+ *              room is lit by it, and walking away dims him one level per
+ *              block, because that is what the BFS stored.
  *
- *   skyTerm    PLACEHOLDER, and it is important not to read it as the other
- *              half of vanilla's formula. It returns sky.js's `level` -- the
- *              DAYLIGHT term on its own, with `skyLight` silently treated as
- *              15 everywhere. SKY LIGHT DOES NOT EXIST: nothing in this
- *              engine knows which voxels can see the sky (blockLight.js says
- *              so at length). So the sky half is still "how bright is the sun
- *              right now", not "how much of the sun reaches HERE".
+ *   skyTerm    window.blockLight.getSkyLight at the same voxel, divided by 15,
+ *              TIMES sky.js's `level`. The stored sky level has no clock in
+ *              it -- it is 15 under open sky at midnight too -- so the
+ *              multiply here is where the day/night cycle enters, and it
+ *              enters on this term ONLY. That asymmetry is the feature: a
+ *              glowstone is invisible against the noon sun outdoors and is
+ *              the only thing lighting you in a cave at the same instant.
  *
- * What that costs, stated plainly so nobody reads a lit model in a cave as a
- * bug: underground at noon an entity is still lit as if it were standing in
- * the open, because the placeholder says the sun is out and the max picks it.
- * The block term can only ever RAISE brightness, so it cannot fix that -- a
- * cave gets dark when sky light lands, and not before.
- *
- * SHAPED SO SKY LIGHT DROPS IN WITHOUT A REWRITE. When it does, `skyTerm`
- * becomes `getSkyLight(x, y, z) / 15 * level` and takes the same probe every
- * other term takes; the `max`, the probes, the per-material bookkeeping and
- * everything below this comment stay exactly as they are. That is the whole
- * reason the daylight term is a named function rather than `level` inlined
- * into the max.
+ * THIS USED TO BE A PLACEHOLDER that returned `level` alone -- the daylight
+ * term with `skyLight` silently treated as 15 everywhere -- and its docblock
+ * said the real version would be a one-line change here with no change at any
+ * call site. It was. The probe argument that `skyTerm` took and ignored on
+ * purpose is the argument that made it one line, and it is now read.
  *
  * STILL deliberately not faked with a "can this entity see the sky"
- * heuristic. A ray cast to the sky would darken anyone standing in a doorway,
- * and a wrong lighting model is harder to notice and harder to remove than a
- * missing one. Written down in docs/FUTURE.md instead.
+ * heuristic. That was the cheap alternative, and it is now not merely rejected
+ * but obsolete: a raycast darkens anyone standing in a doorway, where the real
+ * propagated value says 15 because the doorway voxel is lit from the opening
+ * beside it. Written down in docs/FUTURE.md as rejected.
+ *
+ * A material with NO PROBE gets the old behaviour exactly -- `level` alone,
+ * sky treated as open. That is deliberate rather than an oversight: a
+ * material nobody has told where it is cannot be darkened honestly, and the
+ * honest failure is "lit as if outdoors", which is how it always looked.
  */
 
 /**
@@ -185,14 +184,23 @@ export function trackedEntityMaterials() {
 }
 
 /**
- * The sky half of vanilla's max -- AND IT IS A STAND-IN, see the comment at
- * the top of this file. Vanilla's term is `skyLight(x,y,z) / 15 * daylight`;
- * this is `daylight` alone, because sky light is not built. The probe is
- * taken and ignored ON PURPOSE: it is the argument that makes the real
- * version a one-line change here rather than a change at the call site.
+ * The sky half of vanilla's max. 0..1.
+ *
+ * `skyLight(x, y, z) / 15 * daylight`, which is vanilla's term exactly.
+ *
+ * Read off `window.blockLight` for the same reason `blockTerm` is, and with
+ * the same fallback: no engine, or no probe, and the term is `level` alone --
+ * the sky treated as open everywhere, which is what this function returned
+ * unconditionally before sky light existed. A missing engine should look like
+ * the old world, not like a cave.
  */
-function skyTerm(_probe) {
-  return level
+function skyTerm(probe) {
+  if (!probe) return level
+  const light = typeof window !== 'undefined' ? window.blockLight : null
+  if (!light || !light.getSkyLight) return level
+  const p = probe()
+  if (!p) return level
+  return light.getSkyLight(p[0], p[1], p[2]) / MAX_LIGHT * level
 }
 
 /**
@@ -255,14 +263,30 @@ function blockTerm(probe) {
  * light the gain is exactly 1 and every number below is what it was before.
  */
 
-/** Floor under the divisor. sky.js's own floor is 0.18; this is paranoia
- *  about the Nether path and about anyone who calls setEntityLight(0). */
+/** Floor under the divisor. It stopped being paranoia when sky light landed:
+ *  `skyTerm` is now genuinely 0 for anyone standing in a sealed cave, and the
+ *  `effective / sky` gain below would be a division by zero without this. */
 const MIN_SKY = 1e-3
 
 function apply(mat, probe) {
-  const sky = skyTerm(probe)
-  const effective = Math.max(sky, blockTerm(probe))
-  const gain = effective / Math.max(sky, MIN_SKY)
+  /*
+   * LIGHT_FLOOR is the same number blockLight.js's fragment shader floors
+   * terrain at, imported rather than retyped. Without it an entity in a sealed
+   * unlit cave renders at exactly zero -- a black silhouette in front of walls
+   * that are dim but visible, which reads as a missing texture rather than as
+   * darkness. Vanilla's lightmap does not reach black either.
+   */
+  const effective = Math.max(skyTerm(probe), blockTerm(probe), LIGHT_FLOOR)
+  /*
+   * THE DIVISOR IS `level`, AND IT USED TO BE THE SKY TERM. Those were the
+   * same number until sky light existed, so this line did not change meaning
+   * when it changed shape -- but it did change which fact it depends on, and
+   * the fact is: what `gain` has to cancel is the SCENE LIGHT'S INTENSITY, and
+   * sky.js sets that to `level`. The sky TERM is now `level` scaled by how
+   * much of the sky reaches this voxel, which is a different number in a cave
+   * and would leave a model underground lit by the full noon sun.
+   */
+  const gain = effective / Math.max(level, MIN_SKY)
   const floor = effective * ENTITY_FLOOR
   const diffuse = ENTITY_DIFFUSE * gain
   mat.emissiveColor.set(floor, floor, floor)

@@ -408,6 +408,46 @@ torch matter at midnight and not at noon. Until it exists, a cave is lit as if
 the roof were not there, and the entity half in `src/entityLight.js` stays
 wrong underground for the same reason. `docs/FUTURE.md` carries both.
 
+FIXED 2026-09-16. `src/blockLight.js` now runs two channels through one BFS,
+and `test/65-sky-light.spec.js` asserts the three rules separately: 15 under
+open sky, no decay down a 24-block shaft, one level per block sideways — plus
+the reported symptom, a roofed voxel that is dark AT NOON. F3 prints
+`Client Light: 15 (15 sky, 0 block)` with no dash in it. `src/entityLight.js`'s
+`skyTerm` reads the real value.
+
+**The no-decay rule is one line**, in a `give(level, direction)` helper the
+fill and the removal walk share: down from a full-strength voxel hands on 15
+instead of 14. Everything else follows from it, including the thing that looked
+like a second feature — **a block edit dirties a whole COLUMN** — because the
+removal walk follows the same downward edge the fill came in on. There is no
+column loop in the file.
+
+**The trap, and it was real.** The quad split in `0530c18` clipped itself to
+the LIT lattice bounding box. Sky light is 15 across every open surface in the
+world, so a second channel through that criterion unchanged splits every
+outdoor quad and undoes greedy meshing everywhere. The criterion is now phrased
+as VARIATION: a lattice cell whose four corners agree in both channels is left
+merged, and the split region is the bounding box of the cells that disagree. On
+block light alone the two rules coincide exactly, which is why 58's numbers did
+not move. Measured on the flat world at spawn: see the numbers logged by 65's
+budget test and 58's.
+
+**The bug that cost the most to find**, because it is the one thing the
+no-decay rule genuinely breaks: sky light going down has no range of its own,
+so the removal walk ran off the bottom of the loaded world, allocating a fresh
+32KB chunk buffer every 32 blocks until `Array.push` hit its 2^32 limit —
+`RangeError: Invalid array length`, on the first block any test placed. Both
+walks are now bounded to loaded chunks, for the sky channel only; block light
+stops on its own after 15 blocks and does not need it.
+
+**Still not done:** water and lava surfaces render at full sky, because
+`src/fluidGeometry.js` rebuilds those meshes' vertex buffers after this file
+has written the sky attribute and does not carry it across. The block-light
+lane survives because it rides in vertex alpha, which fluidGeometry
+interpolates. The fix is one line beside the `texAtlasIndices` it already
+carries; `blockLight.js` drops a stale-length attribute rather than let it be
+read out of range.
+
 **6. The east face of every block is brighter, and the lighting does not move.**
 > "the east edge of blocks has weirdly more lighting than the rest, even at
 > night. Isnt dynamic but should be I guess."

@@ -1259,25 +1259,34 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
   answered, and the second is what the console says when the menu closes — a
   refused lock request logs. Fixing (a) and (c) is worth doing regardless,
   because neither depends on the answer.
-- **Sky light, which is the half of the light engine that is not built.**
-  The block half shipped — `src/blockLight.js` floods light out from glowstone,
-  lava, sea lanterns and magma through a BFS over the voxel data, and writes the
-  result into the vertex colour alpha channel by wrapping `meshChunk` on the noa
-  instance. What it does NOT do is model light coming from the sky, and the
-  symptom is the one you would predict: **caves are lit as if the roof were not
-  there.** Vanilla seeds sky light at 15 in every column open to the sky,
-  propagates it DOWN with no decay at all (which is why a 40-block shaft is
-  fully lit at the bottom) and sideways with the same 1-per-block decay block
-  light uses, then renders a voxel at `max(skyLight * daylight, blockLight)`.
-  Only the first term reacts to `src/sky.js`'s day/night cycle, and that
-  asymmetry is the whole feature — it is what makes a torch matter at midnight
-  and not at noon.
-  The propagation machinery is already written and already tested, so this is
-  mostly a second channel through the same pipe plus the `max` at the end. The
-  two places it gets interesting are the no-decay downward rule, which is a
-  special case in the BFS rather than a different constant, and the fact that
-  sky light has to be recomputed for a whole column when a block is placed or
-  broken in it, where block light only ever dirties a radius.
+- ~~**Sky light, which is the half of the light engine that is not built.**~~
+  **BUILT, 2026-09-16.** `src/blockLight.js` runs both of vanilla's channels
+  through one BFS: 15 in every column open to the sky, DOWN with no decay at
+  all, sideways at the usual 1 per block, rendered as
+  `max(skyLight * daylight, blockLight)` with only the first term following
+  `src/sky.js`. A cave at noon is dark. `test/65-sky-light.spec.js` asserts the
+  three rules separately and photographs the cave.
+
+  **Both things this entry called interesting turned out to be one thing.** The
+  no-decay downward rule is a `give(level, direction)` helper shared by the
+  fill and the removal walk — down from a full-strength voxel hands on 15
+  instead of 14 — and "a whole column has to be recomputed when a block is
+  placed" is not separate code at all: the removal walk follows that same
+  downward edge and darkens the column to the world floor on its own. There is
+  no column loop in the file.
+
+  **What the entry did not predict, and is the thing worth carrying forward.**
+  The quad split that had just landed clipped itself to the LIT lattice
+  bounding box, which sky light makes mean "the entire outdoor world". The
+  criterion had to be re-derived in terms of VARIATION — a lattice cell whose
+  corners agree in both channels stays merged — before a second channel could
+  go through the pipe at all. "A second channel through a pipe that is already
+  laid" was right about the BFS and wrong about the mesher.
+
+  **Left open:** water and lava surfaces still render at full sky.
+  `src/fluidGeometry.js` rebuilds those meshes after `blockLight.js` has
+  written the sky attribute and does not carry it across, the way it already
+  carries `texAtlasIndices`. One line, in a file another agent owns.
 - **Block light on entities, now that the engine exists.** `src/entityLight.js`
   drives every skin and held-item material from the same `level` sky.js gives
   the sun, so a model darkens with the ground it stands on. That is still only

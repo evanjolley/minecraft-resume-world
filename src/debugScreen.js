@@ -43,12 +43,16 @@ import { FONT_PX, px } from './hud.js'
  *   Biome                  the terrain asset has no per-column biome data. The
  *                          one genuine gap rather than a genuine absence -- see
  *                          the note on BIOME below.
- *   Server Light           BUILT, in part -- Client Light is now drawn, see
- *                          the note on LIGHT below. Server Light is not, and
- *                          for two independent reasons rather than one: there
- *                          is no server, and its whole content is a (sky,
- *                          block) pair of which the sky half does not exist.
- *                          Every character of the line would be invented.
+ *   Server Light           STILL CUT, but for ONE reason now instead of two.
+ *                          The reason that went away: its content is a (sky,
+ *                          block) pair, and the sky half exists as of
+ *                          2026-09-16. The reason that has not: THERE IS NO
+ *                          SERVER. Vanilla's line is the authoritative copy a
+ *                          server holds, printed beside the client's so you
+ *                          can see them disagree; here there is only one copy,
+ *                          and printing it twice under two headings would
+ *                          invent an agreement between two things rather than
+ *                          invent a number. Which is worse, not better.
  *   CH / SH heightmaps     server-side acceleration structures. No server, and
  *                          island.js answers a column by scanning it.
  *   Local Difficulty       no difficulty system, no regional difficulty.
@@ -114,26 +118,27 @@ import { FONT_PX, px } from './hud.js'
  */
 
 /*
- * LIGHT, and how much of vanilla's line is real.
+ * LIGHT, and the line is now whole.
  *
  * Vanilla prints `Client Light: 15 (15 sky, 0 block)` -- a combined level
- * followed by the two channels it was taken from. Both halves are drawn here
- * and only one of them is true:
+ * followed by the two channels it was taken from. Both halves are real:
  *
- *   block   REAL. window.blockLight.getBlockLight(x, y, z), which is the
- *           number that function was written to answer. Stand on a glowstone
- *           and it reads 14; walk away and it falls one per block.
+ *   block   window.blockLight.getBlockLight(x, y, z). Stand on a glowstone and
+ *           it reads 14; walk away and it falls one per block.
  *
- *   sky     PRINTED AS `-`, NOT AS A NUMBER. Sky light does not exist in this
- *           engine (blockLight.js says so at length), so there is no value to
- *           put there and a `0` would be a lie in the one place on this screen
- *           where people read numbers off. `15` would be a bigger one.
+ *   sky     window.blockLight.getSkyLight(x, y, z). 15 under open sky, 0 under
+ *           a roof, and 15 at the bottom of a shaft because sky light does not
+ *           decay downward. This slot PRINTED AS `-` until 2026-09-16, because
+ *           sky light did not exist and a `0` would have been a lie in the one
+ *           place on this screen where people read numbers off. The `-` is
+ *           gone; nothing else about the line moved, which was the point of
+ *           carrying a null through `readLight` rather than omitting a field.
  *
- * Which makes the combined value the block level, and a LOWER BOUND on what
- * vanilla would print at the same spot rather than the same number. That is
- * the honest reading of a max with one term missing, and it is why the `-` is
- * in the line rather than the line being cut: a reader who sees `- sky` knows
- * exactly which half they are looking at.
+ * The combined value is `max(sky, block)`, which is vanilla's. NOT
+ * `max(sky * daylight, block)`: the number vanilla prints is the raw stored
+ * level, the same at midnight as at noon, and the clock lives in the shader
+ * and in entityLight.js. A combined value that changed as the sun moved would
+ * be a different fact under the same label.
  *
  * WHERE IT SITS: vanilla puts these lines between the CH/SH heightmaps and
  * Local Difficulty. Both of those are cut here, along with Biome, so the line
@@ -532,17 +537,24 @@ export function installDebugScreen(noa, deps = {}) {
   }
 
   /**
-   * Block light where the player is standing, or null if there is no engine.
+   * Both light channels where the player is standing, or null if there is no
+   * engine.
    *
-   * `sky` is null rather than 0 on purpose, and the renderer prints it as
-   * `-`. The field exists at all rather than being left out so that the day
-   * sky light lands is one assignment here and no change anywhere else --
-   * the formatting below is already written for a number.
+   * `sky` was null here until sky light landed, and the renderer printed it as
+   * `-`. Keeping the field rather than leaving it out was the bet that the day
+   * would cost one assignment and no change anywhere else. It did.
+   *
+   * `getSkyLight` is probed for rather than assumed, so a build running an
+   * older blockLight.js falls back to the dash instead of printing
+   * `undefined`.
    */
   function readLight(x, y, z) {
     const engine = typeof window !== 'undefined' ? window.blockLight : null
     if (!engine) return null
-    return { block: engine.getBlockLight(x, y, z), sky: null }
+    return {
+      block: engine.getBlockLight(x, y, z),
+      sky: engine.getSkyLight ? engine.getSkyLight(x, y, z) : null,
+    }
   }
 
   /* ---- the lines ---- */
@@ -577,11 +589,12 @@ export function installDebugScreen(noa, deps = {}) {
       `Section-relative: ${s.sectionRelative.map(n => String(n).padStart(2, '0')).join(' ')}`,
     )
     if (s.light) {
-      // Vanilla's exact shape: `Client Light: 15 (15 sky, 0 block)`. The sky
-      // slot is a dash because there is no sky light to put in it, which
-      // makes the combined value the block level. See LIGHT at the top.
+      // Vanilla's exact shape: `Client Light: 15 (15 sky, 0 block)`, where the
+      // leading number is the max of the two. See LIGHT at the top.
       const sky = s.light.sky === null ? '-' : s.light.sky
-      lines.push(`Client Light: ${s.light.block} (${sky} sky, ${s.light.block} block)`)
+      const combined = s.light.sky === null
+        ? s.light.block : Math.max(s.light.sky, s.light.block)
+      lines.push(`Client Light: ${combined} (${sky} sky, ${s.light.block} block)`)
     }
     return lines
   }

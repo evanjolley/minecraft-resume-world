@@ -9,15 +9,33 @@ import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData.js'
  * was nearly free while the data end was not. Both halves of that turned out
  * to be right, and this file is the cheapest honest version of the data end.
  *
- * WHAT IS HERE: block light. A glowstone lights the floor in front of it, the
- * light falls off one level per block, it stops at walls, and pulling the
- * glowstone out takes the light with it.
+ * WHAT IS HERE: both of vanilla's channels. BLOCK LIGHT -- a glowstone lights
+ * the floor in front of it, the light falls off one level per block, it stops
+ * at walls, and pulling the glowstone out takes the light with it. And SKY
+ * LIGHT -- every voxel with nothing opaque above it holds 15, that 15 falls
+ * STRAIGHT DOWN with no decay at all, and it spreads sideways at the usual one
+ * level per block. A cave at noon is dark. It was not, and docs/REPORTED.md 5b
+ * is the report that it was not.
  *
- * WHAT IS NOT HERE: SKY LIGHT. Caves are still lit as if they were outdoors,
- * because nothing in this file knows which voxels can see the sky. Standing in
- * a cave at noon is still bright. That is the other half of vanilla's model
- * and it is not built. Do not read a lit torch in a cave as proof the cave is
- * dark -- it is not.
+ * THE ASYMMETRY IS THE WHOLE FEATURE. A voxel renders at
+ * `max(skyLight * daylight, blockLight)` and only the FIRST term follows
+ * sky.js's clock. That is what makes a torch matter at midnight and be
+ * invisible at noon, and it is why the two channels cannot be collapsed into
+ * one stored number: the number that would have to be stored changes every
+ * tick, and vertex data is baked at mesh time.
+ *
+ * THE TWO GENUINELY NEW PIECES, as opposed to a second run through machinery
+ * that was already here:
+ *
+ *   1. The no-decay downward rule is a SPECIAL CASE INSIDE THE BFS, not a
+ *      different constant. See `propagate` -- one line, mirrored by one line
+ *      in `removeLight`.
+ *
+ *   2. A block edit dirties a whole COLUMN where block light only ever dirties
+ *      a radius. That is not extra code either: it falls out of rule 1. The
+ *      removal walk follows the same down-with-no-decay edge the fill did, so
+ *      placing one block on open ground darkens everything under it to the
+ *      bedrock without a column loop existing anywhere.
  *
  *
  * HOW IT AVOIDS FORKING NOA, WHICH THE DOC ASSUMED IT COULDN'T
@@ -71,17 +89,42 @@ import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData.js'
  * Vanilla renders a voxel at `texture * max(skyLight * daylight, blockLight)`.
  * The shader hook here is
  *
- *     color.rgb = max(color.rgb, noaBaseCol * blockLight)
+ *     color.rgb = max(color.rgb * skyLight, noaBaseCol * blockLight)
  *
  * where `color.rgb` is the already-day-shaded result and `noaBaseCol` is the
  * unshaded texel captured a few lines earlier. That IS the vanilla max, and it
- * needs no daylight uniform and no per-frame bind: the day term is already
- * sitting in `color.rgb`. At noon the max picks the sun and block light is
- * invisible, exactly as in vanilla; at midnight it picks the torch.
+ * needs no daylight uniform and no per-frame bind: sky.js already drives
+ * `light.intensity` and `scene.ambientColor` from the same `level`, so
+ * `color.rgb` IS `texture * daylight` and multiplying it by the sky FRACTION
+ * gives `texture * skyLight * daylight` exactly. At noon under open sky the
+ * fraction is 1 and the max picks the sun; in a cave the fraction is 0 and the
+ * max picks the torch, or nothing.
  *
  * Rejected: a `uDaylight` uniform and `color.rgb *= max(1.0, L / uDaylight)`.
  * Same result at both ends, but it divides by a number that approaches zero at
  * midnight, and the clamp needed to stop that is a tuning knob nobody wants.
+ *
+ *
+ * WHY SKY LIGHT NEEDED A SECOND LANE AND COULD NOT SHARE THE FIRST
+ *
+ * Alpha is one interpolated float and there are now two numbers per vertex.
+ * Packing them into one (`sky * 16 + block`, say) is the obvious saving and it
+ * is wrong: the GPU INTERPOLATES a vertex attribute across the triangle, and
+ * the interpolation of a packed pair is not the pair of the interpolations --
+ * halfway between 15*16+0 and 0*16+15 is 127.5, which unpacks to sky 7,
+ * block 15. So the second channel is a real second attribute, `noaSkyLight`,
+ * declared by this plugin via `getAttributes`.
+ *
+ * Rejected: stealing a component of the vertex COLOUR, which is already vec4
+ * and already uploaded. noa's `pushAOColor` writes `baseCol[i] * aoMult` into
+ * rgb, and `baseCol` is the material's tint -- grass is green there, so the
+ * three components are not redundant and none of them is free.
+ *
+ * STORED INVERTED, as `1 - sky/15`, for the same reason the alpha lane is: a
+ * mesh this file never reaches has no such attribute at all, WebGL hands the
+ * shader the generic default 0 for it, and 0 must mean "full sky" or every
+ * unreached mesh in the world would render pitch black. Inverted, the failure
+ * mode is again "looks exactly like today".
  *
  * NOT DONE, and worth saying: block light here is not face-shaded. Vanilla
  * multiplies the five-value face table (UP 1.0, N/S 0.8, E/W 0.6, DOWN 0.5)
@@ -104,6 +147,21 @@ export const EMISSION = {
 
 /** Vanilla's cap. One nibble, and the reason decay is 1/15 per block. */
 export const MAX_LIGHT = 15
+
+/**
+ * The sky channel's vertex attribute, holding `1 - skyLevel/15`.
+ *
+ * Named like noa's own `texAtlasIndices` rather than prefixed with the file,
+ * because it travels with the terrain vertex buffers and the next person to
+ * read a buffer dump should recognise it as terrain data.
+ */
+const SKY_ATTRIB = 'noaSkyLight'
+
+/**
+ * How dark a voxel with no light of any kind renders, as a fraction of its
+ * own texel. Vanilla's lightmap bottoms out around here rather than at black.
+ */
+export const LIGHT_FLOOR = 0.05
 
 /**
  * Block keys whose whole family emits, matched by prefix.
@@ -163,7 +221,32 @@ class BlockLightPlugin extends MaterialPluginBase {
   }
   getClassName() { return 'NoaBlockLightPlugin' }
 
+  /*
+   * The sky lane's attribute. Babylon only puts a name in the compiled
+   * effect's attribute list if a plugin asks for it here; without this the
+   * `attribute float noaSkyLight` declared below compiles fine, binds to
+   * nothing, and reads a constant 0 -- which, because the value is stored
+   * inverted, would look like a perfectly normal fully-lit world and hide the
+   * mistake completely.
+   */
+  getAttributes(attributes) {
+    if (!attributes.includes(SKY_ATTRIB)) attributes.push(SKY_ATTRIB)
+  }
+
   getCustomCode(shaderType) {
+    if (shaderType === 'vertex') {
+      return {
+        'CUSTOM_VERTEX_DEFINITIONS': `
+          attribute float ${SKY_ATTRIB};
+          varying float vNoaSkyDark;
+        `,
+        // MAIN_END rather than MAIN_BEGIN: nothing else reads it, and the end
+        // is the hook noa's own plugins use, so the ordering is familiar.
+        'CUSTOM_VERTEX_MAIN_END': `
+          vNoaSkyDark = ${SKY_ATTRIB};
+        `,
+      }
+    }
     if (shaderType !== 'fragment') return null
     return {
       /*
@@ -181,6 +264,7 @@ class BlockLightPlugin extends MaterialPluginBase {
        */
       'CUSTOM_FRAGMENT_DEFINITIONS': `
         vec3 noaBaseCol;
+        varying float vNoaSkyDark;
       `,
       // Fires right after baseColor is final (post-texture, post-vColor.rgb,
       // so ambient occlusion is already multiplied in -- vanilla multiplies AO
@@ -188,9 +272,21 @@ class BlockLightPlugin extends MaterialPluginBase {
       'CUSTOM_FRAGMENT_UPDATE_DIFFUSE': `
         noaBaseCol = baseColor.rgb;
       `,
-      // Before fog, so a torch does not punch through distance fog.
+      /*
+       * Before fog, so a torch does not punch through distance fog.
+       *
+       * THE FLOOR, and it is not a fudge. Vanilla's lightmap does not reach
+       * black at light 0 either -- the darkest entry is a dim blue-grey, which
+       * is why a cave with no torch in it is navigable rather than a void.
+       * Without a floor here a sealed room at midnight renders as exactly
+       * #000000 and there is nothing on screen to tell you the roof from the
+       * wall. Rejected: clamping the sky FRACTION to a minimum instead, which
+       * would make an unlit cave get brighter at noon -- the precise bug this
+       * whole change exists to remove.
+       */
       'CUSTOM_FRAGMENT_BEFORE_FOG': `
-        color.rgb = max(color.rgb, noaBaseCol * (1.0 - vColor.a));
+        color.rgb = max(color.rgb * (1.0 - vNoaSkyDark), noaBaseCol * (1.0 - vColor.a));
+        color.rgb = max(color.rgb, noaBaseCol * ${LIGHT_FLOOR.toFixed(3)});
       `,
     }
   }
@@ -237,67 +333,237 @@ export function installBlockLight(noa, { ids = {} } = {}) {
     opaqueById[id] = noa.registry.getBlockOpacity(id) ? 1 : 0
   }
 
-  /** chunk key -> Uint8Array(CS^3) of light levels. Allocated on first write. */
-  const store = new Map()
-  /** chunk key -> [ci, cj, ck], so a dirty key can be turned back into a chunk. */
-  const coords = new Map()
-  /**
-   * chunk key -> how many of its voxels hold a level above zero.
-   *
-   * Exists purely so the mesh pass can answer "is there any light near this
-   * chunk at all" in a Map lookup. A count rather than a boolean because
-   * removal has to be able to take a chunk back to dark: `store` keeps its
-   * buffer forever once allocated (see chunkBeingRemoved), so buffer presence
-   * would be a one-way flag and every chunk a torch ever shone into would pay
-   * the expensive mesh path for the rest of the session.
+  /*
+   * Index 3 is DOWN, and that is load-bearing rather than incidental: the
+   * whole of sky light's no-decay rule is `d === DOWN`.
    */
-  const litCount = new Map()
+  const NEIGHBOURS = [
+    [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+  ]
+  const DOWN = 3
 
   const ckey = (ci, cj, ck) => ci + '|' + cj + '|' + ck
   const cdiv = (v) => Math.floor(v / CS)
   // JS % keeps the sign of the dividend, so -1 % 32 is -1, not 31.
   const cmod = (v) => ((v % CS) + CS) % CS
 
-  function bufFor(ci, cj, ck, k) {
-    let buf = store.get(k)
-    if (!buf) {
-      buf = new Uint8Array(CS * CS * CS)
-      store.set(k, buf)
-      coords.set(k, [ci, cj, ck])
-    }
-    return buf
-  }
-
-  /** Does this chunk hold any light at all. The mesh pass's cheap gate. */
-  const chunkIsLit = (ci, cj, ck) => (litCount.get(ckey(ci, cj, ck)) || 0) > 0
-
-  function getLight(x, y, z) {
-    const buf = store.get(ckey(cdiv(x), cdiv(y), cdiv(z)))
-    if (!buf) return 0
-    return buf[cmod(x) * CS2 + cmod(y) * CS + cmod(z)]
-  }
-
-  /** Dirty chunk keys accumulated by a propagation pass. */
+  /** chunk key -> [ci, cj, ck], so a dirty key can be turned back into a chunk. */
+  const coords = new Map()
+  /** Dirty chunk keys accumulated by a propagation pass, SHARED by both
+   *  channels: one remesh repaints both lanes, so one set is enough. */
   const dirty = new Set()
 
-  function setLight(x, y, z, v) {
-    const ci = cdiv(x), cj = cdiv(y), ck = cdiv(z)
-    const k = ckey(ci, cj, ck)
-    const buf = bufFor(ci, cj, ck, k)
-    const at = cmod(x) * CS2 + cmod(y) * CS + cmod(z)
-    const was = buf[at]
-    buf[at] = v
-    if (was === 0 && v > 0) litCount.set(k, (litCount.get(k) || 0) + 1)
-    else if (was > 0 && v === 0) litCount.set(k, (litCount.get(k) || 1) - 1)
-    /*
-     * SUBTLE: a voxel on a chunk boundary is a vertex of the NEIGHBOUR's mesh
-     * too -- the mesher samples the air voxel outside each face, which for a
-     * face on the seam lives in the next chunk over. So a light change one
-     * voxel inside the boundary has to dirty both chunks or the seam shows a
-     * hard brightness line. Marking the 3x3x3 of chunk keys around the voxel
-     * is the blunt version and costs a few Set writes.
+  const blockAt = (x, y, z) => world.getBlockID(x, y, z)
+  const isOpaque = (x, y, z) => opaqueById[blockAt(x, y, z)] === 1
+
+  /*
+   * Is there a loaded chunk here, with a one-entry memo in front of it.
+   *
+   * WHY SKY LIGHT NEEDS THIS AND BLOCK LIGHT NEVER DID, which is the sharpest
+   * consequence of the no-decay rule and cost a RangeError to find. Block
+   * light stops on its own: it loses a level a block, so a flood is 15 blocks
+   * across whether or not anything bounds it. Sky light going DOWN loses
+   * nothing, so it has no range of its own and the edge of the loaded world is
+   * the only thing that can stop it.
+   *
+   * `propagate` was accidentally safe -- an absent chunk reads as 15 and
+   * `get(n) >= next` is already true, so the fill declines to write. `remove`
+   * was not: the test for "this came from me" is `nl <= give(lv, DOWN)`, which
+   * for a full-strength column is `15 <= 15`, so removing one block on the
+   * surface walked downward through empty space forever, allocating a fresh
+   * 32KB buffer every 32 blocks until the reseed array hit `Array.push`'s
+   * 2^32 limit. That is `RangeError: Invalid array length`, from
+   * test/65-sky-light.spec.js, on the first block a test placed.
+   *
+   * The memo is a single entry rather than a Set of keys because the walk is
+   * coherent -- a column descent stays in one chunk for 32 steps -- and
+   * because a Set has to be kept in step with the chunk lifecycle, which is
+   * one more thing to get wrong than asking noa.
+   */
+  let memoI = NaN, memoJ = NaN, memoK = NaN, memoOK = false
+  function chunkLoaded(ci, cj, ck) {
+    if (ci !== memoI || cj !== memoJ || ck !== memoK) {
+      memoI = ci; memoJ = cj; memoK = ck
+      memoOK = !!world._storage.getChunkByIndexes(ci, cj, ck)
+    }
+    return memoOK
+  }
+  const forgetChunkMemo = () => { memoI = NaN }
+  const loadedAt = (x, y, z) => chunkLoaded(cdiv(x), cdiv(y), cdiv(z))
+
+  /*
+   * A LIGHT CHANNEL: a store, a flood fill and a removal walk.
+   *
+   * Two instances, block and sky, because the two are the same algorithm
+   * differing in exactly two places -- the default value and one edge rule --
+   * and the alternative was a second copy of 120 lines that would drift.
+   *
+   * THE DEFAULT IS THE INTERESTING PARAMETER. Block light defaults to 0: an
+   * unvisited voxel is dark, and a chunk with no buffer is a chunk with no
+   * torch in it. Sky light defaults to 15: an unvisited voxel is OPEN, and a
+   * chunk with no buffer is a chunk of open air. That inversion is what lets
+   * `offCount` -- "how many voxels are not at the default" -- mean "how much
+   * light is here" for one channel and "how much shadow is here" for the
+   * other, and lets the mesh pass gate on the same predicate for both.
+   *
+   * It also picks the safe failure mode for each. A voxel this file never
+   * reaches reads 0 block light and 15 sky light, which is exactly the world
+   * as it rendered before either channel existed.
+   */
+  function makeChannel({ isSky }) {
+    const DEFAULT = isSky ? MAX_LIGHT : 0
+    /** chunk key -> Uint8Array(CS^3). Allocated on first write, filled with
+     *  DEFAULT so that "absent" and "all default" are the same world. */
+    const store = new Map()
+    /**
+     * chunk key -> how many of its voxels differ from DEFAULT.
+     *
+     * Exists purely so the mesh pass can answer "is there anything to draw
+     * near this chunk at all" in a Map lookup. A count rather than a boolean
+     * because removal has to be able to take a chunk back to plain: `store`
+     * keeps its buffer once allocated (see chunkBeingRemoved), so buffer
+     * presence would be a one-way flag and every chunk a torch ever shone
+     * into would pay the expensive mesh path for the rest of the session.
      */
-    dirty.add(k)
+    const offCount = new Map()
+
+    function bufFor(k, ci, cj, ck) {
+      let buf = store.get(k)
+      if (!buf) {
+        buf = new Uint8Array(CS * CS * CS)
+        if (DEFAULT) buf.fill(DEFAULT)
+        store.set(k, buf)
+        coords.set(k, [ci, cj, ck])
+      }
+      return buf
+    }
+
+    /** Is this chunk anything but uniformly DEFAULT. The mesh pass's gate. */
+    const chunkIsOff = (ci, cj, ck) => (offCount.get(ckey(ci, cj, ck)) || 0) > 0
+
+    function get(x, y, z) {
+      const buf = store.get(ckey(cdiv(x), cdiv(y), cdiv(z)))
+      if (!buf) return DEFAULT
+      return buf[cmod(x) * CS2 + cmod(y) * CS + cmod(z)]
+    }
+
+    function set(x, y, z, v) {
+      const ci = cdiv(x), cj = cdiv(y), ck = cdiv(z)
+      const k = ckey(ci, cj, ck)
+      const buf = bufFor(k, ci, cj, ck)
+      const at = cmod(x) * CS2 + cmod(y) * CS + cmod(z)
+      const was = buf[at]
+      if (was === v) return
+      buf[at] = v
+      if (was === DEFAULT) offCount.set(k, (offCount.get(k) || 0) + 1)
+      else if (v === DEFAULT) offCount.set(k, (offCount.get(k) || 1) - 1)
+      markDirty(ci, cj, ck, x, y, z)
+    }
+
+    /*
+     * Flood fill. A flat array used as a FIFO with a read head rather than
+     * Array.shift(), which is O(n) per pop and turns a radius-15 fill from
+     * thousands of ops into millions. One queue PER CHANNEL, because a
+     * removal walk on one channel reseeds into its own fill and the two runs
+     * interleave during a single block edit.
+     */
+    let queue = []
+    let qhead = 0
+    const push = (x, y, z) => { queue.push(x, y, z) }
+
+    /**
+     * What level direction `d` hands on from a voxel holding `level`.
+     *
+     * THE NO-DECAY DOWNWARD RULE, and this is the whole of it. Sky light at
+     * full strength loses nothing going down, which is why a forty-block
+     * shaft is as bright at the bottom as at the top. It is conditioned on
+     * `level === MAX_LIGHT` rather than applying to all sky light: light that
+     * has already turned a corner and lost a level is ordinary light and
+     * decays like any other, so an overhang's shadow does not stream downward
+     * forever.
+     */
+    const give = (level, d) =>
+      (isSky && d === DOWN && level === MAX_LIGHT) ? MAX_LIGHT : level - 1
+
+    function propagate() {
+      while (qhead < queue.length) {
+        const x = queue[qhead++], y = queue[qhead++], z = queue[qhead++]
+        const level = get(x, y, z)
+        // level 1 gives 0 in every direction including down, since the
+        // no-decay case needs 15.
+        if (level <= 1) continue
+        for (let d = 0; d < 6; d++) {
+          const nx = x + NEIGHBOURS[d][0]
+          const ny = y + NEIGHBOURS[d][1]
+          const nz = z + NEIGHBOURS[d][2]
+          if (isSky && !loadedAt(nx, ny, nz)) continue
+          if (isOpaque(nx, ny, nz)) continue
+          const next = give(level, d)
+          if (get(nx, ny, nz) >= next) continue
+          set(nx, ny, nz, next)
+          push(nx, ny, nz)
+        }
+      }
+      queue = []
+      qhead = 0
+    }
+
+    /*
+     * Removal, which is the half docs/lighting.md called the hard part and was
+     * right about. You cannot just clear the voxel: every voxel that was lit
+     * BY it is still holding a stale value, and re-propagating from what is
+     * left would not lower any of them, because propagation only ever raises.
+     * So the region is walked and zeroed first, and any voxel found holding a
+     * level too high to have come from the removed source is a surviving
+     * emitter's frontier and gets re-seeded.
+     *
+     * THE SKY MIRROR, and it is where the column behaviour comes from. The
+     * test for "this came from me" is normally `nl < lv`, strictly less,
+     * because decay is strict. Down from a full-strength sky voxel it is NOT
+     * strict -- the voxel below holds the same 15 and still came from here --
+     * so the same `give` the fill used decides the removal too. Place one
+     * block on open ground and this walk follows its own shadow all the way
+     * to the bedrock, with no column loop anywhere in the file.
+     */
+    function remove(x, y, z, wasLevel) {
+      const rq = [x, y, z, wasLevel]
+      let head = 0
+      set(x, y, z, 0)
+      const reseed = []
+      while (head < rq.length) {
+        const cx = rq[head++], cy = rq[head++], cz = rq[head++], lv = rq[head++]
+        for (let d = 0; d < 6; d++) {
+          const nx = cx + NEIGHBOURS[d][0]
+          const ny = cy + NEIGHBOURS[d][1]
+          const nz = cz + NEIGHBOURS[d][2]
+          if (isSky && !loadedAt(nx, ny, nz)) continue
+          const nl = get(nx, ny, nz)
+          if (nl === 0) continue
+          if (nl <= give(lv, d)) {
+            set(nx, ny, nz, 0)
+            rq.push(nx, ny, nz, nl)
+          } else {
+            // Too bright to have come from here -- something else still lights
+            // it, so it becomes a seed for the refill pass.
+            reseed.push(nx, ny, nz)
+          }
+        }
+      }
+      for (let i = 0; i < reseed.length; i += 3) push(reseed[i], reseed[i + 1], reseed[i + 2])
+    }
+
+    return { DEFAULT, store, offCount, bufFor, chunkIsOff, get, set, push, propagate, remove, give }
+  }
+
+  /*
+   * SUBTLE: a voxel on a chunk boundary is a vertex of the NEIGHBOUR's mesh
+   * too -- the mesher samples the air voxel outside each face, which for a
+   * face on the seam lives in the next chunk over. So a light change one
+   * voxel inside the boundary has to dirty both chunks or the seam shows a
+   * hard brightness line.
+   */
+  function markDirty(ci, cj, ck, x, y, z) {
+    dirty.add(ckey(ci, cj, ck))
     const lx = cmod(x), ly = cmod(y), lz = cmod(z)
     if (lx === 0) dirty.add(ckey(ci - 1, cj, ck))
     if (lx === CS - 1) dirty.add(ckey(ci + 1, cj, ck))
@@ -307,77 +573,12 @@ export function installBlockLight(noa, { ids = {} } = {}) {
     if (lz === CS - 1) dirty.add(ckey(ci, cj, ck + 1))
   }
 
-  const blockAt = (x, y, z) => world.getBlockID(x, y, z)
-  const isOpaque = (x, y, z) => opaqueById[blockAt(x, y, z)] === 1
-
-  /*
-   * Flood fill. A flat array used as a FIFO with a read head rather than
-   * Array.shift(), which is O(n) per pop and turns a radius-15 fill from
-   * thousands of ops into millions.
-   */
-  let queue = []
-  let qhead = 0
-
-  function push(x, y, z) { queue.push(x, y, z) }
-
-  function propagate() {
-    while (qhead < queue.length) {
-      const x = queue[qhead++], y = queue[qhead++], z = queue[qhead++]
-      const level = getLight(x, y, z)
-      if (level <= 1) continue
-      const next = level - 1
-      for (let d = 0; d < 6; d++) {
-        const nx = x + NEIGHBOURS[d][0]
-        const ny = y + NEIGHBOURS[d][1]
-        const nz = z + NEIGHBOURS[d][2]
-        if (isOpaque(nx, ny, nz)) continue
-        if (getLight(nx, ny, nz) >= next) continue
-        setLight(nx, ny, nz, next)
-        push(nx, ny, nz)
-      }
-    }
-    queue = []
-    qhead = 0
-  }
-
-  /*
-   * Removal, which is the half docs/lighting.md called the hard part and was
-   * right about. You cannot just clear the voxel: every voxel that was lit BY
-   * it is still holding a stale value, and re-propagating from what is left
-   * would not lower any of them, because propagation only ever raises. So the
-   * region is walked and zeroed first, and any voxel found holding a level too
-   * high to have come from the removed source is a surviving emitter's
-   * frontier and gets re-seeded.
-   */
-  function removeLight(x, y, z, wasLevel) {
-    const rq = [x, y, z, wasLevel]
-    let head = 0
-    setLight(x, y, z, 0)
-    const reseed = []
-    while (head < rq.length) {
-      const cx = rq[head++], cy = rq[head++], cz = rq[head++], lv = rq[head++]
-      for (let d = 0; d < 6; d++) {
-        const nx = cx + NEIGHBOURS[d][0]
-        const ny = cy + NEIGHBOURS[d][1]
-        const nz = cz + NEIGHBOURS[d][2]
-        const nl = getLight(nx, ny, nz)
-        if (nl === 0) continue
-        if (nl < lv) {
-          setLight(nx, ny, nz, 0)
-          rq.push(nx, ny, nz, nl)
-        } else {
-          // Too bright to have come from here -- something else still lights
-          // it, so it becomes a seed for the refill pass.
-          reseed.push(nx, ny, nz)
-        }
-      }
-    }
-    for (let i = 0; i < reseed.length; i += 3) push(reseed[i], reseed[i + 1], reseed[i + 2])
-  }
-
-  const NEIGHBOURS = [
-    [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
-  ]
+  const blockCh = makeChannel({ isSky: false })
+  const skyCh = makeChannel({ isSky: true })
+  const getLight = blockCh.get
+  const getSky = skyCh.get
+  const chunkIsLit = blockCh.chunkIsOff
+  const chunkIsShaded = skyCh.chunkIsOff
 
   /** Turn the dirty set into remesh requests, then clear it. */
   function flushDirty(skipChunk) {
@@ -429,8 +630,8 @@ export function installBlockLight(noa, { ids = {} } = {}) {
           const lvl = emissionById[data[base + k]]
           if (!lvl) continue
           found = true
-          setLight(ox + i, oy + j, oz + k, lvl)
-          push(ox + i, oy + j, oz + k)
+          blockCh.set(ox + i, oy + j, oz + k, lvl)
+          blockCh.push(ox + i, oy + j, oz + k)
         }
       }
     }
@@ -451,22 +652,145 @@ export function installBlockLight(noa, { ids = {} } = {}) {
           if (dx !== 0) { x = fx; y = oy + a; z = oz + b }
           else if (dy !== 0) { x = ox + a; y = fy; z = oz + b }
           else { x = ox + a; y = oy + b; z = fz }
-          if (getLight(x, y, z) > 1) { push(x, y, z); found = true }
+          if (getLight(x, y, z) > 1) { blockCh.push(x, y, z); found = true }
         }
       }
     }
     if (!found) return
-    propagate()
+    blockCh.propagate()
   }
 
+  /**
+   * Sky light for a freshly arrived chunk.
+   *
+   * COLUMN FIRST, BFS SECOND, and the split is what keeps this affordable. A
+   * pure BFS seeded at the top of the world would push every open voxel and
+   * pop it again to discover that its neighbour already holds 15. The column
+   * descent computes the whole no-decay case in one linear pass over the
+   * voxel buffer with no queue at all, and leaves the BFS only the sideways
+   * spread under overhangs -- which is the part that actually needs a queue.
+   *
+   * WHAT IT ASSUMES ABOUT THE CHUNK ABOVE, since this is the one place sky
+   * light has to guess. If the chunk overhead is not loaded the column starts
+   * at 15: above the top of the world there is nothing but sky, and that is
+   * the common case because the world has a finite ceiling. If the guess is
+   * wrong -- the chunk above arrives later carrying a roof -- it is corrected
+   * from the other side, in the plane scan below, by the chunk that arrives.
+   *
+   * WHICH VOXELS GO IN THE QUEUE, which is the other half of the cost. Only
+   * those with a horizontal neighbour more than one level away; on open
+   * ground that is none of them. Pushing every lit voxel would be correct and
+   * would cost six `isOpaque` calls each for 32,768 voxels a chunk.
+   */
+  function seedSky(chunk) {
+    const size = chunk.size
+    const data = chunk.voxels.data
+    const ox = chunk.x, oy = chunk.y, oz = chunk.z
+    const ci = cdiv(ox), cj = cdiv(oy), ck = cdiv(oz)
+    const k0 = ckey(ci, cj, ck)
+    const buf = skyCh.bufFor(k0, ci, cj, ck)
+    const aboveLoaded = !!world._storage.getChunkByIndexes(ci, cj + 1, ck)
+    /*
+     * Counted over TRANSPARENT voxels only, and that is the difference
+     * between a useful gate and a useless one. A solid stone voxel stores 0
+     * because the removal walk must not read a stale 15 out of a wall -- but
+     * the mesher never samples a solid voxel, so a chunk of solid stone has
+     * nothing for the sky lane to write and must not be flagged as if it did.
+     * Count the solids and every chunk with ground in it pays the full
+     * readback forever.
+     */
+    let off = 0
+    for (let i = 0; i < size; i++) {
+      for (let k = 0; k < size; k++) {
+        let cur = MAX_LIGHT
+        if (aboveLoaded) cur = skyCh.get(ox + i, oy + size, oz + k) === MAX_LIGHT ? MAX_LIGHT : 0
+        for (let j = size - 1; j >= 0; j--) {
+          const at = (i * size + j) * size + k
+          const solid = opaqueById[data[at]] === 1
+          if (solid) cur = 0
+          buf[at] = cur
+          if (!solid && cur !== MAX_LIGHT) off++
+          if (i > 0) {
+            const n = buf[((i - 1) * size + j) * size + k]
+            if (n > cur + 1) skyCh.push(ox + i - 1, oy + j, oz + k)
+            else if (cur > n + 1) skyCh.push(ox + i, oy + j, oz + k)
+          }
+          if (k > 0) {
+            const n = buf[(i * size + j) * size + k - 1]
+            if (n > cur + 1) skyCh.push(ox + i, oy + j, oz + k - 1)
+            else if (cur > n + 1) skyCh.push(ox + i, oy + j, oz + k)
+          }
+        }
+      }
+    }
+    skyCh.offCount.set(k0, off)
+    // The whole chunk changed, so every mesh that samples into it is stale.
+    for (let a = -1; a <= 1; a++) {
+      for (let b = -1; b <= 1; b++) {
+        for (let c = -1; c <= 1; c++) dirty.add(ckey(ci + a, cj + b, ck + c))
+      }
+    }
+
+    /*
+     * The seam, in both directions and with one correction.
+     *
+     * Unlike block light this cannot scan only the outside plane and push what
+     * it finds. Sky light flows OUT of a new chunk as readily as into it -- an
+     * air chunk arriving beside a loaded cave lights the cave mouth -- so both
+     * sides are offered to `give`, which knows the no-decay rule and answers
+     * exactly which of the two can raise the other.
+     *
+     * AND THE CORRECTION, which is the guess above coming home. If this chunk
+     * has a roof in it, the chunk below may have been computed while nothing
+     * was overhead and be holding a full column of daylight that no longer
+     * reaches it. `remove` walks that column down and takes it out, which is
+     * the same machinery a player placing one block on open ground uses.
+     *
+     * Unloaded neighbours are SKIPPED rather than read. `skyCh.get` answers 15
+     * for a chunk it has no buffer for, which is the right default for the sky
+     * above the world and exactly the wrong one for a wall that has not
+     * arrived yet -- reading it would flood this chunk with light through
+     * terrain that is about to appear.
+     */
+    for (let d = 0; d < 6; d++) {
+      const [dx, dy, dz] = NEIGHBOURS[d]
+      if (!world._storage.getChunkByIndexes(ci + dx, cj + dy, ck + dz)) continue
+      const fx = dx > 0 ? ox + size : ox - 1
+      const fy = dy > 0 ? oy + size : oy - 1
+      const fz = dz > 0 ? oz + size : oz - 1
+      for (let a = 0; a < size; a++) {
+        for (let b = 0; b < size; b++) {
+          let x, y, z
+          if (dx !== 0) { x = fx; y = oy + a; z = oz + b }
+          else if (dy !== 0) { x = ox + a; y = fy; z = oz + b }
+          else { x = ox + a; y = oy + b; z = fz }
+          const inx = x - dx, iny = y - dy, inz = z - dz
+          const vin = skyCh.get(inx, iny, inz)
+          const vout = skyCh.get(x, y, z)
+          // d ^ 1 is the opposite direction: the pairs are (0,1), (2,3), (4,5).
+          if (!isOpaque(inx, iny, inz) && skyCh.give(vout, d ^ 1) > vin) skyCh.push(x, y, z)
+          if (!isOpaque(x, y, z) && skyCh.give(vin, d) > vout) skyCh.push(inx, iny, inz)
+          if (d === DOWN && vout > 0 && vout > skyCh.give(vin, DOWN)) skyCh.remove(x, y, z, vout)
+        }
+      }
+    }
+    skyCh.propagate()
+  }
+
+  let seedMs = 0
   world.on('chunkAdded', (chunk) => {
+    forgetChunkMemo()
+    const t0 = performance.now()
     seedChunk(chunk)
+    seedSky(chunk)
+    seedMs = performance.now() - t0
     // The chunk is about to be meshed by noa anyway; only its neighbours need
     // asking for.
     flushDirty(chunk)
   })
 
   world.on('chunkBeingRemoved', (requestID, voxels, userData) => {
+    forgetChunkMemo()
     // Nothing: the store is keyed by chunk index and the chunk will come back
     // with the same index. Dropping it would mean re-flooding on every chunk
     // reload, and 32KB per chunk is the price of not doing that.
@@ -496,27 +820,66 @@ export function installBlockLight(noa, { ids = {} } = {}) {
     if (here > 0) {
       // Whether the emitter went away or a wall went up, the light standing at
       // this voxel is now wrong and everything downstream of it with it.
-      removeLight(x, y, z, here)
+      blockCh.remove(x, y, z, here)
     }
     if (nowEmit) {
-      setLight(x, y, z, nowEmit)
-      push(x, y, z)
+      blockCh.set(x, y, z, nowEmit)
+      blockCh.push(x, y, z)
     } else if (!nowOpaque) {
       // A hole opened: the six neighbours may now shine through it.
       for (let d = 0; d < 6; d++) {
         const nx = x + NEIGHBOURS[d][0]
         const ny = y + NEIGHBOURS[d][1]
         const nz = z + NEIGHBOURS[d][2]
-        if (getLight(nx, ny, nz) > 1) push(nx, ny, nz)
+        if (getLight(nx, ny, nz) > 1) blockCh.push(nx, ny, nz)
       }
     }
-    if (!wasEmit && !nowEmit && wasOpaque === nowOpaque && here === 0) {
+
+    /*
+     * THE SKY HALF, AND IT IS THE HALF THAT MOVES A COLUMN.
+     *
+     * Only an OPACITY change can touch sky light -- a glowstone does not cast
+     * a shadow and swapping stone for dirt does not either -- which is why
+     * this whole block is under one condition and block light's is not.
+     *
+     * Placing: the voxel goes dark and `remove` follows the shadow down. The
+     * down-with-no-decay edge it walks is the same one the fill came in on, so
+     * a block dropped on open ground at y=136 takes the light out of every
+     * voxel under it to the world floor, not out of a 15-block radius. That IS
+     * the column recompute; there is no column loop.
+     *
+     * Mining: the six neighbours are offered through `give`, which is what
+     * makes the voxel above matter more than the other five. If it holds 15
+     * the new hole holds 15 too, and the fill runs on down the shaft it just
+     * opened -- so digging straight down keeps the bottom of the shaft as
+     * bright as the top, which is the rule a 40-block mineshaft is the test of.
+     */
+    let skyMoved = false
+    if (wasOpaque !== nowOpaque) {
+      const skyHere = getSky(x, y, z)
+      if (nowOpaque) {
+        if (skyHere > 0) { skyCh.remove(x, y, z, skyHere); skyMoved = true }
+      } else {
+        for (let d = 0; d < 6; d++) {
+          const nx = x + NEIGHBOURS[d][0]
+          const ny = y + NEIGHBOURS[d][1]
+          const nz = z + NEIGHBOURS[d][2]
+          if (skyCh.give(getSky(nx, ny, nz), d ^ 1) > skyHere) {
+            skyCh.push(nx, ny, nz)
+            skyMoved = true
+          }
+        }
+      }
+    }
+
+    if (!wasEmit && !nowEmit && wasOpaque === nowOpaque && here === 0 && !skyMoved) {
       // Nothing light-shaped happened.
       editMs = performance.now() - t0
       dirty.clear()
       return
     }
-    propagate()
+    blockCh.propagate()
+    skyCh.propagate()
     flushDirty(null)
     editMs = performance.now() - t0
   }
@@ -538,6 +901,49 @@ export function installBlockLight(noa, { ids = {} } = {}) {
     meshMs = performance.now() - t0
   }
 
+  /*
+   * A SECOND WRAP, DEFERRED ONE MICROTASK, AND IT IS A SAFETY NET RATHER THAN
+   * A FEATURE.
+   *
+   * `src/fluidGeometry.js` wraps `meshChunk` OUTSIDE this file's wrap and, on
+   * any mesh containing a fluid face, rebuilds position/normal/colour/UV and
+   * `texAtlasIndices` at a LARGER vertex count -- it splits merged fluid quads
+   * into unit cells. It does not know about `noaSkyLight`, so that attribute
+   * is left behind at the old, shorter length, and a vertex buffer shorter
+   * than the draw call reads off the end of it.
+   *
+   * The block-light lane survives this untouched because it rides in vertex
+   * ALPHA, which fluidGeometry interpolates along with the rest of the colour.
+   * The sky lane cannot, for the reason in the header: two interpolated
+   * numbers need two attributes.
+   *
+   * So this drops a stale sky attribute rather than letting it be read out of
+   * range. The cost is that water and lava surfaces render at full sky -- too
+   * bright in a cave, and wrong -- and the fix is one line in fluidGeometry's
+   * own readback, beside the `texAtlasIndices` it already carries. Reported
+   * rather than done here: that file belongs to another agent.
+   *
+   * The microtask is what puts this OUTSIDE fluidGeometry's wrap. Every
+   * install in main.js is synchronous, so a microtask queued during install
+   * runs after all of them and before the first animation frame -- which is
+   * the earliest a chunk can be meshed, since chunks need a worldDataNeeded
+   * round trip first. Rejected: wrapping again immediately, which would land
+   * INSIDE fluidGeometry and fix nothing.
+   */
+  queueMicrotask(() => {
+    const inner = mesher.meshChunk.bind(mesher)
+    mesher.meshChunk = function (chunk, ignoreMaterials) {
+      inner(chunk, ignoreMaterials)
+      for (const mesh of chunk._terrainMeshes) {
+        const sky = mesh.getVerticesData(SKY_ATTRIB)
+        if (!sky) continue
+        const pos = mesh.getVerticesData(VertexBuffer.PositionKind)
+        if (pos && sky.length === pos.length / 3) continue
+        mesh.removeVerticesData(SKY_ATTRIB)
+      }
+    }
+  })
+
   /**
    * Light at one terrain vertex, 0..15.
    *
@@ -551,7 +957,7 @@ export function installBlockLight(noa, { ids = {} } = {}) {
    * argument below: two quads meeting at an edge sample the shared lattice
    * points through this same function and therefore cannot disagree.
    */
-  function sampleLight(px, py, pz, nx, ny, nz) {
+  function sampleLight(get, px, py, pz, nx, ny, nz) {
     let sum = 0, count = 0
     for (let a = 0; a < 2; a++) {
       for (let b = 0; b < 2; b++) {
@@ -572,11 +978,14 @@ export function installBlockLight(noa, { ids = {} } = {}) {
           vy = Math.floor(py) - b
         }
         if (isOpaque(vx, vy, vz)) continue
-        sum += getLight(vx, vy, vz)
+        sum += get(vx, vy, vz)
         count++
       }
     }
-    return count ? sum / count : 0
+    // An all-opaque 2x2 samples nothing. Falling back to the channel's own
+    // default keeps a wholly-buried vertex at "no block light, full sky",
+    // which is the value every unreached vertex in the world already carries.
+    return count ? sum / count : (get === getSky ? MAX_LIGHT : 0)
   }
 
   /** Is any chunk overlapping this world-space box holding light. */
@@ -589,6 +998,50 @@ export function installBlockLight(noa, { ids = {} } = {}) {
       }
     }
     return false
+  }
+
+  /** Is any chunk overlapping this world-space box holding shadow. */
+  function boxIsShaded(x0, y0, z0, x1, y1, z1) {
+    for (let ci = cdiv(x0); ci <= cdiv(x1); ci++) {
+      for (let cj = cdiv(y0); cj <= cdiv(y1); cj++) {
+        for (let ck = cdiv(z0); ck <= cdiv(z1); ck++) {
+          if (chunkIsShaded(ci, cj, ck)) return true
+        }
+      }
+    }
+    return false
+  }
+
+  /**
+   * Does the sky channel vary anywhere in this box of voxels.
+   *
+   * THE REASON THIS EXISTS RATHER THAN JUST GOING STRAIGHT TO THE LATTICE.
+   * The per-chunk gate above is useless for sky on any chunk that contains
+   * both ground and air, which is every chunk anyone looks at. This is the
+   * finer sieve underneath it: one buffer read per voxel over the box the face
+   * can reach, against the lattice pass's four reads plus an average per
+   * corner per channel. It answers the outdoor case -- a 32x32 patch of ground
+   * under open sky, all 15 -- for about an eighth of the cost, and the outdoor
+   * case is nearly all of them.
+   *
+   * Opaque voxels are skipped because sampleLight skips them too; counting a
+   * wall's stored 0 as variation would split every quad that touches ground.
+   */
+  function boxSkyValue(x0, y0, z0, x1, y1, z1) {
+    let seen = -1
+    for (let x = x0; x <= x1; x++) {
+      for (let y = y0; y <= y1; y++) {
+        for (let z = z0; z <= z1; z++) {
+          if (isOpaque(x, y, z)) continue
+          const v = getSky(x, y, z)
+          if (seen < 0) seen = v
+          else if (v !== seen) return -1
+        }
+      }
+    }
+    // Nothing transparent in the box at all: the face is buried, and a buried
+    // vertex takes the channel default like every unreached vertex does.
+    return seen < 0 ? MAX_LIGHT : seen
   }
 
   /*
@@ -695,6 +1148,7 @@ export function installBlockLight(noa, { ids = {} } = {}) {
       for (let b = -1; b <= 1 && !near; b++) {
         for (let c = -1; c <= 1 && !near; c++) {
           if (chunkIsLit(ci + a, cj + b, ck + c)) near = true
+          if (chunkIsShaded(ci + a, cj + b, ck + c)) near = true
         }
       }
     }
@@ -730,32 +1184,89 @@ export function installBlockLight(noa, { ids = {} } = {}) {
       // Cheap reject before the grid: the box of voxels this face can possibly
       // sample. Conservative by one block on the low side of every axis, which
       // is what the `- a` / `- b` in sampleLight reaches back for.
-      if (!boxIsLit(
-        ox + x0 - 1, oy + y0 - 1, oz + z0 - 1,
-        ox + x0 + ux + vx, oy + y0 + uy + vy, oz + z0 + uz + vz)) continue
+      const bx0 = ox + x0 - 1, by0 = oy + y0 - 1, bz0 = oz + z0 - 1
+      const bx1 = ox + x0 + ux + vx, by1 = oy + y0 + uy + vy, bz1 = oz + z0 + uz + vz
+      const lit = boxIsLit(bx0, by0, bz0, bx1, by1, bz1)
+      /*
+       * Two sieves for the sky channel, coarse then fine. The chunk-level one
+       * is nearly free and answers "is there shadow anywhere near"; it is also
+       * nearly useless on a surface chunk, which is half ground and half air.
+       * The voxel-level one behind it is what actually carries the outdoor
+       * case, where the answer is "every voxel this face can see holds 15".
+       */
+      const skyU = boxIsShaded(bx0, by0, bz0, bx1, by1, bz1)
+        ? boxSkyValue(bx0, by0, bz0, bx1, by1, bz1) : MAX_LIGHT
+      // MAX_LIGHT here means "uniformly open", which is the attribute's own
+      // default -- nothing to write. Any other uniform value still has to be
+      // written; it just does not have to be SAMPLED, so `skyU >= 0` skips the
+      // lattice pass for the sky channel and keeps the number it already has.
+      const shaded = skyU !== MAX_LIGHT
+      if (!lit && !shaded) continue
 
       const nx = norm[p], ny = norm[p + 1], nz = norm[p + 2]
       const g = new Float32Array((w + 1) * (h + 1))
-      // The lit lattice points' bounding box, in lattice indices.
-      let A0 = w + 1, A1 = -1, B0 = h + 1, B1 = -1
+      const gs = new Float32Array((w + 1) * (h + 1))
       for (let b = 0; b <= h; b++) {
         const t = b / h
         for (let a = 0; a <= w; a++) {
           const sPar = a / w
-          const l = sampleLight(
-            ox + x0 + ux * sPar + vx * t,
-            oy + y0 + uy * sPar + vy * t,
-            oz + z0 + uz * sPar + vz * t, nx, ny, nz)
-          g[b * (w + 1) + a] = l
-          if (l > 0) {
-            if (a < A0) A0 = a
-            if (a > A1) A1 = a
-            if (b < B0) B0 = b
-            if (b > B1) B1 = b
-          }
+          const wx = ox + x0 + ux * sPar + vx * t
+          const wy = oy + y0 + uy * sPar + vy * t
+          const wz = oz + z0 + uz * sPar + vz * t
+          g[b * (w + 1) + a] = lit ? sampleLight(getLight, wx, wy, wz, nx, ny, nz) : 0
+          gs[b * (w + 1) + a] = skyU >= 0
+            ? skyU : sampleLight(getSky, wx, wy, wz, nx, ny, nz)
         }
       }
-      if (A1 < 0) continue // nothing on this quad is lit after all
+      /*
+       * WHICH CELLS GET SPLIT -- and this is the criterion re-derived, because
+       * the one it replaces does not survive a second channel.
+       *
+       * IT USED TO SAY "LIT". The bounding box of lattice points holding any
+       * light at all, widened by one cell, split into unit sub-quads. That is
+       * correct for block light and catastrophic for sky light: outdoors every
+       * open surface in the world reads 15, so "lit" is the entire visible
+       * world and greedy meshing is undone everywhere. Not a local cost -- a
+       * vertex-count explosion across every chunk you can see.
+       *
+       * IT NOW SAYS "VARIES". A quad whose lattice values are all the same
+       * interpolates to that value everywhere, which is not an approximation
+       * of the right answer, it IS the right answer, and it is the common case
+       * outdoors. What needs splitting is light that CHANGES across the quad.
+       * So a lattice CELL is `flat` when its four corners agree in BOTH
+       * channels, and the split region is the bounding box of the cells that
+       * are not.
+       *
+       * THE WIDENING IS GONE, AND ITS GUARANTEE IS NOT. The old rule needed
+       * `A0 - 1` to make the split region's outer ring provably zero. Cells
+       * are a stronger statement than points: a cell outside the non-flat box
+       * is flat by definition, two flat cells sharing an edge share two
+       * corners and therefore share a value, and a rectangle of flat cells is
+       * connected -- so every remainder quad below is UNIFORM, not merely
+       * dark. Uniform is what the T-junction argument actually needed. Its
+       * neighbour across the seam samples the same lattice points through the
+       * same `sampleLight` and reads the same constant, and a merged quad
+       * interpolating a constant to itself has nothing to disagree about.
+       *
+       * And on block light alone the two rules coincide exactly: outside a
+       * lit disc every corner is 0, the first non-flat cell column is the one
+       * straddling the boundary at A0-1, and the last is A1. Same box, same
+       * vertices, same picture -- which is why 58's numbers did not move.
+       */
+      let A0 = w, A1 = -1, B0 = h, B1 = -1
+      const row = w + 1
+      for (let b = 0; b < h; b++) {
+        for (let a = 0; a < w; a++) {
+          const i0 = b * row + a
+          const l = g[i0], k = gs[i0]
+          if (g[i0 + 1] === l && g[i0 + row] === l && g[i0 + row + 1] === l
+            && gs[i0 + 1] === k && gs[i0 + row] === k && gs[i0 + row + 1] === k) continue
+          if (a < A0) A0 = a
+          if (a > A1) A1 = a
+          if (b < B0) B0 = b
+          if (b > B1) B1 = b
+        }
+      }
       /*
        * WHICH CELLS GET SPLIT, and the -1 is the whole T-junction argument.
        *
@@ -772,10 +1283,12 @@ export function installBlockLight(noa, { ids = {} } = {}) {
        * is roughly a 4x difference in vertices in the superflat case, and the
        * difference between sky light being affordable and not.
        */
-      const cA0 = Math.max(0, A0 - 1), cA1 = Math.min(w - 1, A1)
-      const cB0 = Math.max(0, B0 - 1), cB1 = Math.min(h - 1, B1)
-      const split = (cA1 - cA0 + 1) * (cB1 - cB0 + 1) > 1
-      grids[f] = { w, h, g, cA0, cA1, cB0, cB1, split }
+      const cA0 = A0, cA1 = A1, cB0 = B0, cB1 = B1
+      // A1 < 0 means no cell varies: the whole quad is one value and the four
+      // corners already say so. Still recorded, because those four corners
+      // have to be WRITTEN -- "uniform" is not "unchanged".
+      const split = A1 >= 0 && (cA1 - cA0 + 1) * (cB1 - cB0 + 1) > 1
+      grids[f] = { w, h, g, gs, cA0, cA1, cB0, cB1, split }
       if (split) anySplit = true
     }
 
@@ -792,6 +1305,14 @@ export function installBlockLight(noa, { ids = {} } = {}) {
      * a silent no-op on some backends. Rebuilding provably lands.
      */
     if (!anySplit) {
+      /*
+       * Zero-filled, which IS full sky, because the value is stored inverted.
+       * So a quad this loop skips needs no writing at all, and a mesh where
+       * every quad is skipped never allocates the attribute -- that is what
+       * `anySky` below decides.
+       */
+      const sky = new Float32Array(pos.length / 3)
+      let anySky = false
       for (let f = 0; f < nq; f++) {
         const q = grids[f]
         if (!q) continue
@@ -799,10 +1320,15 @@ export function installBlockLight(noa, { ids = {} } = {}) {
           // Lattice order round the quad: v0 (0,0), v1 (1,0), v2 (1,1), v3 (0,1).
           const a = (c === 1 || c === 2) ? q.w : 0
           const b = (c === 2 || c === 3) ? q.h : 0
-          col[(f * 4 + c) * 4 + 3] = 1 - q.g[b * (q.w + 1) + a] / MAX_LIGHT
+          const at = b * (q.w + 1) + a
+          col[(f * 4 + c) * 4 + 3] = 1 - q.g[at] / MAX_LIGHT
+          const sd = 1 - q.gs[at] / MAX_LIGHT
+          sky[f * 4 + c] = sd
+          if (sd > 0) anySky = true
         }
       }
       mesh.setVerticesData(VertexBuffer.ColorKind, col, false, 4)
+      if (anySky) mesh.setVerticesData(SKY_ATTRIB, sky, false, 1)
       return
     }
 
@@ -819,6 +1345,8 @@ export function installBlockLight(noa, { ids = {} } = {}) {
      */
     const outPos = [], outNorm = [], outCol = [], outUV = [], outIdx = []
     const outAtlas = atlas ? [] : null
+    const outSky = []
+    let anySky = false
     let vcount = 0
 
     for (let f = 0; f < nq; f++) {
@@ -844,13 +1372,16 @@ export function installBlockLight(noa, { ids = {} } = {}) {
             q ? 1 - q.g[b * (q.w + 1) + a] / MAX_LIGHT : col[src * 4 + 3])
           outUV.push(uv[src * 2], uv[src * 2 + 1])
           if (outAtlas) outAtlas.push(atlas[src])
+          const sd = q ? 1 - q.gs[b * (q.w + 1) + a] / MAX_LIGHT : 0
+          outSky.push(sd)
+          if (sd > 0) anySky = true
         }
         for (let i = 0; i < 6; i++) outIdx.push(vcount + pat[i])
         vcount += 4
         continue
       }
 
-      const { w, h, g, cA0, cA1, cB0, cB1 } = q
+      const { w, h, g, gs, cA0, cA1, cB0, cB1 } = q
       const x0 = pos[p], y0 = pos[p + 1], z0 = pos[p + 2]
       const ux = pos[p + 3] - x0, uy = pos[p + 4] - y0, uz = pos[p + 5] - z0
       const vx = pos[p + 9] - x0, vy = pos[p + 10] - y0, vz = pos[p + 11] - z0
@@ -887,6 +1418,9 @@ export function installBlockLight(noa, { ids = {} } = {}) {
               tw[3] * col[(f * 4 + 3) * 4 + e])
           }
           outCol.push(1 - g[bs[c] * (w + 1) + as[c]] / MAX_LIGHT)
+          const sd = 1 - gs[bs[c] * (w + 1) + as[c]] / MAX_LIGHT
+          outSky.push(sd)
+          if (sd > 0) anySky = true
         }
         for (let i = 0; i < 6; i++) outIdx.push(vcount + pat[i])
         vcount += 4
@@ -922,8 +1456,9 @@ export function installBlockLight(noa, { ids = {} } = {}) {
     vdat.uvs = new Float32Array(outUV)
     vdat.indices = vcount > 65535 ? new Uint32Array(outIdx) : new Uint16Array(outIdx)
     vdat.applyToMesh(mesh)
-    // Not a standard VertexBuffer kind, so applyToMesh does not carry it.
+    // Not standard VertexBuffer kinds, so applyToMesh does not carry them.
     if (outAtlas) mesh.setVerticesData('texAtlasIndices', new Float32Array(outAtlas), false, 1)
+    if (anySky) mesh.setVerticesData(SKY_ATTRIB, new Float32Array(outSky), false, 1)
   }
 
   /* -------------------------------------------------------------- *
@@ -933,12 +1468,18 @@ export function installBlockLight(noa, { ids = {} } = {}) {
   const api = {
     /** Block light level 0..15 at a voxel. What F3's "Client Light" wants. */
     getBlockLight: (x, y, z) => getLight(Math.floor(x), Math.floor(y), Math.floor(z)),
+    /** Sky light level 0..15 at a voxel, BEFORE the day/night multiplier. 15
+     *  under open sky at midnight as well as at noon -- the clock is applied
+     *  by whoever renders it, never stored. */
+    getSkyLight: (x, y, z) => getSky(Math.floor(x), Math.floor(y), Math.floor(z)),
     /** Emission level of a block id, 0 if it does not glow. */
     emissionOf: (id) => emissionById[id] || 0,
     /** ms spent in the last block edit's propagation. For the perf spec. */
     lastEditMs: () => editMs,
     /** ms spent rewriting vertex light on the last chunk meshed. */
     lastMeshMs: () => meshMs,
+    /** ms spent flooding BOTH channels into the last chunk that arrived. */
+    lastSeedMs: () => seedMs,
     /** Number of chunks currently holding light data. */
     chunkCount: () => store.size,
     EMISSION,
