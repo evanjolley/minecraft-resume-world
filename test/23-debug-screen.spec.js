@@ -292,12 +292,19 @@ test.describe('F3 debug screen', () => {
    * These are the trims, pinned so that nobody "helpfully" adds a line back
    * with a fabricated value. Biome in particular: the terrain asset carries no
    * per-column biome data, so a Biome line could only ever be a guess.
+   *
+   * `Client Light` LEFT THIS LIST on 2026-09-16 and it is worth saying why,
+   * because it is the only entry that has ever come off it. It was here
+   * because there was no light engine and the number would have been invented;
+   * src/blockLight.js means it is now measured, and the Client Light tests at
+   * the foot of this file assert it against the engine's own answer. Server
+   * Light stays, because both of its halves would still be invented.
    */
   test('no line is fabricated for data this world does not have', async ({ page }) => {
     await press(page, 'F3')
     const { left, right } = await lines(page)
     const all = [...left, ...right].join('\n')
-    for (const absent of ['Biome:', 'Client Light', 'Server Light', 'Local Difficulty', 'Java:', 'Day #']) {
+    for (const absent of ['Biome:', 'Server Light', 'Local Difficulty', 'Java:', 'Day #']) {
       expect(all).not.toContain(absent)
     }
     // And nothing is a stub.
@@ -441,4 +448,87 @@ test.describe('F3 debug screen', () => {
     await waitTicks(page, 10)
     await shot(page, 'debug-screen-borders')
   })
+})
+
+/* ------------------------------------------------------------------ *
+ * Client Light
+ * ------------------------------------------------------------------ */
+
+/*
+ * The line that was absent because there was nothing to put in it.
+ *
+ * debugScreen.js's "WHAT IS CUT, AND WHY" block listed Client/Server Light
+ * under "noa has no light engine at all", and src/blockLight.js made that
+ * false. These tests are the other half of that correction.
+ *
+ * TWO THINGS THEY DELIBERATELY DO NOT CLAIM. There is no sky light in this
+ * engine, so the sky slot is a dash and the combined value is the block level
+ * -- a LOWER BOUND on what vanilla prints at the same spot. And there is no
+ * Server Light line to test, because both of its halves would be invented.
+ *
+ * GLOWSTONE is duplicated from blocks.js for the reason helpers/world.js
+ * gives for duplicating the block ids it duplicates.
+ */
+const GLOWSTONE = 129
+
+test.describe('F3 Client Light', () => {
+  test('the line reads vanilla\'s shape, with a dash where sky light would be',
+    async ({ page }) => {
+      const { left } = await lines(page)
+      const light = left.find(l => l.startsWith('Client Light: '))
+      /*
+       * Vanilla: `Client Light: 15 (15 sky, 0 block)`. The regex pins the
+       * punctuation, the word order and the dash -- a line that merely
+       * contained the right number in some layout of someone's invention
+       * would pass a `toContain` and fail this.
+       */
+      expect(light, 'no Client Light line on the debug screen')
+        .toMatch(/^Client Light: \d+ \(- sky, \d+ block\)$/)
+      // And the two numbers are the same number, which is what "no sky light"
+      // means arithmetically.
+      const [, combined, block] = light.match(/^Client Light: (\d+) \(- sky, (\d+) block\)$/)
+      expect(combined).toBe(block)
+    })
+
+  test('Server Light is not drawn, because every character of it would be'
+    + ' invented', async ({ page }) => {
+    const { left, right } = await lines(page)
+    expect([...left, ...right].join('\n')).not.toContain('Server Light')
+  })
+
+  test('it is the engine\'s own number, at the block the player is standing in',
+    async ({ page, terrain }) => {
+      /*
+       * THE ASSERTION THAT MAKES THIS WORTH HAVING. "There is a number on the
+       * screen" passes against a hardcoded 0, and against a number read at
+       * the wrong coordinates. So: place a glowstone next to the player, and
+       * require the line to agree with window.blockLight.getBlockLight at the
+       * player's own block -- and to have MOVED, so a constant cannot pass.
+       */
+      const before = await sample(page)
+      expect(before.light, 'sample() has no light field at all').not.toBeNull()
+      expect(before.light.sky, 'a sky light number appeared from somewhere')
+        .toBeNull()
+
+      const [bx, by, bz] = before.block
+      await terrain.keep([bx - 1, by - 1, bz - 1], [bx + 1, by + 1, bz + 1])
+      expect(before.light.block, 'the player was already standing in light')
+        .toBe(0)
+
+      await page.evaluate(([i, x, y, z]) => window.noa.setBlock(i, x, y, z),
+        [GLOWSTONE, bx + 1, by, bz])
+      await waitTicks(page, 3)
+
+      const after = await sample(page)
+      const engine = await page.evaluate(([x, y, z]) =>
+        window.blockLight.getBlockLight(x, y, z), [bx, by, bz])
+      expect(after.light.block,
+        `F3 says ${after.light.block}, the engine says ${engine}`).toBe(engine)
+      expect(after.light.block, 'the glowstone did not move the number')
+        .toBeGreaterThan(before.light.block)
+
+      const { left } = await lines(page)
+      expect(left.find(l => l.startsWith('Client Light: ')))
+        .toBe(`Client Light: ${engine} (- sky, ${engine} block)`)
+    })
 })

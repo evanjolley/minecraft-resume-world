@@ -43,14 +43,12 @@ import { FONT_PX, px } from './hud.js'
  *   Biome                  the terrain asset has no per-column biome data. The
  *                          one genuine gap rather than a genuine absence -- see
  *                          the note on BIOME below.
- *   Client/Server Light    STALE REASON, kept because the lines are still
- *                          absent: this said noa has no light engine at all.
- *                          It does now -- src/blockLight.js -- and
- *                          window.blockLight.getBlockLight(x,y,z) is exactly
- *                          the number Client Light wants. What is missing is
- *                          sky light, so Server Light has no source yet.
- *                          Wiring the block half is a small job nobody has
- *                          done; see docs/FUTURE.md.
+ *   Server Light           BUILT, in part -- Client Light is now drawn, see
+ *                          the note on LIGHT below. Server Light is not, and
+ *                          for two independent reasons rather than one: there
+ *                          is no server, and its whole content is a (sky,
+ *                          block) pair of which the sky half does not exist.
+ *                          Every character of the line would be invented.
  *   CH / SH heightmaps     server-side acceleration structures. No server, and
  *                          island.js answers a column by scanning it.
  *   Local Difficulty       no difficulty system, no regional difficulty.
@@ -113,6 +111,39 @@ import { FONT_PX, px } from './hud.js'
  * pipeline is verified voxel-for-voxel (4,096,000 checks) and two other
  * systems read its output; re-running it for one cosmetic line is not this
  * change's call to make.
+ */
+
+/*
+ * LIGHT, and how much of vanilla's line is real.
+ *
+ * Vanilla prints `Client Light: 15 (15 sky, 0 block)` -- a combined level
+ * followed by the two channels it was taken from. Both halves are drawn here
+ * and only one of them is true:
+ *
+ *   block   REAL. window.blockLight.getBlockLight(x, y, z), which is the
+ *           number that function was written to answer. Stand on a glowstone
+ *           and it reads 14; walk away and it falls one per block.
+ *
+ *   sky     PRINTED AS `-`, NOT AS A NUMBER. Sky light does not exist in this
+ *           engine (blockLight.js says so at length), so there is no value to
+ *           put there and a `0` would be a lie in the one place on this screen
+ *           where people read numbers off. `15` would be a bigger one.
+ *
+ * Which makes the combined value the block level, and a LOWER BOUND on what
+ * vanilla would print at the same spot rather than the same number. That is
+ * the honest reading of a max with one term missing, and it is why the `-` is
+ * in the line rather than the line being cut: a reader who sees `- sky` knows
+ * exactly which half they are looking at.
+ *
+ * WHERE IT SITS: vanilla puts these lines between the CH/SH heightmaps and
+ * Local Difficulty. Both of those are cut here, along with Biome, so the line
+ * lands at the foot of the block that survived rather than in the middle of a
+ * gap that no longer exists.
+ *
+ * The line is OMITTED ENTIRELY if window.blockLight is absent -- the same
+ * shape as MEMORY below. main.js installs the engine long before this screen
+ * can be opened, so that path is for a build that dropped blockLight.js, and
+ * for it the honest output is no line at all.
  */
 
 /*
@@ -445,6 +476,9 @@ export function installDebugScreen(noa, deps = {}) {
       region: [cx >> 5, cz >> 5],
       regionChunk: [cx & (REGION - 1), cz & (REGION - 1)],
       sectionRelative: [bx & (CHUNK - 1), by & (CHUNK - 1), bz & (CHUNK - 1)],
+      // One Map lookup, on the same 30Hz tick as everything else on this
+      // screen and only while it is open. See the LIGHT note above.
+      light: readLight(bx, by, bz),
       facing: facing.name,
       towards: facing.towards,
       yaw,
@@ -497,6 +531,20 @@ export function installDebugScreen(noa, deps = {}) {
     }
   }
 
+  /**
+   * Block light where the player is standing, or null if there is no engine.
+   *
+   * `sky` is null rather than 0 on purpose, and the renderer prints it as
+   * `-`. The field exists at all rather than being left out so that the day
+   * sky light lands is one assignment here and no change anywhere else --
+   * the formatting below is already written for a number.
+   */
+  function readLight(x, y, z) {
+    const engine = typeof window !== 'undefined' ? window.blockLight : null
+    if (!engine) return null
+    return { block: engine.getBlockLight(x, y, z), sky: null }
+  }
+
   /* ---- the lines ---- */
 
   const f3 = (n, d) => n.toFixed(d)
@@ -528,6 +576,13 @@ export function installDebugScreen(noa, deps = {}) {
       // Vanilla zero-pads these to two digits.
       `Section-relative: ${s.sectionRelative.map(n => String(n).padStart(2, '0')).join(' ')}`,
     )
+    if (s.light) {
+      // Vanilla's exact shape: `Client Light: 15 (15 sky, 0 block)`. The sky
+      // slot is a dash because there is no sky light to put in it, which
+      // makes the combined value the block level. See LIGHT at the top.
+      const sky = s.light.sky === null ? '-' : s.light.sky
+      lines.push(`Client Light: ${s.light.block} (${sky} sky, ${s.light.block} block)`)
+    }
     return lines
   }
 

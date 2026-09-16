@@ -481,8 +481,13 @@ affordance.** Worth triaging together rather than one at a time:
   block half: glowstone lights the world and 3 is unblocked. The other two
   symptoms did NOT fall with it, and it is worth being exact about why, because
   the prediction that one feature covered all four was only half right.
-  `src/entityLight.js` has the engine available and has simply not been wired
-  to it, which is a small job. The F3 lines are the same small job. What is
+  **BOTH WIRED, 2026-09-16** (`27d29de` and the commit that follows it), and
+  the "small job" costing was right. `src/entityLight.js` reads
+  `getBlockLight` at the entity's feet and `max`es it with the daylight term,
+  so a glowstone now lights the player and Evan the NPC where before a man in
+  a pitch-dark cave was lit as if he were outdoors; F3 draws `Client Light`
+  off the same call. Neither was a missing feature by the time it was done —
+  each was a call nobody had made. What is
   genuinely still missing is **sky light** — the reason a cave is still lit as
   if the roof were not there — and that is a second channel through a pipe that
   is now laid rather than a new feature. See 5a and 5b under report 5.
