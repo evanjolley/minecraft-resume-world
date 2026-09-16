@@ -69,16 +69,18 @@ today — correctly, under instruction — ran only targeted specs, and the two
 cheapest specs in the repo happen to be the ones that catch "the game does not
 render."
 
-**Recommendation, and I think it is the single highest-value process change
-available:** add a `smoke` script and require it before every commit.
+**FIXED, partly.** `npm run smoke` now exists (`package.json`) and runs exactly
+those two files on chromium: **13 tests, 8.1 seconds.** No new framework, no new
+assertion, no new file — it just makes an existing guard cheap enough to have no
+excuse.
 
-```json
-"smoke": "playwright test -c test/playwright.config.js test/01-world.spec.js test/43-browsers.spec.js --project=chromium"
-```
-
-No new framework, no new assertion, no new file. It makes an existing guard
-un-skippable. I did not add it myself because it changes the committing
-workflow and that is the owner's call.
+What I did **not** do is require it. Wiring it into a pre-commit hook or into
+`CLAUDE.md`'s instructions to agents changes the committing workflow, and that
+is the owner's call. My recommendation is that every agent brief in this repo
+should end with "run `npm run smoke` before you commit" — today's briefs
+correctly said *don't run the full suite*, and the gap between "don't run 2
+hours of tests" and "run 8 seconds of tests" is where an invisible world lived
+for three commits.
 
 **Caveat I want to be honest about:** I confirmed this fix headlessly under
 SwiftShader and by screenshot. The report was from a real GPU. The failure
@@ -228,18 +230,28 @@ asserting literals.
 
 ---
 
-## 4. The undocumented three-way meshChunk contract — **still undocumented**
+## 4. FIXED — the three-way meshChunk contract is written down (`64c8828`)
 
 `src/blockLight.js` and `src/fluidGeometry.js` both wrap noa's `meshChunk`, they
-stack, **order matters**, and all three depend on noa's 4-vertices/6-indices
-per quad layout (`pos.length / 12`, `idx[f*6+i] - f*4`). The quad-split agent
-gave up vertex sharing — a third cheaper — specifically to preserve this.
+stack, **order matters**, and all of them decode noa's 4-vertices/6-indices per
+quad layout with the same two lines — `pos.length / 12` and `idx[f*6+i] - f*4`,
+written independently twice (`fluidGeometry.js:382,412`,
+`blockLight.js:1387,1586`). The quad splitter gave up vertex sharing — about a
+third cheaper — specifically to preserve this, and an earlier version of it
+would have silently fed `fluidGeometry` garbage. Decoded wrong, not crashed.
 
-This is written down nowhere. The brief called it "the single highest-value
-documentation act available" and **I did not get to it**, because the render
-regression took the budget. It is the first thing I would do with another
-hour. It wants a short section in `docs/lighting.md` that all three files point
-at with a one-line docblock.
+Now `docs/lighting.md` §9: the stack order as a table, where each layer is
+installed and why `main.js:191`'s *position* is load-bearing (each wrap captures
+whatever `meshChunk` is at install time, so the install order **is** the nesting
+order), the layout invariant, why vertex sharing is refused, and five rules for
+adding a layer. The three wrap sites and the `main.js` install line all point
+at it.
+
+Rule 5 in that list is the §0 trap, generalised: never let Babylon write a
+uniform declaration for you. Both routes that offer to — `getUniforms().ubo`
+with size/type, and `getUniforms().fragment` — inject at tokens Babylon 6's
+shaders do not contain, and both fail silently. That is now written down in the
+place someone will be standing when they are about to do it again.
 
 ---
 
@@ -381,7 +393,6 @@ lines. One exception worth a guard: `src/terrainAnimation.js:347` calls the
 
 Stated plainly rather than papered over. All from the original brief:
 
-- The **meshChunk contract doc** (§4). The one I most regret.
 - **Sky light depends on build order** — sealed room reads sky 8 instead of 0
   when something is built 16 blocks away afterwards. Not reproduced.
 - **~37% dimming at altitude** (y=240 photographs 0.2925 vs ground at noon),
