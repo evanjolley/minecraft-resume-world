@@ -271,13 +271,36 @@ test.describe('spectator', () => {
     await waitTicks(page, 3)
 
     const [x, y, z] = await position(page)
-    expect(y, `stopped at y=${y.toFixed(2)}`).toBeLessThan(SURFACE_Y - 2)
+    const [cx, cz] = [Math.floor(x), Math.floor(z)]
 
-    // The honest assertion: the player is INSIDE a solid voxel. Falling to a
-    // low y through a hole would satisfy the check above; this cannot be.
-    const inside = await getBlock(page, Math.floor(x), Math.floor(y), Math.floor(z))
-    expect(inside, 'the spectator ended up in air, not inside the island')
-      .not.toBe(ID.air)
+    /*
+     * THE HONEST ASSERTION: he is UNDER a stack of solid blocks that he did
+     * not tunnel through. Falling to a low y through a hole would satisfy a
+     * height check alone; this cannot be, because the column he came down is
+     * read back here and every block of it is solid.
+     *
+     * It used to read "the player is INSIDE a solid voxel", which was the
+     * same claim made against a world that was deep enough to be inside of.
+     * The Overworld is Classic Flat now -- bedrock, two dirt, a grass block,
+     * four blocks thick -- so 1.5 s of descent goes clean past the bottom of
+     * it and ends in open air under the world, and the spec failed while
+     * spectator went on working exactly as before. What was stale was the
+     * assumption about the terrain, not the thing being tested, so what
+     * changed is the assumption.
+     *
+     * Rejected: descending for a shorter time so that he stops inside the
+     * four layers. It would pass today and it aims a 1.5-second flight at a
+     * two-block window -- one change to the flight speed, or one more layer
+     * in the preset, and it is stale again in the same way. This version
+     * asks what spectator actually promises (solid blocks do not stop you)
+     * and reads the world rather than assuming it, so it holds on a flat
+     * world and on a thick one.
+     */
+    for (let yy = SURFACE_Y - 4; yy < SURFACE_Y; yy++) {
+      expect(await getBlock(page, cx, yy, cz), `nothing solid at y=${yy} to fly through`)
+        .not.toBe(ID.air)
+    }
+    expect(y, `stopped at y=${y.toFixed(2)}`).toBeLessThan(SURFACE_Y - 4)
   })
 
   test('the player model is not drawn', async ({ page }) => {
