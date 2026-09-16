@@ -1,6 +1,7 @@
 import {
   advanceStride, attachCape, createPlayerModel, createSkinMaterial, poseModel,
 } from './playerModel.js'
+import { bindEntityLight } from './entityLight.js'
 import { createNametag } from './nametag.js'
 import { createAgentSession, createToolRegistry } from './agent.js'
 import { MC } from './physics.js'
@@ -318,6 +319,14 @@ export function installNPC(noa, {
    *  read the `position` argument reads this -- it is the same array noa keeps
    *  up to date, so a caller holding it sees him walk. */
   const at = () => noa.ents.getPosition(entity)
+  /*
+   * Block light follows HIM, not the player. createSkinMaterial defaults the
+   * probe to the player's feet because that is right for the three materials
+   * the player wears; this is the one caller for whom it is not. Done here
+   * rather than at construction because the material is built before the
+   * entity exists -- see bindEntityLight.
+   */
+  bindEntityLight(material, at)
 
   /** The column he was dropped into, kept so a test (or a lost NPC) can be
    *  put back without re-deriving the ground scan in main.js. */

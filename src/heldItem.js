@@ -155,7 +155,7 @@ export function createItemMesh(noa, name) {
    * has to dim at dusk along with the hand holding it. This was the same flat
    * 0.45 the skin had, and had the same bug; entityLight.js owns it now.
    */
-  trackEntityLight(mat)
+  trackEntityLight(mat, () => noa.ents.getPosition(noa.playerEntity))
   mesh.material = mat
   mesh.isPickable = false
   mesh.rotationQuaternion = new Quaternion()

@@ -226,7 +226,14 @@ export function createSkinMaterial(noa, url, name = 'skin', onError = null) {
    * Minecraft's own entity shader does (its floor is a fraction of the light
    * level, never a constant). Read the comment there before touching this.
    */
-  trackEntityLight(mat)
+  /*
+   * The probe is the PLAYER's feet, which is right for the player model, the
+   * first-person arm and the held item -- all three share this material. An
+   * NPC goes through this same function and would be lit by the player's
+   * position, which is wrong and is why npc.js rebinds the probe to his own
+   * entity the moment there is one (entityLight.js's bindEntityLight).
+   */
+  trackEntityLight(mat, () => noa.ents.getPosition(noa.playerEntity))
   return mat
 }
 
