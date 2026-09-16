@@ -4,6 +4,8 @@ import {
 import { createNametag } from './nametag.js'
 import { createAgentSession, createToolRegistry } from './agent.js'
 import { MC } from './physics.js'
+import { spawnFor, currentDimension, getVoxelID } from './island.js'
+import { BLOCK_TYPES } from './blocks.js'
 
 /*
  * A CHARACTER IN THE WORLD THAT ISN'T YOU.
@@ -50,6 +52,36 @@ const GREET_RADIUS = 3.5
  */
 const LEAVE_RADIUS = 7
 
+/*
+ * HOW TALL A CHARACTER IS, as a multiple of the player's 1.8.
+ *
+ * Minecraft's player box is 1.8 blocks and the game's own scale treats that
+ * as a six-foot person -- the model is 32 model units at the 0.9375 renderer
+ * scale, and every door, ceiling and two-block gap in the game is built
+ * against it. Evan is 6'2", so the multiplier is not picked, it is 74 inches
+ * over 72: 1.0277..., which puts him at 1.85 blocks.
+ *
+ * That is deliberately a SMALL number. Two blocks would be 6'8" and reads as
+ * a giant standing next to you; anything under about 1.83 is inside the
+ * noise of the walk bob and you cannot see it at all. 1.85 is the band where
+ * you notice he is looking slightly down at you and nothing else changes.
+ *
+ * NOT IN physics.js, and that is the point. MC.PLAYER_HEIGHT is a fact about
+ * MINECRAFT and is calibrated -- the jump apex, the sneak eye drop and the
+ * one-block step are all measured against it, and the player must stay 1.8.
+ * This is a fact about a CHARACTER IN THIS WORLD, so it lives with the
+ * characters and is expressed as a ratio, which is what keeps the two from
+ * drifting if Minecraft's number ever moved.
+ *
+ * Rejected: scaling only Y, which gets the height for free and gives him a
+ * stretched head. Everything below scales UNIFORMLY -- he is 2.8% taller and
+ * 2.8% broader, which is what a taller person is.
+ */
+export const NPC_HEIGHT_SCALE = 74 / 72
+
+/** ...and what that is in blocks. 1.85. */
+export const NPC_HEIGHT = MC.PLAYER_HEIGHT * NPC_HEIGHT_SCALE
+
 /** Minecraft lets the head lead the body by ~50 degrees. Same rule as perspective.js. */
 const MAX_HEAD_TURN = (50 * Math.PI) / 180
 
@@ -64,6 +96,46 @@ const MAX_HEAD_TURN = (50 * Math.PI) / 180
  * thing and makes his arrival a twenty-block plummet nobody asked for.
  */
 const SPAWN_DROP = 2.5
+
+/*
+ * LEAVES ARE NOT A FLOOR, restated here because he can now be put down in a
+ * world main.js never scanned.
+ *
+ * Same blind spot main.js writes up for the boot placement and
+ * scripts/build-terrain.mjs writes up for pickSpawn: the first solid block
+ * from the top of a forested column is a leaf, so "highest solid" stands him
+ * twenty blocks up in a canopy. main.js reads its ids off registerBlocks's
+ * return value; BLOCK_TYPES carries the same ids and is importable without a
+ * second registration, which is how dimensions.js gets obsidian's.
+ */
+const LEAF_IDS = new Set(
+  BLOCK_TYPES.filter(b => b.key?.endsWith('_leaves')).map(b => b.id))
+
+/*
+ * The key -> id table getVoxelID wants, built once from the same rows
+ * registerBlocks assigns from.
+ *
+ * NOT the object main.js holds. getVoxelID caches its palette translation
+ * against the IDENTITY of whatever it was last handed, so a second object
+ * makes it rebuild -- a `patch.palette.forEach` over a few dozen entries,
+ * twice a tick in the only window this is ever called in. Cheaper than the
+ * alternative, which is main.js exporting its `ids` and this file importing
+ * the module it is installed by.
+ */
+const BLOCK_IDS = Object.fromEntries(BLOCK_TYPES.map(b => [b.key, b.id]))
+
+/*
+ * How far up and down the home column to look for the ground of a world he
+ * has just been moved into.
+ *
+ * It is a band rather than a single voxel because the arrival y is the
+ * WORLD'S spawn height, not his column's: the mountains spawn on a snow peak
+ * at y=199 and the column five blocks west of it can be thirty blocks lower.
+ * 64 down covers the drop from any peak in the imported patch to the valley
+ * beside it; 8 up covers the reverse, a column that is higher than spawn.
+ */
+const GROUND_SCAN_UP = 8
+const GROUND_SCAN_DOWN = 64
 
 /** Close enough to a `walkTo` target to call it arrived. Half a block: he is
  *  0.6 wide, so anything tighter is a target he can stand on and still miss. */
@@ -118,10 +190,16 @@ function angleDelta(a, b) {
  *   gate's second paragraph describes.
  * @param {object} [opts.agent]       { backend, tools } -- omit for a mute NPC
  * @param {object} [opts.script]      { greet }  what to say on approach
+ * @param {number} [opts.height]      how tall he is, in blocks. Defaults to
+ *   NPC_HEIGHT because Evan is the only character in the world today; it is a
+ *   parameter rather than a constant read inside because the next thing this
+ *   file builds is a remote player (docs/FUTURE.md 2b) and a remote player is
+ *   1.8. WIDTH is deliberately not a parameter: 0.6 is what STEP_PROBE and
+ *   ARRIVE_RADIUS are sized against, and nothing has asked for a wide one.
  */
 export function installNPC(noa, {
   roster, id, position, skin, cape = null, chat, caps = () => ({ noClip: false }),
-  agent = null, script = {},
+  agent = null, script = {}, height = NPC_HEIGHT,
 }) {
   const entry = roster.get(id)
   if (!entry) throw new Error(`installNPC: no roster entry ${id}`)
@@ -132,8 +210,22 @@ export function installNPC(noa, {
    * playerModel.js already takes the material as an argument precisely so
    * this is a parameter rather than a fork.
    */
+  /** His eyes, at the same fraction of his height that 1.62 is of 1.8. */
+  const eyeHeight = MC.EYE_HEIGHT * (height / MC.PLAYER_HEIGHT)
+
   const material = createSkinMaterial(noa, skin, `skin-${id}`)
-  const model = createPlayerModel(noa, material)
+  /*
+   * THE MODEL IS SCALED, not just the box. A taller hitbox with a 1.8-sized
+   * model is a man standing in a coffin that is too big for him: nothing
+   * renders differently and the only symptom is that his nametag floats and
+   * you cannot build in the block above his head.
+   *
+   * The scale is a RATIO against the player's height rather than a second
+   * tuned number, so the model and the body cannot disagree -- and it is
+   * uniform, so the skin's proportions are untouched. createPlayerModel's
+   * own 0.9375/16 stays where it is; this multiplies it.
+   */
+  const model = createPlayerModel(noa, material, height / MC.PLAYER_HEIGHT)
   // Optional, and optional at the DEPLOY level too -- a build that ships no
   // cape image leaves this attached but textureless, so attachCape removes
   // itself when the image 404s. See playerModel.js.
@@ -158,9 +250,16 @@ export function installNPC(noa, {
    * He is DROPPED. The y he was handed is a column, not an altitude; the
    * solver picks the altitude.
    */
+  /*
+   * Height does NOT change where he lands. noa's position is the bottom
+   * centre of the box, so a taller body grows UPWARD from the feet and the
+   * solver stops those feet on the same voxel face either way. Worth stating
+   * because the opposite is easy to assume and would mean SPAWN_DROP had to
+   * scale with him.
+   */
   const drop = [position[0], position[1] + SPAWN_DROP, position[2]]
   const entity = noa.entities.add(
-    drop, MC.PLAYER_WIDTH, MC.PLAYER_HEIGHT,
+    drop, MC.PLAYER_WIDTH, height,
     null, null, /* doPhysics */ true, /* shadow */ false)
 
   const body = noa.ents.getPhysics(entity).body
@@ -223,8 +322,49 @@ export function installNPC(noa, {
   /** The column he was dropped into, kept so a test (or a lost NPC) can be
    *  put back without re-deriving the ground scan in main.js. */
   const home = [position[0], position[1], position[2]]
-  const floorX = Math.floor(home[0])
-  const floorZ = Math.floor(home[2])
+  let floorX = Math.floor(home[0])
+  let floorZ = Math.floor(home[2])
+
+  /*
+   * WHERE HE STANDS RELATIVE TO WHERE YOU ARRIVE.
+   *
+   * Captured once, against the world he was installed in, and it is the only
+   * thing that survives a world change. The alternative -- keeping his
+   * absolute x/z -- is what the bug was: -4.5, 0.5 is a spot on the superflat
+   * island and an arbitrary point inside a mountain in the imported patch.
+   * Spawn is the one landmark all three worlds agree on the meaning of ("the
+   * y a player's feet are at when they arrive", island.js), so his placement
+   * is expressed against it: five blocks to one side of wherever you turn up.
+   */
+  const spawnOffset = (() => {
+    const [sx, , sz] = spawnFor(currentDimension())
+    return [position[0] - sx, position[2] - sz]
+  })()
+
+  /*
+   * The world he is currently standing in, watched rather than subscribed to.
+   *
+   * WATCHED, because a world change is a property assignment and not an
+   * event: dimensions.js's whole argument is that `setIslandDimension(name)`
+   * and `noa.worldName = name` moving together IS the swap API, and noa's own
+   * lib/world.js tick watches its half of that pair with this exact
+   * `_prevWorldName` shape. So polling is the engine's idiom here rather than
+   * one invented in this file, and it means npc.js needs nothing injected and
+   * dimensions.js needs no call added to it -- every route into a world, the
+   * command, a portal, a console assignment, goes through the pair.
+   *
+   * ISLAND.JS'S HALF, not noa's, and the difference is a crash rather than a
+   * preference: `noa.worldName` is noa's own initial `'default'` until the
+   * first switch ever happens, and `'default'` is not a row in WORLDS, so
+   * `spawnFor` throws on it. `currentDimension()` is one of the three real
+   * worlds from boot onward.
+   *
+   * Rejected: an `onDimensionChange` emitter on dimensions.js and a
+   * subscription here. Better decoupling on paper, and it is a second
+   * mechanism that has to be remembered by whoever adds the fourth way into a
+   * world, next to one that is already universal.
+   */
+  let seenWorld = currentDimension()
 
   /** The last position at which he was resting on real ground. See the gate. */
   let lastRest = null
@@ -238,7 +378,10 @@ export function installNPC(noa, {
    * exactly how the rank got above his head the first time.
    */
   const nametag = createNametag(noa, {
-    text: roster.displayName(entry), height: MC.PLAYER_HEIGHT, name: `nametag-${id}`,
+    // His height, not the player's -- nametag.js places at bbHeight + 0.5, so
+    // this is the one line that makes the tag ride up with him instead of
+    // hanging at where a 1.8 head would have been.
+    text: roster.displayName(entry), height, name: `nametag-${id}`,
   })
   roster.onChange((changed) => {
     if (changed.id === id) nametag.setText(roster.displayName(changed))
@@ -409,12 +552,118 @@ export function installNPC(noa, {
     }
   }
 
+  /* ---- being put down in a world ---- */
+
+  /**
+   * The highest block in his column he could actually stand on, or null.
+   *
+   * ISLAND.JS'S PATCH, NOT NOA'S CHUNKS, and this is the one thing in the
+   * relocate that has to be got right. `noa.getBlock` reads the meshed chunk
+   * cache, which on the tick a world changes still holds the OLD world --
+   * noa invalidates on its own tick and re-meshes over the next second. Asked
+   * there, the scan for the overworld's ground ran against Nether voxels
+   * still in the cache, found the Nether's bedrock roof at y=127, stood him
+   * on it, and then the real overworld arrived underneath and he fell out of
+   * the bottom of the world. Measured, at -92 and accelerating.
+   *
+   * getVoxelID has no such window: it reads the patch that
+   * `setIslandDimension` has ALREADY swapped -- synchronously, and before
+   * `noa.worldName` moves, which dimensions.js documents as the required
+   * order -- so by the time this file notices the change the right answer is
+   * already sitting there. It is also the same function main.js's boot scan
+   * uses, which is the point: one source of truth about where the ground is.
+   *
+   * The band is anchored at the world's ARRIVAL height rather than at the top
+   * of the patch, because the Nether has a bedrock roof at y=127 and a scan
+   * from the top would faithfully stand him on it.
+   */
+  const groundInColumn = (from) => {
+    for (let y = Math.round(from) + GROUND_SCAN_UP; y > from - GROUND_SCAN_DOWN; y--) {
+      const id = getVoxelID(floorX, y, floorZ, BLOCK_IDS)
+      if (id !== 0 && !LEAF_IDS.has(id) && noa.registry.getBlockSolidity(id)) return y
+    }
+    return null
+  }
+
+  /**
+   * Put him down in a column, anywhere, and let the world decide the rest.
+   *
+   * THE PLACEMENT RULE IS NOT SKIPPED, which is the whole point of doing it
+   * this way. He is not assigned an altitude: `landing` re-arms the same boot
+   * guard that holds him at zero gravity until the solver agrees there is a
+   * floor, the ground scan is re-run against the new world's voxels with the
+   * same leaf rule main.js uses, and then he is RELEASED above it and the
+   * collision solver picks where he stops. A world change costs him exactly
+   * the arrival he got at boot.
+   *
+   * @param {[number, number, number]} column  feet coordinates; the y is a
+   *   hint at the ground, as it is for the constructor's `position`.
+   */
+  const relocate = ([x, y, z]) => {
+    endWalk(new Error('the world changed underneath the walk'))
+    home[0] = x; home[2] = z
+    floorX = Math.floor(x)
+    floorZ = Math.floor(z)
+    /*
+     * The column, resolved NOW. `y` is a hint at the ground the way the
+     * constructor's is -- for a world change it is that world's arrival
+     * height, which is a fact about spawn and not about this column -- so it
+     * is what the scan starts from rather than where he is put. A column with
+     * no ground in the band keeps the hint, and the gate below will simply
+     * hold him rather than drop him into the void.
+     */
+    const ground = groundInColumn(y)
+    home[1] = ground === null ? y : ground + 1
+    body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
+    // See _reset: `resting` is what the last physics STEP wrote, and moving a
+    // body does not take a step, so `grounded` would answer true all the way
+    // through the fall if this were left alone.
+    body.resting[0] = body.resting[1] = body.resting[2] = 0
+    body.gravityMultiplier = 0
+    /*
+     * lastRest to null is what re-opens the boot window. It is the same fact
+     * the gate already leans on -- "he has never once had ground under him"
+     * -- and in a world he has just arrived in it is true again: nothing he
+     * rested on in the old one is under him here.
+     */
+    lastRest = null
+    noa.ents.setPosition(entity, x, home[1] + SPAWN_DROP, z)
+  }
+
+  /** His column in a given world: the same offset from spawn he has always
+   *  had, at that world's arrival height. */
+  const columnIn = (name) => {
+    const [sx, sy, sz] = spawnFor(name)
+    return [sx + spawnOffset[0], sy, sz + spawnOffset[1]]
+  }
+
   let bodyYaw = 0
   /** The stride clock. Distance travelled, not time -- playerModel.js. */
   const stride = { swing: 0, amount: 0 }
 
   noa.on('tick', (dt) => {
     const secs = dt / 1000
+
+    /*
+     * A DIFFERENT WORLD IS UNDER HIM NOW.
+     *
+     * `/world mountains` does not rebuild anything -- it reassigns
+     * noa.worldName and noa re-requests every chunk (dimensions.js). His
+     * column was computed once at boot against the superflat's voxels, so
+     * without this he keeps the overworld's altitude in a world whose ground
+     * is sixty blocks away: buried in a mountain, or standing on nothing.
+     *
+     * Same class of bug as respawn.js's, which died in the Nether and put you
+     * back at the overworld's spawn.
+     *
+     * Checked before the gate rather than after, so the tick that notices the
+     * switch is also the tick that freezes him -- one tick of falling through
+     * an unmeshed world is the boot bug all over again.
+     */
+    if (currentDimension() !== seenWorld) {
+      seenWorld = currentDimension()
+      relocate(columnIn(seenWorld))
+    }
 
     /*
      * THE GATE: he does not fall while the solver has no floor to stop him.
@@ -488,6 +737,15 @@ export function installNPC(noa, {
      * world coordinate passed in here gets the offset applied twice and asks
      * about a voxel 138 blocks away. It does not error; it answers about
      * somewhere else, which is worse.
+     */
+    /*
+     * STILL A SINGLE VOXEL, and it still means what it always meant, because
+     * `home` is still the answer to a ground scan. A world change re-runs
+     * that scan against the new world's patch before it moves him (see
+     * `relocate`), so home[1] - 1 is his column's floor in whatever world he
+     * is in -- which is why the gate needed no change at all to cover the
+     * second and third worlds, and why relocate resolves the column eagerly
+     * rather than leaving the gate to work it out.
      */
     const offset = noa.worldOriginOffset
     const floorUnderHome = noa.physics.testSolid(
@@ -573,8 +831,15 @@ export function installNPC(noa, {
       if (Math.abs(off) > MAX_HEAD_TURN) bodyYaw += off - Math.sign(off) * MAX_HEAD_TURN
     }
 
-    // Eye-to-eye rather than eye-to-feet, or he stares at your shoes.
-    const rise = (py + MC.EYE_HEIGHT) - (here[1] + MC.EYE_HEIGHT)
+    /*
+     * Eye-to-eye rather than eye-to-feet, or he stares at your shoes -- and
+     * the two eye heights are now DIFFERENT, which is the point of the whole
+     * change. MC.EYE_HEIGHT is 1.62 of 1.8, so his is that same fraction of
+     * his own height: standing on level ground he looks very slightly DOWN
+     * at you, which is exactly the two inches being asked for and the only
+     * place in the code they are visible without a screenshot.
+     */
+    const rise = (py + MC.EYE_HEIGHT) - (here[1] + eyeHeight)
     const flat = Math.hypot(px - here[0], pz - here[2])
 
     poseModel(model.parts, {
@@ -624,6 +889,12 @@ export function installNPC(noa, {
     get stride() { return { ...stride } },
     /** The column he was dropped into. */
     get home() { return [...home] },
+    /** How tall he is, in blocks. The body, the model and the nametag are all
+     *  derived from this one number, so a spec can assert the difference
+     *  against the player rather than a literal. */
+    get height() { return height },
+    /** ...and where his eyes are, which is what the head tracking aims at. */
+    get eyeHeight() { return eyeHeight },
     /**
      * Standing on something, as against falling.
      *
@@ -652,6 +923,15 @@ export function installNPC(noa, {
     get toolSchemas() { return tools.schemas },
     /** Force a conversation from a test or the console, without walking. */
     _setTalking(v) { talking = !!v; if (!v) session?.reset() },
+    /**
+     * Put him down in a column in whatever world is loaded now.
+     *
+     * Public because a console, a spec, or a future `/tp Evan` wants it. The
+     * WORLD SWITCH does not go through here from outside -- the tick handler
+     * watches noa.worldName itself, so dimensions.js needed no call added to
+     * it and neither does anything else that changes worlds.
+     */
+    relocate,
     /** Put him back where he started, and drop him again. For the console and
      *  for a spec that walked him off and has to leave the world as it found
      *  it -- resetWorld restores the player, and he is not the player. */

@@ -220,7 +220,7 @@ test('the rank is on the chat line, in the server format, and nowhere else',
     await page.evaluate(() => window.game.roster.setName(window.game.EVAN_ID, 'Evan'))
   })
 
-test('the nameplate sits 2.3 blocks up and faces the camera', async ({ page }) => {
+test('the nameplate sits half a block over his head and faces the camera', async ({ page }) => {
   await teleport(page, ...NEAR_EVAN)
   await settleOnGround(page)
   await aim(page, { heading: Math.PI / 2, pitch: 0 })
@@ -238,17 +238,27 @@ test('the nameplate sits 2.3 blocks up and faces the camera', async ({ page }) =
        * exactly the bug this assertion caught when it was written the other
        * way (the model was placed 138 blocks up and nothing else noticed).
        *
-       * getNameTagOffsetY() is bbHeight + 0.5 = 2.3, and the plane's centre
-       * is another 4 font pixels (0.1 blocks) above that anchor.
+       * getNameTagOffsetY() is bbHeight + 0.5, and the plane's centre is
+       * another 4 font pixels (0.1 blocks) above that anchor.
+       *
+       * bbHeight is HIS, and it used to be written here as the literal 2.3 --
+       * i.e. the player's 1.8 + 0.5. He is 1.85 now (54-npc-height.spec.js
+       * owns why), and this assertion is what caught it: the tag really did
+       * ride up with him, by exactly the 0.05 he grew. Read off the body
+       * rather than restated, so the two cannot disagree.
        */
       above: mesh.position.y - aiEvan.model.root.position.y,
+      bbHeight: aiEvan.height,
       quat: mesh.rotationQuaternion.asArray(),
       camQuat: cam.absoluteRotation.asArray(),
       // 10 font pixels tall at 0.025 blocks each.
       height: mesh.scaling.y,
     }
   })
-  expect(tag.above).toBeCloseTo(2.3 + 0.1, 5)
+  expect(tag.above).toBeCloseTo(tag.bbHeight + 0.5 + 0.1, 5)
+  // ...and that is above where a player-height tag would sit, which is the
+  // half of this that a derived expectation cannot check on its own.
+  expect(tag.above).toBeGreaterThan(1.8 + 0.5 + 0.1)
   expect(tag.height).toBeCloseTo(0.25, 5)
   // cameraOrientation(), copied, not a look-at billboard.
   for (let i = 0; i < 4; i++) expect(tag.quat[i]).toBeCloseTo(tag.camQuat[i], 6)

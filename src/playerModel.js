@@ -245,10 +245,19 @@ function buildPart(scene, name, def, material) {
   return { pivot, box }
 }
 
-export function createPlayerModel(noa, material) {
+/**
+ * @param {number} [scale]  a multiplier on the whole model, 1 for a player.
+ *   UNIFORM on all three axes on purpose: the skin is a fixed 64x64 image
+ *   stretched over boxes whose proportions are Minecraft's, so scaling Y
+ *   alone would give a taller character an elongated head and a smeared face
+ *   texture. A uniform scale is just a bigger person and the skin is
+ *   untouched. Applied on top of MODEL_SCALE rather than instead of it --
+ *   0.9375/16 is vanilla's renderer scale and belongs to every model.
+ */
+export function createPlayerModel(noa, material, scale = 1) {
   const scene = noa.rendering.getScene()
   const root = new TransformNode('player-model', scene)
-  root.scaling.setAll(MODEL_SCALE)
+  root.scaling.setAll(MODEL_SCALE * scale)
 
   const parts = {}
   for (const [name, def] of Object.entries(PARTS)) {

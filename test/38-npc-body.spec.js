@@ -67,7 +67,7 @@ async function resetEvan(page) {
 test.beforeEach(async ({ page }) => { await resetEvan(page) })
 test.afterEach(async ({ page }) => { await resetEvan(page) })
 
-test('he is a simulated body, sized like a player, not a decoration',
+test('he is a simulated body, sized like a player but TALLER, not a decoration',
   async ({ page }) => {
     const body = await page.evaluate(() => {
       const { aiEvan } = window.game
@@ -84,12 +84,22 @@ test('he is a simulated body, sized like a player, not a decoration',
         // A movement component means noa's walk controller drives him -- the
         // same system, and therefore the same jump, as the player.
         hasMovement: !!window.noa.ents.getMovement(aiEvan.entity),
+        // The player's, read in the same breath, so the pair below is a
+        // comparison rather than two literals that can drift apart.
+        playerHeight: window.noa.ents.getPositionData(window.noa.playerEntity).height,
+        declared: aiEvan.height,
       }
     })
     expect(body.hasPhysics).toBe(true)
     expect(body.hasMovement).toBe(true)
     expect(body.width).toBeCloseTo(0.6, 5)
-    expect(body.height).toBeCloseTo(1.8, 5)
+    // Width is the player's. HEIGHT IS NOT, and it used to assert 1.8 here --
+    // see 54-npc-height.spec.js, which owns that claim and states the ratio.
+    // What this file still guards is that the BODY is what npc.js says it is:
+    // a hitbox that disagrees with the model is the failure this catches.
+    expect(body.playerHeight).toBeCloseTo(1.8, 5)
+    expect(body.height).toBeCloseTo(body.declared, 5)
+    expect(body.height).toBeGreaterThan(body.playerHeight)
     expect(body.gravity).toBe(1)
   })
 
