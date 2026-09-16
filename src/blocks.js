@@ -1105,9 +1105,16 @@ for (const def of BLOCK_TYPES) {
  * takes water off the terrain mesher entirely: a per-block Babylon mesh for
  * every voxel of a 27-block-deep ocean, to solve a problem one boolean solves.
  */
-function installDoubleSidedTranslucents(noa) {
+function installAlphaPageMaterials(noa) {
   const alphaFiles = ATLAS_PAGES.filter(p => p.hasAlpha).map(p => p.file)
   const scene = noa.rendering.getScene()
+
+  /*
+   * Materials waiting for the alpha flag. See below for why it cannot be set
+   * where the culling flag is.
+   */
+  const waiting = new Set()
+
   scene.onNewMaterialAddedObservable.add((mat) => {
     // `terrain-textured-<blockMatID>`, from noa's terrainMaterials.js. The id
     // is what turns the name back into a texture URL; nothing else in the
@@ -1116,7 +1123,73 @@ function installDoubleSidedTranslucents(noa) {
     const url = noa.registry.getMaterialData(+mat.name.split('-')[2])?.texture
     if (!url || !alphaFiles.some(f => url.endsWith(f))) return
     mat.backFaceCulling = false
+    waiting.add(mat)
   })
+
+  /*
+   * ...AND THE ALPHA ITSELF, which is the half that was missing.
+   *
+   * Reported from play: "the water texture is opaque which is not correct".
+   * Every other link in the chain was already right and that is what made it
+   * hard to see -- the block says `alpha: true`, the recipe bakes 180 into
+   * `water_still` in the atlas (checked: those pixels come off atlas4.png at
+   * a = 180), the page is `hasAlpha`, and noa duly sets
+   * `diffuseTexture.hasAlpha = true`.
+   *
+   * What noa does NOT set is `useAlphaFromDiffuseTexture`, and Babylon's
+   * StandardMaterial defaults it to FALSE. With it off, `hasAlpha` buys alpha
+   * TESTING and nothing else: the shader compiles ALPHATEST, discards any
+   * texel under `alphaCutOff` (0.4), and draws everything that survives at
+   * full opacity. 180/255 is 0.71, comfortably over the cutoff, so every
+   * water pixel survived the test and then rendered solid.
+   *
+   * WHY IT SURVIVED THIS LONG. Alpha testing is the CORRECT treatment for
+   * everything else on this page -- leaves, glass, stained glass, the ladder,
+   * the lily pad. Their alpha is 0 or 255 and a cutoff reproduces them
+   * exactly, with no sorting cost. Water is the only material here whose
+   * alpha is in between, so it is the only one the missing flag could damage.
+   * AND STILL WATER WAS BROKEN TOO, not just the new flow ids: they all
+   * resolve to the same material as `water_still`. This was never about
+   * flowing water, and checking still water first is what said so.
+   *
+   * Turning the flag on gives BOTH -- Babylon's `needAlphaBlending()` picks up
+   * `_shouldUseAlphaFromDiffuseTexture()` while `needAlphaTesting()` still
+   * fires on `hasAlpha` -- so the cutoff keeps discarding the fully
+   * transparent texels of glass and leaves before they can cost a blend, and
+   * water's 0.71 goes through the transparent pass and lets the world behind
+   * it through.
+   *
+   * REJECTED -- `mat.alpha = 180/255` on the material. It is one number for
+   * the whole page, so it would fade the leaves and the glass frame with it.
+   * The per-texel alpha is already in the atlas; the material only had to
+   * agree to read it.
+   *
+   * WHY NOT NEXT TO backFaceCulling, which is the obvious place and is where
+   * this was written first -- it silently did nothing.
+   * `onNewMaterialAddedObservable` fires from `scene.addMaterial()`, which
+   * Babylon calls in the base `Material` constructor. StandardMaterial's own
+   * field initialisers run AFTER that, and one of them is
+   * `_useAlphaFromDiffuseTexture = false`. So the flag was set and then
+   * overwritten a few microseconds later, by the subclass constructor, with
+   * no error and no warning. `backFaceCulling` is safe there only because it
+   * lives on the base class, whose fields are already initialised.
+   *
+   * So it is applied on the next `onBeforeRender` instead, which Babylon
+   * notifies at the top of `scene.render()` -- after the constructor has
+   * finished and before anything asks a mesh whether it is ready to draw.
+   *
+   * `freeze()` does not get in the way. It sets `checkReadyOnlyOnce`, and the
+   * shortcut that reads is `subMesh.effect && this.isFrozen` -- a sub-mesh
+   * that has never drawn has no effect, so the first readiness check still
+   * runs `prepareDefines` in full and picks ALPHAFROMDIFFUSE up. Getting in
+   * before the first DRAW is what matters, not before the freeze.
+   */
+  scene.onBeforeRenderObservable.add(() => {
+    if (waiting.size === 0) return
+    for (const mat of waiting) mat.useAlphaFromDiffuseTexture = true
+    waiting.clear()
+  })
+
 }
 
 export function registerBlocks(noa) {
@@ -1218,7 +1291,7 @@ export function registerBlocks(noa) {
   noa.blockTargetIdCheck = (id) =>
     !invisible.has(id) && (solidity(id) || shapeById[id] !== undefined)
 
-  installDoubleSidedTranslucents(noa)
+  installAlphaPageMaterials(noa)
   installThinInstanceUploadFix(noa)
   installNonCubeCollision(noa, shapeById)
   installPlacementOrientation(noa, NON_CUBE_VARIANTS)
