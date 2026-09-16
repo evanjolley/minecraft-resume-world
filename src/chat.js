@@ -1,6 +1,21 @@
 import { SCALE, px } from './hud.js'
 import { MC } from './physics.js'
 import { deathMessage } from './deathMessages.js'
+/*
+ * The retry loop's OFF switch, imported the same way inventory.js and
+ * respawn.js import it. The loop itself still arrives as the injected
+ * `requestPointerLock` below, which looks inconsistent and is deliberate:
+ * main.js chooses what asking for the lock MEANS, and that seam is what lets
+ * a test or a future transport swap it. Cancelling is not a choice -- it is
+ * "stop the timer that menu.js owns" -- and the one module-level timer has
+ * exactly one off switch.
+ *
+ * Rejected: a second injected option, `cancelPointerLock`. It would have kept
+ * this file free of a menu.js import, and it would also have been possible to
+ * forget at the wiring site -- which is precisely the bug being fixed here,
+ * just moved from chat.js into main.js.
+ */
+import { cancelPersistentLock } from './menu.js'
 
 /*
  * Minecraft's chat: the message log that floats above the hotbar and fades on
@@ -341,8 +356,23 @@ export function installChat(noa, {
       input.value = prefill
       historyPos = -1
       draft = ''
-      // Pointer lock and a text field are mutually exclusive: you cannot see
-      // what you are typing with the cursor captured.
+      /*
+       * Pointer lock and a text field are mutually exclusive: you cannot see
+       * what you are typing with the cursor captured.
+       *
+       * Cancel FIRST, for the reason inventory.js gives at the same line.
+       * Closing any screen starts a ~2.1 s loop that re-asks for the lock
+       * every 150 ms, to get past the browser's post-Escape cooldown. Close
+       * the inventory, press T inside that window, and the loop is still
+       * running -- it grabs the cursor back out from under the chat bar you
+       * just opened, mid-sentence. setPointerLock(false) alone does not save
+       * you: the loop simply asks again 150 ms later.
+       *
+       * This was chat's half of a two-screen asymmetry. The inventory had the
+       * cancel from the day the loop was written; chat released the lock and
+       * never cancelled, and did not even import the function.
+       */
+      cancelPersistentLock()
       noa.container.setPointerLock(false)
       input.focus()
       // Chrome puts the caret at index 0 on focus() for a programmatically
