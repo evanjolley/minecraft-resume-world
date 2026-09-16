@@ -341,19 +341,63 @@ need not live there. noa's `MeshBuilder` lays its buffers out perfectly
 regularly — four vertices per quad in a fixed order (`addPositionValues`: v0 =
 corner, v1 = corner + width, v3 = corner + height), six indices per quad, and
 UVs linear in width and height — so `writeVertexLight` can read a quad's span
-straight off the buffer, which is what the probe above already does. Splitting
-the lit ones into unit sub-quads in the readback is therefore possible entirely
-inside `src/blockLight.js`, with no fork and no vendoring. **Not built**, and
-two things have to be decided before it is:
+straight off the buffer, which is what the probe above already does.
 
-- **Which quads to split.** Splitting everything undoes greedy meshing and the
-  vertex count it exists to control; splitting only quads a lit voxel touches
-  keeps the cost proportional to the number of emitters, but leaves
-  T-junctions where a split quad meets an unsplit neighbour.
-- **AO and triangulation.** Colours interpolate per-triangle, and noa picks
-  each quad's diagonal with `decideTriDir`. Subdividing changes both, so
-  ambient occlusion will shift slightly on any quad that is split.
-  `test/36-face-shading.spec.js` is the spec that would catch it going wrong.
+**FIXED 2026-09-16, entirely inside `src/blockLight.js`, no fork and no
+vendoring.** `writeVertexLight` now splits every quad light reaches back into
+unit sub-quads in the readback, interpolating position, UV, ambient occlusion
+and atlas index off the parent and sampling light fresh at each new corner.
+The falloff on the flat pad is now 12.5 / 10.5 / 8.5 / 6.5 at two, four, six
+and eight blocks, identical in all four directions to within 0.01 of a light
+level. Before the fix the same four numbers read 12.25 / 12.06 / 10.91 / 10.91
+at r = 2 — a lean of over a level between +x and +z at every radius, and a
+perfectly straight ramp of 0.96 levels per block, which is a GPU interpolating,
+not light falling off.
+
+Three things were decided along the way and all three are argued out in the
+`writeVertexLight` docblock rather than here:
+
+- **Which quads get split: only the ones light reaches, and only the part of
+  them it reaches.** The split is clipped to the lit lattice points' bounding
+  box widened by one cell, so one torch on a chunk-wide floor shatters the disc
+  it lights and not the whole 32×32 quad. On a 41×41 pad the merged quads
+  survive up to 22 blocks wide right next to the split region.
+- **The T-junction objection is answered, not accepted.** Widening by one cell
+  guarantees the split region's outer lattice ring is zero, so every quad left
+  merged is uniformly dark across its whole surface and has no value for a seam
+  to disagree about. It is asserted rather than argued: the last test in
+  `test/58-glowstone-radial.spec.js` checks that **every** quad wider than one
+  block carries zero light at all four corners. `glowstone-wide-top.png` is the
+  boundary photographed.
+- **AO is carried through the parent's own triangulation, not bilinearly.** The
+  GPU draws two triangles with the diagonal `decideTriDir` chose, and inside a
+  triangle a colour is linear over three corners. Sampling the parent that way
+  makes any sub-quad lying inside one parent triangle come out identical to the
+  unsplit parent; only sub-quads straddling the diagonal move, and only by that
+  fold. `test/36-face-shading.spec.js` stayed 5/5 green on both engines.
+
+**A second bug fell out of it, and it was older.** `flushDirty` queued dirty
+chunks through noa's `_queueChunkForRemesh`, which opens with
+`if (!(chunk._terrainDirty || chunk._objectsDirty)) return` — it assumes the
+only reason to rebuild a mesh is that its voxels changed. A chunk that a
+neighbour's glowstone had just lit was therefore dropped from the queue
+silently. It was invisible while the old readback rewrote light on every mesh
+for every reason, because a chunk edited for any other cause picked the light
+up on the way past. The new radial spec found it in one line: the falloff came
+out symmetric in three directions and dead zero in the fourth, and the fourth
+was the far side of x = 64, a chunk boundary.
+
+**The cost, measured.** Roughly 1,980 terrain vertices per emitter on open
+ground (three glowstones on the island: 536 → 6,484 across 28 meshes). As a
+percentage that is +1,110%, and the percentage is not a useful number here: a
+superflat world greedy-meshes to a few hundred vertices total, so any per-block
+lighting is four figures against it, including a correct one. The per-emitter
+figure is the one that is bounded — a glowstone lights a Manhattan disc about
+31 blocks across, and four vertices per unit cell over half of a 31×31 box is
+about what you get. The vertex-light pass costs 1.9ms on a chunk that actually
+splits and is now skipped entirely on chunks with no light near them, which is
+most of the world; end to end the block-light engine costs about 0.6 fps
+against 0.1 before.
 
 **5b. Sky light is not built, so caves are still bright.** The block half is
 what shipped. Vanilla seeds sky light at 15 in every column open to the sky,

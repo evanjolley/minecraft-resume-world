@@ -1,5 +1,6 @@
 import { MaterialPluginBase } from '@babylonjs/core/Materials/materialPluginBase.js'
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer.js'
+import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData.js'
 
 /*
  * BLOCK LIGHT.
@@ -240,22 +241,35 @@ export function installBlockLight(noa, { ids = {} } = {}) {
   const store = new Map()
   /** chunk key -> [ci, cj, ck], so a dirty key can be turned back into a chunk. */
   const coords = new Map()
+  /**
+   * chunk key -> how many of its voxels hold a level above zero.
+   *
+   * Exists purely so the mesh pass can answer "is there any light near this
+   * chunk at all" in a Map lookup. A count rather than a boolean because
+   * removal has to be able to take a chunk back to dark: `store` keeps its
+   * buffer forever once allocated (see chunkBeingRemoved), so buffer presence
+   * would be a one-way flag and every chunk a torch ever shone into would pay
+   * the expensive mesh path for the rest of the session.
+   */
+  const litCount = new Map()
 
   const ckey = (ci, cj, ck) => ci + '|' + cj + '|' + ck
   const cdiv = (v) => Math.floor(v / CS)
   // JS % keeps the sign of the dividend, so -1 % 32 is -1, not 31.
   const cmod = (v) => ((v % CS) + CS) % CS
 
-  function bufFor(ci, cj, ck, create) {
-    const k = ckey(ci, cj, ck)
+  function bufFor(ci, cj, ck, k) {
     let buf = store.get(k)
-    if (!buf && create) {
+    if (!buf) {
       buf = new Uint8Array(CS * CS * CS)
       store.set(k, buf)
       coords.set(k, [ci, cj, ck])
     }
     return buf
   }
+
+  /** Does this chunk hold any light at all. The mesh pass's cheap gate. */
+  const chunkIsLit = (ci, cj, ck) => (litCount.get(ckey(ci, cj, ck)) || 0) > 0
 
   function getLight(x, y, z) {
     const buf = store.get(ckey(cdiv(x), cdiv(y), cdiv(z)))
@@ -268,8 +282,13 @@ export function installBlockLight(noa, { ids = {} } = {}) {
 
   function setLight(x, y, z, v) {
     const ci = cdiv(x), cj = cdiv(y), ck = cdiv(z)
-    const buf = bufFor(ci, cj, ck, true)
-    buf[cmod(x) * CS2 + cmod(y) * CS + cmod(z)] = v
+    const k = ckey(ci, cj, ck)
+    const buf = bufFor(ci, cj, ck, k)
+    const at = cmod(x) * CS2 + cmod(y) * CS + cmod(z)
+    const was = buf[at]
+    buf[at] = v
+    if (was === 0 && v > 0) litCount.set(k, (litCount.get(k) || 0) + 1)
+    else if (was > 0 && v === 0) litCount.set(k, (litCount.get(k) || 1) - 1)
     /*
      * SUBTLE: a voxel on a chunk boundary is a vertex of the NEIGHBOUR's mesh
      * too -- the mesher samples the air voxel outside each face, which for a
@@ -278,7 +297,7 @@ export function installBlockLight(noa, { ids = {} } = {}) {
      * hard brightness line. Marking the 3x3x3 of chunk keys around the voxel
      * is the blunt version and costs a few Set writes.
      */
-    dirty.add(ckey(ci, cj, ck))
+    dirty.add(k)
     const lx = cmod(x), ly = cmod(y), lz = cmod(z)
     if (lx === 0) dirty.add(ckey(ci - 1, cj, ck))
     if (lx === CS - 1) dirty.add(ckey(ci + 1, cj, ck))
@@ -367,6 +386,23 @@ export function installBlockLight(noa, { ids = {} } = {}) {
       const ijk = c || k.split('|').map(Number)
       const chunk = world._storage.getChunkByIndexes(ijk[0], ijk[1], ijk[2])
       if (!chunk || chunk.isDisposed || chunk === skipChunk) continue
+      /*
+       * `_terrainDirty` FIRST, and without it this whole function is a no-op
+       * for the case it exists to serve. noa's `possiblyQueueChunkForMeshing`
+       * opens with `if (!(chunk._terrainDirty || chunk._objectsDirty)) return`
+       * -- it assumes the only reason to rebuild a mesh is that its VOXELS
+       * changed. A chunk that a neighbour's glowstone has just lit has exactly
+       * the same voxels as a second ago and is silently dropped from the
+       * queue.
+       *
+       * Found by `test/58-glowstone-radial.spec.js`, not by looking: the
+       * falloff came out perfectly symmetric in three directions and dead flat
+       * zero in the fourth, and the fourth was the far side of x = 64, a chunk
+       * boundary. It was invisible before that spec because the old readback
+       * rewrote light on EVERY mesh for every reason, so a chunk edited for
+       * any other cause quietly picked the light up on the way past.
+       */
+      chunk._terrainDirty = true
       world._queueChunkForRemesh(chunk)
     }
     dirty.clear()
@@ -503,78 +539,391 @@ export function installBlockLight(noa, { ids = {} } = {}) {
   }
 
   /**
-   * Per-vertex smooth light, the same shape ambient occlusion already uses.
+   * Light at one terrain vertex, 0..15.
    *
    * A terrain vertex sits on a block CORNER, and the four voxels touching that
    * corner on the outside of the face are what vanilla averages. The face
    * normal says which side "outside" is; the other two axes give the 2x2.
    * Opaque voxels are skipped rather than counted as zero -- counting them
    * would draw a dark rim around every lit block where it meets the floor.
-     *
-   * KNOWN BROKEN, and measured rather than suspected. A terrain vertex is NOT
-   * a block corner once noa's greedy mesher has been at it: `maskCompare` in
-   * `terrainMesher.js` merges faces whose material and AO mask agree and knows
-   * nothing about light, so a flat floor arrives here as a handful of quads
-   * many blocks wide. This loop then writes light at their four corners and
-   * the GPU ramps linearly across the whole span -- which is what Evan saw as
-   * "glowstone lights directionally instead of radially" (docs/REPORTED.md
-   * 5a, confirmed). `test/58-glowstone-radial.spec.js` has the numbers: 625
-   * floor blocks become 17 quads, one of them 13 wide with corner levels
-   * 2/0/1/13, and the same floor chequered so nothing can merge gives 624
-   * quads of 1x1 and a falloff that goes round.
    *
-   * The fix does NOT need a fork, which is the part the docs had wrong. noa's
-   * MeshBuilder writes four vertices per quad in a fixed order (v0 = corner,
-   * v1 = corner + width, v3 = corner + height) with six indices and linear
-   * UVs, so a quad's span is readable straight off these same buffers and lit
-   * quads could be split into unit sub-quads right here. Undecided and
-   * therefore unbuilt: which quads to split (splitting all of them undoes
-   * greedy meshing; splitting only lit ones leaves T-junctions at the border)
-   * and what the resulting retriangulation does to AO, which interpolates
-   * per-triangle and whose diagonal noa picks with `decideTriDir`.
+   * Pure in (position, normal), which is load-bearing for the T-junction
+   * argument below: two quads meeting at an edge sample the shared lattice
+   * points through this same function and therefore cannot disagree.
+   */
+  function sampleLight(px, py, pz, nx, ny, nz) {
+    let sum = 0, count = 0
+    for (let a = 0; a < 2; a++) {
+      for (let b = 0; b < 2; b++) {
+        let vx, vy, vz
+        // Step half a block along the normal to land inside the voxel the face
+        // looks into, then floor: corner + 0.5*normal is that voxel's boundary.
+        if (nx !== 0) {
+          vx = Math.floor(px + nx * 0.5)
+          vy = Math.floor(py) - a
+          vz = Math.floor(pz) - b
+        } else if (ny !== 0) {
+          vy = Math.floor(py + ny * 0.5)
+          vx = Math.floor(px) - a
+          vz = Math.floor(pz) - b
+        } else {
+          vz = Math.floor(pz + nz * 0.5)
+          vx = Math.floor(px) - a
+          vy = Math.floor(py) - b
+        }
+        if (isOpaque(vx, vy, vz)) continue
+        sum += getLight(vx, vy, vz)
+        count++
+      }
+    }
+    return count ? sum / count : 0
+  }
+
+  /** Is any chunk overlapping this world-space box holding light. */
+  function boxIsLit(x0, y0, z0, x1, y1, z1) {
+    for (let ci = cdiv(x0); ci <= cdiv(x1); ci++) {
+      for (let cj = cdiv(y0); cj <= cdiv(y1); cj++) {
+        for (let ck = cdiv(z0); ck <= cdiv(z1); ck++) {
+          if (chunkIsLit(ci, cj, ck)) return true
+        }
+      }
+    }
+    return false
+  }
+
+  /*
+   * How the parent quad's four corner colours are read at an interior point.
+   *
+   * NOT bilinear, and the difference matters. The GPU never draws a quad; it
+   * draws the two triangles noa's `decideTriDir` split it into, and inside a
+   * triangle a vertex colour is interpolated LINEARLY over three corners, not
+   * bilinearly over four. Sampling the parent bilinearly would have shifted
+   * ambient occlusion on every split quad by up to the fold in its diagonal.
+   *
+   * Sampling it the way the rasteriser does makes the split exact wherever it
+   * can be: a linear function is reproduced exactly by bilinear interpolation,
+   * so any sub-quad lying wholly inside one parent triangle comes out
+   * pixel-identical to the unsplit parent. Only sub-quads straddling the
+   * parent's diagonal differ, and only by that fold.
+   *
+   * (s, t) are the quad's own parameters: v0 at (0,0), v1 at (1,0), v2 at
+   * (1,1), v3 at (0,1). `diag02` says the diagonal runs v0-v2 rather than
+   * v1-v3, which is `decideTriDir`'s output read back off the index buffer.
+   */
+  const TRI_W = [0, 0, 0, 0]
+  function triWeights(s, t, diag02) {
+    if (diag02) {
+      if (s >= t) { TRI_W[0] = 1 - s; TRI_W[1] = s - t; TRI_W[2] = t; TRI_W[3] = 0 }
+      else { TRI_W[0] = 1 - t; TRI_W[1] = 0; TRI_W[2] = s; TRI_W[3] = t - s }
+    } else if (s + t >= 1) {
+      TRI_W[0] = 0; TRI_W[1] = 1 - t; TRI_W[2] = s + t - 1; TRI_W[3] = 1 - s
+    } else {
+      TRI_W[0] = 1 - s - t; TRI_W[1] = s; TRI_W[2] = 0; TRI_W[3] = t
+    }
+    return TRI_W
+  }
+
+  /**
+   * Per-vertex smooth light, written back into the finished chunk mesh.
+   *
+   * THE PROBLEM THIS SOLVES, measured rather than suspected (docs/REPORTED.md
+   * 5a, `test/58-glowstone-radial.spec.js`, commit 3402684). A terrain vertex
+   * is NOT a block corner once noa's greedy mesher has been at it:
+   * `maskCompare` in `terrainMesher.js` merges faces whose material and AO
+   * mask agree and knows nothing about light, so a flat floor arrives here as
+   * a handful of quads many blocks wide. Writing light at their four corners
+   * and letting the GPU ramp across the span is what Evan saw as "glowstone
+   * lights directionally instead of radially" -- 625 floor blocks became 17
+   * quads, one of them 13 wide with corner levels 2/0/1/13. Worse: on a pad
+   * big enough that no corner is within 15 blocks of the emitter, the floor
+   * got NO light at all.
+   *
+   * THE FIX: split the lit quads back into unit sub-quads, here, in the
+   * readback. Vanilla's equivalent is refusing to merge faces whose light
+   * differs; this is the same geometry arrived at from the other end.
+   *
+   * WHY NO FORK. The doc assumed this had to live inside the merge predicate.
+   * It does not. noa's MeshBuilder lays every buffer out perfectly regularly
+   * -- four vertices per quad in a fixed order (`addPositionValues`: v0 =
+   * corner, v1 = corner + u, v2 = corner + u + v, v3 = corner + v), six
+   * indices, UVs linear in u and v, one atlas index per vertex -- so a quad's
+   * span is readable straight off the buffers and its subdivision is writable
+   * back into them. Staying off a fork is a deliberate, documented property of
+   * this file (see the header) and it survives this change.
+   *
+   * WHICH QUADS GET SPLIT: only those some voxel actually lights. Splitting
+   * everything undoes greedy meshing and the vertex count it exists to
+   * control, on a world that is largely flat superflat ground.
+   *
+   * THE T-JUNCTION OBJECTION, and why it is answered rather than accepted. A
+   * split quad meeting an unsplit neighbour puts vertices in the middle of the
+   * neighbour's edge, which is a T-junction and normally means a visible seam.
+   * It does not here, because of WHICH quads are left unsplit. A quad is only
+   * left whole when every lattice point across it samples zero. Its neighbour
+   * samples those same shared lattice points through the same `sampleLight`,
+   * so the split side's vertices on that edge are zero too, and the unsplit
+   * side interpolates zero between two zeroes. Both sides of the seam carry
+   * the same value, so there is no discontinuity in the light channel -- which
+   * is the only channel this pass touches. (Position, normal, UV and colour
+   * RGB are interpolated from the parent, so they are continuous by
+   * construction.) `test/58-glowstone-radial.spec.js` photographs the boundary.
+   *
+   * THE ROAD NOT TAKEN: clipping the split to a radius around each emitter
+   * instead of to "any light at all". Cheaper on a floor lit by one torch, but
+   * it reintroduces exactly the T-junction this rule dodges, because the
+   * clipped edge would fall somewhere the light is NOT zero.
    */
   function writeVertexLight(mesh, chunk) {
     const pos = mesh.getVerticesData(VertexBuffer.PositionKind)
     const norm = mesh.getVerticesData(VertexBuffer.NormalKind)
     const col = mesh.getVerticesData(VertexBuffer.ColorKind)
     if (!pos || !norm || !col) return
+
     const ox = chunk.x, oy = chunk.y, oz = chunk.z
-    const n = pos.length / 3
-    for (let v = 0; v < n; v++) {
-      const px = ox + pos[v * 3], py = oy + pos[v * 3 + 1], pz = oz + pos[v * 3 + 2]
-      const nx = norm[v * 3], ny = norm[v * 3 + 1], nz = norm[v * 3 + 2]
-      // Step half a block along the normal to land inside the voxel the face
-      // looks into, then floor: corner + 0.5*normal is that voxel's boundary.
-      let sum = 0, count = 0
-      for (let a = 0; a < 2; a++) {
-        for (let b = 0; b < 2; b++) {
-          let vx, vy, vz
-          if (nx !== 0) {
-            vx = Math.floor(px + nx * 0.5)
-            vy = Math.floor(py) - a
-            vz = Math.floor(pz) - b
-          } else if (ny !== 0) {
-            vy = Math.floor(py + ny * 0.5)
-            vx = Math.floor(px) - a
-            vz = Math.floor(pz) - b
-          } else {
-            vz = Math.floor(pz + nz * 0.5)
-            vx = Math.floor(px) - a
-            vy = Math.floor(py) - b
-          }
-          if (isOpaque(vx, vy, vz)) continue
-          sum += getLight(vx, vy, vz)
-          count++
+    const ci = cdiv(ox), cj = cdiv(oy), ck = cdiv(oz)
+    /*
+     * The whole-mesh gate, and it is why an unlit world costs LESS than it did
+     * before this change rather than more. noa rebuilds the mesh from scratch
+     * on every remesh and `pushAOColor` writes alpha 1, which is already the
+     * "no block light" value -- so a chunk with no light within reach needs no
+     * pass at all, not even the cheap one. The 3x3x3 of chunk keys is checked
+     * rather than just this one, because a face on a seam samples the voxel
+     * outside it, which lives in the next chunk over.
+     */
+    let near = false
+    for (let a = -1; a <= 1 && !near; a++) {
+      for (let b = -1; b <= 1 && !near; b++) {
+        for (let c = -1; c <= 1 && !near; c++) {
+          if (chunkIsLit(ci + a, cj + b, ck + c)) near = true
         }
       }
-      const level = count ? sum / count : 0
-      col[v * 4 + 3] = 1 - level / MAX_LIGHT
     }
-    // setVerticesData rather than updateVerticesData: noa applies its vertex
-    // data non-updatable, and Babylon's update path on a STATIC_DRAW buffer is
-    // a silent no-op on some backends. Rebuilding the buffer is a few hundred
-    // KB per remesh and provably lands.
-    mesh.setVerticesData(VertexBuffer.ColorKind, col, false, 4)
+    if (!near) return
+
+    const uv = mesh.getVerticesData(VertexBuffer.UVKind)
+    const atlas = mesh.getVerticesData('texAtlasIndices')
+    const idx = mesh.getIndices()
+    // No index buffer means the parent's winding and diagonal are unknowable,
+    // and a sub-quad that guesses them wrong is a hole in the floor. Has never
+    // happened -- noa always sets them -- so this is a bail, not a fallback.
+    if (!idx || !uv) return
+    const nq = (pos.length / 12) | 0
+
+    /*
+     * Pass one: measure. Each lit quad's (w+1)*(h+1) lattice light values are
+     * computed once and KEPT, because pass two needs the identical numbers and
+     * recomputing them would double the only expensive part of this function.
+     */
+    const grids = new Array(nq).fill(null)
+    let anySplit = false
+    for (let f = 0; f < nq; f++) {
+      const p = f * 12
+      const x0 = pos[p], y0 = pos[p + 1], z0 = pos[p + 2]
+      // u = v1 - v0, v = v3 - v0. Both are axis-aligned with exactly one
+      // non-zero, positive component, so the magnitude IS that component.
+      const ux = pos[p + 3] - x0, uy = pos[p + 4] - y0, uz = pos[p + 5] - z0
+      const vx = pos[p + 9] - x0, vy = pos[p + 10] - y0, vz = pos[p + 11] - z0
+      const w = Math.round(ux + uy + uz)
+      const h = Math.round(vx + vy + vz)
+      if (w < 1 || h < 1) continue
+
+      // Cheap reject before the grid: the box of voxels this face can possibly
+      // sample. Conservative by one block on the low side of every axis, which
+      // is what the `- a` / `- b` in sampleLight reaches back for.
+      if (!boxIsLit(
+        ox + x0 - 1, oy + y0 - 1, oz + z0 - 1,
+        ox + x0 + ux + vx, oy + y0 + uy + vy, oz + z0 + uz + vz)) continue
+
+      const nx = norm[p], ny = norm[p + 1], nz = norm[p + 2]
+      const g = new Float32Array((w + 1) * (h + 1))
+      // The lit lattice points' bounding box, in lattice indices.
+      let A0 = w + 1, A1 = -1, B0 = h + 1, B1 = -1
+      for (let b = 0; b <= h; b++) {
+        const t = b / h
+        for (let a = 0; a <= w; a++) {
+          const sPar = a / w
+          const l = sampleLight(
+            ox + x0 + ux * sPar + vx * t,
+            oy + y0 + uy * sPar + vy * t,
+            oz + z0 + uz * sPar + vz * t, nx, ny, nz)
+          g[b * (w + 1) + a] = l
+          if (l > 0) {
+            if (a < A0) A0 = a
+            if (a > A1) A1 = a
+            if (b < B0) B0 = b
+            if (b > B1) B1 = b
+          }
+        }
+      }
+      if (A1 < 0) continue // nothing on this quad is lit after all
+      /*
+       * WHICH CELLS GET SPLIT, and the -1 is the whole T-junction argument.
+       *
+       * The split is clipped to the lit lattice points' bounding box, widened
+       * by one cell on each side. That widening is what guarantees the split
+       * region's OUTER lattice ring is all zeroes: A0 is the first lit lattice
+       * column, so column A0-1 is dark by definition. Every large remainder
+       * quad below therefore meets the split region along an edge that reads
+       * zero from both sides, and interpolates zero to zero across itself.
+       * There is no discontinuity in the light channel to see.
+       *
+       * Without the clip a single torch on a chunk-wide floor would shatter
+       * the entire 32x32 quad instead of the disc it actually lights -- which
+       * is roughly a 4x difference in vertices in the superflat case, and the
+       * difference between sky light being affordable and not.
+       */
+      const cA0 = Math.max(0, A0 - 1), cA1 = Math.min(w - 1, A1)
+      const cB0 = Math.max(0, B0 - 1), cB1 = Math.min(h - 1, B1)
+      const split = (cA1 - cA0 + 1) * (cB1 - cB0 + 1) > 1
+      grids[f] = { w, h, g, cA0, cA1, cB0, cB1, split }
+      if (split) anySplit = true
+    }
+
+    if (!grids.some(Boolean)) return
+
+    /*
+     * The cheap exit: light touched this mesh but every lit quad was already
+     * one block, so only the alpha lane changes and the geometry does not.
+     * This is the path a torch in a cramped room takes, and the one
+     * test/56-block-light.spec.js has always exercised.
+     *
+     * setVerticesData rather than updateVerticesData: noa applies its vertex
+     * data non-updatable, and Babylon's update path on a STATIC_DRAW buffer is
+     * a silent no-op on some backends. Rebuilding provably lands.
+     */
+    if (!anySplit) {
+      for (let f = 0; f < nq; f++) {
+        const q = grids[f]
+        if (!q) continue
+        for (let c = 0; c < 4; c++) {
+          // Lattice order round the quad: v0 (0,0), v1 (1,0), v2 (1,1), v3 (0,1).
+          const a = (c === 1 || c === 2) ? q.w : 0
+          const b = (c === 2 || c === 3) ? q.h : 0
+          col[(f * 4 + c) * 4 + 3] = 1 - q.g[b * (q.w + 1) + a] / MAX_LIGHT
+        }
+      }
+      mesh.setVerticesData(VertexBuffer.ColorKind, col, false, 4)
+      return
+    }
+
+    /*
+     * Pass two: rebuild, FOUR VERTICES PER QUAD and no vertex sharing.
+     *
+     * Sharing a sub-quad lattice would cost about a third of the vertices, and
+     * it is wrong here: `src/fluidGeometry.js` wraps `meshChunk` OUTSIDE this
+     * one and reads the result back with `nf = pos.length / 12` and
+     * `idx[f*6+i] - f*4`. That layout -- noa's own -- is a contract between
+     * three files, not an implementation detail of this one. Breaking it would
+     * hand fluidGeometry garbage quads to reshape. fluidGeometry's own split
+     * keeps the same contract, which is why the two can stack.
+     */
+    const outPos = [], outNorm = [], outCol = [], outUV = [], outIdx = []
+    const outAtlas = atlas ? [] : null
+    let vcount = 0
+
+    for (let f = 0; f < nq; f++) {
+      const q = grids[f]
+      const p = f * 12
+      /*
+       * The parent's own winding and diagonal, read back off the index buffer
+       * rather than recomputed. `addIndexValues` writes faceNum*4 plus one of
+       * four fixed patterns, so subtracting the base recovers the pattern
+       * exactly -- including which way `decideTriDir` split it, which is the
+       * thing ambient occlusion is most sensitive to.
+       */
+      const pat = [0, 1, 2, 3, 4, 5].map((i) => idx[f * 6 + i] - f * 4)
+
+      if (!q || !q.split) {
+        for (let c = 0; c < 4; c++) {
+          const src = f * 4 + c
+          outPos.push(pos[src * 3], pos[src * 3 + 1], pos[src * 3 + 2])
+          outNorm.push(norm[src * 3], norm[src * 3 + 1], norm[src * 3 + 2])
+          const a = q ? ((c === 1 || c === 2) ? q.w : 0) : 0
+          const b = q ? ((c === 2 || c === 3) ? q.h : 0) : 0
+          outCol.push(col[src * 4], col[src * 4 + 1], col[src * 4 + 2],
+            q ? 1 - q.g[b * (q.w + 1) + a] / MAX_LIGHT : col[src * 4 + 3])
+          outUV.push(uv[src * 2], uv[src * 2 + 1])
+          if (outAtlas) outAtlas.push(atlas[src])
+        }
+        for (let i = 0; i < 6; i++) outIdx.push(vcount + pat[i])
+        vcount += 4
+        continue
+      }
+
+      const { w, h, g, cA0, cA1, cB0, cB1 } = q
+      const x0 = pos[p], y0 = pos[p + 1], z0 = pos[p + 2]
+      const ux = pos[p + 3] - x0, uy = pos[p + 4] - y0, uz = pos[p + 5] - z0
+      const vx = pos[p + 9] - x0, vy = pos[p + 10] - y0, vz = pos[p + 11] - z0
+      const diag02 = (pat[0] === 0 || pat[1] === 0 || pat[2] === 0)
+        && (pat[0] === 2 || pat[1] === 2 || pat[2] === 2)
+
+      /** One output quad covering lattice [a0,a1] x [b0,b1] of the parent. */
+      const emit = (a0, b0, a1, b1) => {
+        const as = [a0, a1, a1, a0], bs = [b0, b0, b1, b1]
+        for (let c = 0; c < 4; c++) {
+          const sPar = as[c] / w, t = bs[c] / h
+          outPos.push(
+            x0 + ux * sPar + vx * t,
+            y0 + uy * sPar + vy * t,
+            z0 + uz * sPar + vz * t)
+          outNorm.push(norm[p], norm[p + 1], norm[p + 2])
+          // UVs are linear in (s, t) by construction (`addUVs`), and bilinear
+          // interpolation reproduces a linear function exactly, so no triangle
+          // bookkeeping is needed here -- unlike the colours just below.
+          for (let e = 0; e < 2; e++) {
+            outUV.push(
+              (1 - sPar) * (1 - t) * uv[(f * 4) * 2 + e] +
+              sPar * (1 - t) * uv[(f * 4 + 1) * 2 + e] +
+              sPar * t * uv[(f * 4 + 2) * 2 + e] +
+              (1 - sPar) * t * uv[(f * 4 + 3) * 2 + e])
+          }
+          if (outAtlas) outAtlas.push(atlas[f * 4])
+          const tw = triWeights(sPar, t, diag02)
+          for (let e = 0; e < 3; e++) {
+            outCol.push(
+              tw[0] * col[(f * 4) * 4 + e] +
+              tw[1] * col[(f * 4 + 1) * 4 + e] +
+              tw[2] * col[(f * 4 + 2) * 4 + e] +
+              tw[3] * col[(f * 4 + 3) * 4 + e])
+          }
+          outCol.push(1 - g[bs[c] * (w + 1) + as[c]] / MAX_LIGHT)
+        }
+        for (let i = 0; i < 6; i++) outIdx.push(vcount + pat[i])
+        vcount += 4
+      }
+
+      for (let b = cB0; b <= cB1; b++) {
+        for (let a = cA0; a <= cA1; a++) emit(a, b, a + 1, b + 1)
+      }
+      // The remainder, still merged. Four rectangles at most, and each one is
+      // dark on all four corners by the argument above.
+      if (cA0 > 0) emit(0, 0, cA0, h)
+      if (cA1 + 1 < w) emit(cA1 + 1, 0, w, h)
+      if (cB0 > 0) emit(cA0, 0, cA1 + 1, cB0)
+      if (cB1 + 1 < h) emit(cA0, cB1 + 1, cA1 + 1, h)
+    }
+
+    /*
+     * VertexData.applyToMesh rather than five setVerticesData calls. The
+     * vertex COUNT changes here, and applyToMesh is the path noa itself used
+     * to build this mesh: it orders the writes so positions land first and
+     * rebuilds the submesh over the new index range. Setting the buffers
+     * piecemeal leaves Babylon's geometry with a stale _totalVertices between
+     * calls, which is a crash waiting on a resize.
+     *
+     * Uint16 runs out at 65536 vertices and a heavily lit chunk can pass that.
+     * Babylon's `_normalizeIndexData` takes a Uint32Array as 32-bit indices
+     * directly, and every WebGL2 context supports them.
+     */
+    const vdat = new VertexData()
+    vdat.positions = new Float32Array(outPos)
+    vdat.normals = new Float32Array(outNorm)
+    vdat.colors = new Float32Array(outCol)
+    vdat.uvs = new Float32Array(outUV)
+    vdat.indices = vcount > 65535 ? new Uint32Array(outIdx) : new Uint16Array(outIdx)
+    vdat.applyToMesh(mesh)
+    // Not a standard VertexBuffer kind, so applyToMesh does not carry it.
+    if (outAtlas) mesh.setVerticesData('texAtlasIndices', new Float32Array(outAtlas), false, 1)
   }
 
   /* -------------------------------------------------------------- *
