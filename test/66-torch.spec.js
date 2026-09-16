@@ -591,9 +591,23 @@ test('five torches in a dark room, photographed', async ({ page, terrain }) => {
     TORCH, WALL_TORCH.west, WALL_TORCH.east, WALL_TORCH.south, WALL_TORCH.north,
   ])
 
-  // A roofed room at midnight is a cave: the only light in these shots is
-  // the torches' own.
+  /*
+   * A roofed room at midnight is a cave: the only light in these shots is the
+   * torches' own.
+   *
+   * WAIT FOR THE SUN TO ACTUALLY GO DOWN. `setTime` moves the clock, and the
+   * directional light's intensity follows it over the next handful of frames
+   * rather than on the same one. Measured with six frames of slack, this
+   * failed one run in five with both crops reading ~130 instead of 111 and
+   * 80 -- a half-lit room in both samples, which washes the torch's own
+   * contribution down into the noise. Poll the light itself.
+   */
   await page.evaluate((t) => window.game.sky.setTime(t), MIDNIGHT)
+  await page.waitForFunction(() => {
+    const light = window.noa.rendering.getScene().lights
+      .find((l) => l.intensity !== undefined)
+    return light && light.intensity < 0.25
+  }, null, { timeout: 15_000 })
   await teleport(page, CX + 0.5, PY + 2, CZ + 3.2)
   await look(page, { heading: HEADING.northMinusZ, pitch: 0.1 })
   await waitFrames(page, 8)
