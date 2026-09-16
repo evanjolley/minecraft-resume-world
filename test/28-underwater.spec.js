@@ -4,7 +4,7 @@ import sharp from 'sharp'
 import { test, expect } from './fixtures.js'
 import { armAudio } from './helpers/audio.js'
 import {
-  MAX_X, MAX_Z, MIN_X, MIN_Z, look, teleport, waitFrames, waitTicks,
+  SURFACE_Y, look, teleport, waitFrames, waitTicks,
 } from './helpers/world.js'
 
 /*
@@ -27,11 +27,23 @@ import {
  * on the clouds, the sun and dropped items, and the WORLD is not fogged at
  * all. A spec that stops at (2) would have shipped that.
  *
- * NO COORDINATES ARE WRITTEN DOWN. The world's X axis is being unmirrored in
- * a parallel change, so any X in this file would be wrong tomorrow. The ocean
- * is found by scanning the GENERATOR (`game.voxelAt`, which answers for
- * unloaded chunks too, unlike `noa.getBlock`) for a sea-level column that is
- * water with air over it and water well below it.
+ * THIS FILE BUILDS ITS OWN WATER, and used to hunt for it.
+ *
+ * It scanned the generator for a sea-level column with air over it and ten
+ * blocks of water under it. That worked for exactly as long as the overworld
+ * was an imported Minecraft island with an ocean in it. The overworld is now
+ * generated superflat, there is no ocean anywhere, and four tests in here went
+ * red without a single thing about underwater rendering having changed.
+ *
+ * A dug pool is strictly better than a found one even when the ocean is back:
+ * it is the same nine by fourteen blocks of water every run, on both engines,
+ * whatever the terrain does next. 41-fluid-flow builds a tray and the movement
+ * specs build flat pads for the same reason.
+ *
+ * NOT WEAKENED, and this is the line that matters: every assertion below about
+ * what being under water DOES -- the fog define, the density, the thirty
+ * second ramp, the splash, the ambient bed, the red channel in the pixels --
+ * is the one that was there before. Only the way the water arrives changed.
  */
 
 /* Where the after-shots go: beside docs/water/before-*.png, which is the
@@ -43,35 +55,80 @@ const shot = (page, name) => page.screenshot({ path: path.join(DOCS, `${name}.pn
 /** How far under the surface the "under" shots are taken. Matches the befores. */
 const DEPTH = 6
 
-/**
- * Find an ocean column: surface water with air above it, at least DEPTH+4
- * blocks deep, and as far from the patch edge as the scan can manage.
+/*
+ * Where the pool goes, and how big.
  *
- * Returns { x, z, surfaceY } in world coordinates, or null.
+ * Well inside the world edge (helpers/world.js MIN/MAX) and well away from
+ * spawn, so a spec that walks around at the origin cannot fall into it in the
+ * seconds before the terrain fixture puts the ground back. HALF 4 gives a nine
+ * by nine surface, which is wide enough that a submerged camera sees only
+ * water in every horizontal direction -- the sideways shots are as much the
+ * subject as the upward one. DEEP 14 puts the floor eight blocks below the
+ * deepest thing any test here stands at.
  */
-const findOcean = (page) => page.evaluate(({ x0, x1, z0, z1 }) => {
-  const { voxelAt, fluids } = window.game
-  const water = fluids.ids.water
+const POOL = { x: 20, z: 30, half: 4, deep: 14 }
 
-  let best = null
-  for (let y = 80; y >= 40; y--) {
-    for (let x = x0; x <= x1; x += 2) {
-      for (let z = z0; z <= z1; z += 2) {
-        if (voxelAt(x, y, z) !== water) continue
-        if (voxelAt(x, y + 1, z) !== 0) continue
-        // Deep enough to stand well under, with water all the way down.
-        let ok = true
-        for (let d = 1; d <= 10; d++) if (voxelAt(x, y - d, z) !== water) { ok = false; break }
-        if (!ok) continue
-        best = { x, z, surfaceY: y }
-        break
+/**
+ * Dig the pool, fill it, and hand back the same { x, z, surfaceY } the old
+ * ocean scan did, so nothing downstream had to change.
+ *
+ * The region is registered with the `terrain` fixture FIRST, which is what
+ * tears it down -- a fixture rather than a line at the end of the test body,
+ * because teardown still runs when an assertion throws and a nine by fourteen
+ * hole full of water left in the shared world would take the next spec file
+ * with it.
+ *
+ * STAND NEXT TO IT, NOT OVER IT. `noa.setBlock` is a silent no-op on a chunk
+ * that is not loaded and nothing announces the arrival of one, so the player
+ * has to be near enough to pull the chunks in -- but landing IN the pool would
+ * start the underwater transition before the test that measures it gets to,
+ * and 'the fog thins as your eyes adjust' reads `sinceEntry` from exactly that
+ * moment. So: the rim, four blocks clear of the water.
+ *
+ * And then do not trust the writes. Building inside the poll makes the retry
+ * and the readback the same statement; nothing partial survives one.
+ */
+async function buildPool(page, terrain) {
+  const { x, z, half, deep } = POOL
+  await teleport(page, x + half + 4.5, SURFACE_Y + 6, z + 0.5)
+
+  // The ground is read rather than assumed: SURFACE_Y is the superflat's own
+  // number and this file should dig relative to whatever is actually there.
+  const surfaceY = await (await page.waitForFunction(([a, c, top, bottom]) => {
+    for (let y = top; y >= bottom; y--) if (window.noa.getBlock(a, y, c) !== 0) return y
+    return false
+  }, [x, z, SURFACE_Y + 12, SURFACE_Y - 12], { timeout: 30_000, polling: 100 })).jsonValue()
+
+  const lo = surfaceY - deep
+  await terrain.keep([x - half - 1, lo, z - half - 1], [x + half + 1, surfaceY + 12, z + half + 1])
+
+  await page.waitForFunction(([a, c, h, top, bottom]) => {
+    const noa = window.noa
+    for (let px = a - h - 1; px <= a + h + 1; px++) {
+      for (let pz = c - h - 1; pz <= c + h + 1; pz++) {
+        const rim = px < a - h || px > a + h || pz < c - h || pz > c + h
+        // Open sky over the whole box: the above-water shots stand eight
+        // blocks up and the surfacing check looks straight through it.
+        for (let y = top + 1; y <= top + 12; y++) noa.setBlock(0, px, y, pz)
+        for (let y = top; y > bottom; y--) noa.setBlock(rim ? 3 : 636, px, y, pz)
+        noa.setBlock(3, px, bottom, pz)
       }
-      if (best) break
     }
-    if (best) break
-  }
-  return best
-}, { x0: MIN_X + 2, x1: MAX_X - 2, z0: MIN_Z + 2, z1: MAX_Z - 2 })
+    return noa.getBlock(a, top, c) === 636
+      && noa.getBlock(a, bottom + 1, c) === 636
+      && noa.getBlock(a, bottom, c) === 3
+      && noa.getBlock(a, top + 1, c) === 0
+  }, [x, z, half, surfaceY, lo], { timeout: 30_000, polling: 100 })
+
+  /*
+   * Drop the queue the fill just built. Every one of those ~1100 sources woke
+   * its six neighbours, and the pool is walled and floored so not one of those
+   * updates can change anything -- it is a thousand scheduled no-ops competing
+   * for the per-tick budget with whatever the next spec file pours.
+   */
+  await page.evaluate(() => window.game.fluids.flow.reset())
+  return { x, z, surfaceY }
+}
 
 /*
  * Hold the player exactly where a shot wants them.
@@ -131,6 +188,61 @@ const terrainDefines = (page) => page.evaluate(() =>
     .filter((m) => m.name.startsWith('terrain-textured-'))
     .map((m) => ({ name: m.name, defines: m.getEffect()?.defines ?? null })))
 
+/**
+ * Put one block from every atlas page on the ground under the player and look
+ * at it.
+ *
+ * WHY THIS EXISTS, because it is not obvious and it is not a nicety.
+ * `getEffect()` is the effect the material last actually DREW with, which is
+ * the whole reason this test is honest -- an intention is not a compiled
+ * shader. The flip side is that a material that has never drawn has no effect
+ * at all, and noa creates one material per atlas PAGE lazily. On the old
+ * imported island every page had something in it within sight of spawn; on the
+ * generated superflat, pages 1, 3 and 4 hold nothing the world contains, so
+ * `terrain-textured-129` sat there uncompiled and this test failed with
+ * "never compiled" -- a fact about the terrain generator, not about fog.
+ *
+ * So the test now MAKES every page draw before it asks. That is a stronger
+ * question than the one it replaced, not a weaker one: before, the loop only
+ * covered whatever the terrain happened to show.
+ *
+ * SOLID blocks only. Water and lava are on the alpha page too and a source
+ * dropped on stone would start flowing across the pad mid-assertion.
+ */
+async function showEveryAtlasPage(page, terrain) {
+  const groundY = await (await page.waitForFunction((top) => {
+    for (let y = top; y >= top - 24; y--) if (window.noa.getBlock(0, y, 0) !== 0) return y
+    return false
+  }, SURFACE_Y + 12, { timeout: 30_000, polling: 100 })).jsonValue()
+
+  await terrain.keep([-3, groundY, -3], [3, groundY, 3])
+
+  await page.evaluate(([y]) => {
+    const noa = window.noa
+    // One representative block id per atlas texture URL.
+    const seen = new Set()
+    const reps = []
+    for (let id = 1; id < 1200; id++) {
+      if (!noa.registry.getBlockSolidity(id)) continue
+      const matId = noa.registry.getBlockFaceMaterial(id, 0)
+      if (!matId) continue
+      const url = noa.registry.getMaterialData(matId)?.texture
+      if (!url || seen.has(url)) continue
+      seen.add(url)
+      reps.push(id)
+    }
+    reps.forEach((id, i) => {
+      for (let dz = -1; dz <= 1; dz++) noa.setBlock(id, i - 2, y, dz)
+    })
+    return reps.length
+  }, [groundY])
+
+  // Straight down at the pad, and give the meshes a few frames to be built,
+  // selected and drawn -- the effect is bound in the draw, not in the mesh.
+  await look(page, { heading: 0, pitch: Math.PI / 2 - 0.05 })
+  await waitFrames(page, 8)
+}
+
 const fogState = (page) => page.evaluate(() => {
   const u = window.game.underwater
   const scene = window.noa.rendering.getScene()
@@ -159,7 +271,8 @@ async function centrePatch(page) {
 test.describe('under water', () => {
   test.afterEach(({ page }) => unpin(page))
 
-  test('the fog mode is set before the terrain materials freeze', async ({ page }) => {
+  test('the fog mode is set before the terrain materials freeze', async ({ page, terrain }) => {
+    await showEveryAtlasPage(page, terrain)
     const mats = await terrainDefines(page)
     // If this is empty the world never meshed and every assertion below is
     // vacuous, which is the failure mode a `.every()` on an empty array hides.
@@ -190,9 +303,8 @@ test.describe('under water', () => {
     expect(s.fogColor[2]).toBeCloseTo(0xe4 / 255, 2)
   })
 
-  test('going under turns the world blue, and surfacing clears it', async ({ page }) => {
-    const ocean = await findOcean(page)
-    expect(ocean, 'no ocean column found in the terrain patch').not.toBeNull()
+  test('going under turns the world blue, and surfacing clears it', async ({ page, terrain }) => {
+    const ocean = await buildPool(page, terrain)
 
     // ---- above the water, looking down at it
     await teleport(page, ocean.x + 0.5, ocean.surfaceY + 8, ocean.z + 0.5)
@@ -259,9 +371,8 @@ test.describe('under water', () => {
       .toBeGreaterThan(wet.r + 25)
   })
 
-  test('the fog thins as your eyes adjust', async ({ page }) => {
-    const ocean = await findOcean(page)
-    expect(ocean).not.toBeNull()
+  test('the fog thins as your eyes adjust', async ({ page, terrain }) => {
+    const ocean = await buildPool(page, terrain)
     await submerge(page, ocean)
     const entry = await page.evaluate(() => window.game.underwater.fogDensity)
 
@@ -331,10 +442,10 @@ test.describe('under water', () => {
     expect(sets.lavaPop).toBeTruthy()
   })
 
-  test('hitting the water splashes, and going under starts the bed', async ({ page }) => {
+  test('hitting the water splashes, and going under starts the bed', async ({ page, terrain }) => {
     const audio = await armAudio(page)
     try {
-      const ocean = await findOcean(page)
+      const ocean = await buildPool(page, terrain)
       // Dry first, so the feet and eyes transitions are real transitions.
       await teleport(page, ocean.x + 0.5, ocean.surfaceY + 4, ocean.z + 0.5)
       await pin(page, ocean.x + 0.5, ocean.surfaceY + 4, ocean.z + 0.5)

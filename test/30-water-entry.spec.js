@@ -46,7 +46,23 @@ const SHAFT_MIN = [10, 170, 10]
 const SHAFT_MAX = [12, 200, 12]
 const SURFACE = 201            // the top FACE of the y=200 block
 
+/*
+ * FLOW OFF FOR THE DURATION, back on in afterEach.
+ *
+ * Every rig in this file is a floorless box of sources hanging in open sky,
+ * which the flow engine is perfectly right to drain: it pours off all four
+ * sides and out of the bottom, two hundred blocks down to the superflat, and
+ * the pool the swim-out test measures is shallower every second it runs. 19
+ * and 41 make the same bargain for the same reason. Nothing in this file is
+ * about spreading; it is about drag, buoyancy and the sneak key.
+ */
+test.afterEach(({ page }) => page.evaluate(() => {
+  window.game.fluids.flow.reset()
+  window.game.fluids.flow.setEnabled(true)
+}))
+
 async function fill(page, terrain, spans) {
+  await page.evaluate(() => { window.game.fluids.flow.setEnabled(false) })
   await grantOp(page)
   for (const [, from, to] of spans) await terrain.keep(from, to)
   await page.evaluate(async (list) => {

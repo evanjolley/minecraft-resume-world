@@ -41,8 +41,22 @@ const TOL = 0.015
 const near = (actual, want, tol = TOL) => Math.abs(actual - want) <= want * tol
 
 /*
- * A block of fluid in mid-air, which is a perfectly good pool: nothing here
- * simulates flow, so a floating cube of water is as still as a lake.
+ * A block of fluid in mid-air, which is a perfectly good pool -- ONCE THE FLOW
+ * ENGINE IS SWITCHED OFF, which it was not when this was written.
+ *
+ * "Nothing here simulates flow, so a floating cube of water is as still as a
+ * lake" was true of this file for its whole life and stopped being true when
+ * fluids.js learned to spread. A floorless, wall-less cube of sources hanging
+ * in open sky is the worst case there is: every source on every one of its six
+ * faces pours, the skirt falls two hundred blocks to the superflat, and the
+ * frontier is still growing when the test that shares the page runs. It
+ * surfaced as 30-water-entry timing out on a swim that passes on its own --
+ * the tell being that it only ever failed when THIS file had run first.
+ *
+ * So the switch goes off for the duration and back on in afterEach, which is
+ * the same thing 41-fluid-flow does to its tray and for the same reason:
+ * everything measured below is buoyancy and drag, and a pool that is quietly
+ * draining while it is measured is measuring something else.
  *
  * Built well above the terrain (y 200+) rather than by flooding a hole in it.
  * Digging would mean 200 broken voxels for the terrain fixture to put back,
@@ -53,7 +67,15 @@ const near = (actual, want, tol = TOL) => Math.abs(actual - want) <= want * tol
  * 200 is above everything and still inside noa's vertical load range from
  * spawn, so authority.requestFill actually lands.
  */
+/* Back on for whoever runs next: the switch is a module singleton and
+ * resetWorld does not touch it. */
+test.afterEach(({ page }) => page.evaluate(() => {
+  window.game.fluids.flow.reset()
+  window.game.fluids.flow.setEnabled(true)
+}))
+
 async function pool(page, terrain, kind, [x0, y0, z0], [x1, y1, z1]) {
+  await page.evaluate(() => { window.game.fluids.flow.setEnabled(false) })
   await grantOp(page)
   await terrain.keep([x0, y0, z0], [x1, y1, z1])
   await page.evaluate(async ([k, from, to]) => {
