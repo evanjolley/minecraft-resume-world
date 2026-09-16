@@ -10,6 +10,7 @@ import { MC } from './physics.js'
 import { FLUID_FLOW } from './blocks.js'
 import { installFluidGeometry, cornerHeight, flowVector, ownHeight } from './fluidGeometry.js'
 import { currentDimension } from './island.js'
+import { entityBox, entitiesInBox } from './entityBox.js'
 
 /*
  * Water and lava: being in one, moving through one, and what each does to you.
@@ -1251,6 +1252,7 @@ function installFluidFlow(noa, { blockIds, authority }) {
   /** The ONE flow vector -- shape, texture and push all read this. */
   flow.flowVectorAt = (x, y, z) => flowVector(world, x, y, z)
   flow.geometry = installFluidGeometry(noa, world)
+  flow.push = installFluidPush(noa, { flow })
 
   /*
    * NOT SUBSCRIBED TO chunkAdded, deliberately, and the measurement that
@@ -1290,4 +1292,189 @@ function installFluidFlow(noa, { blockIds, authority }) {
   noa.on('tick', (dt) => flow.tick(typeof dt === 'number' ? dt : 1000 / noa.tickRate))
 
   return flow
+}
+
+/* ------------------------------------------------------------------ *
+ * THE PUSH
+ * ------------------------------------------------------------------ *
+ *
+ * Reported from play: "Water should be pushing me and Evan!"
+ *
+ * THE SAME VECTOR AS THE SHAPE. fluidGeometry.js's `flowVector` is
+ * BlockLiquid.getFlowVector, and in vanilla that ONE function drives the slope
+ * of the surface, the rotation of the flow texture and the shove on every
+ * entity in the cell. These are not three features. A second direction
+ * computed here is a second direction that eventually disagrees with the
+ * picture, so there isn't one -- this reads `flow.flowVectorAt`.
+ *
+ * ------------------------------------------------------------------
+ * THE CONSTANT, and where it was read.
+ *
+ * World.handleMaterialAcceleration, MCP-919:
+ *
+ *     if (vec3.lengthVector() > 0.0D && entityIn.isPushedByWater()) {
+ *         vec3 = vec3.normalize();
+ *         double d1 = 0.014D;
+ *         entityIn.motionX += vec3.xCoord * d1;  ... etc
+ *     }
+ *
+ * 0.014 blocks per tick added to VELOCITY every tick is an acceleration of
+ * 0.014 b/tick^2, and this file's header is explicit about the conversion:
+ * a tick is 0.05 s, so b/tick^2 * 400 = b/s^2. 0.014 -> 5.6 b/s^2. The same
+ * arithmetic that turned Minecraft's 0.005 sink into 2 b/s^2 at the top of
+ * this file, which is the point of doing it the same way.
+ *
+ * NOTE THE NORMALIZE IS OUTSIDE THE LOOP. Every cell contributes its own unit
+ * vector, they are SUMMED, and the sum is normalised once. So standing in two
+ * cells whose flows oppose gives you nothing, and standing in two that agree
+ * gives you exactly the same shove as standing in one -- the push is a
+ * direction at a fixed strength, never a magnitude that builds up.
+ *
+ * LAVA. In 1.8 lava does not push at all: Entity.moveEntity calls
+ * handleMaterialAcceleration with Material.water and nothing else (line 1113),
+ * and its only lava call is isMaterialInBB, which asks a question and applies
+ * no force. Modern versions do push, through FlowingFluid.motionScale --
+ * 0.0023 in an ordinary dimension and 0.007 in an ultrawarm one, which is the
+ * Nether. Both are reproduced, because this world has a Nether and because
+ * "lava drags you toward the drop" is the behaviour a player expects today.
+ *
+ * ------------------------------------------------------------------
+ * THE BOX IS SHRUNK, and by an asymmetric amount that is vanilla's:
+ *
+ *     getEntityBoundingBox().expand(0, -0.4, 0).contract(0.001, 0.001, 0.001)
+ *
+ * 0.4 off the TOP AND BOTTOM vertically. Standing ankle-deep at the thin end
+ * of a run is not being in the current -- you have to be 0.4 of a block into
+ * it before it can move you, which is why a one-ninth-tall trickle at the end
+ * of a pour does nothing to you and the full block at the source does.
+ */
+
+/** Minecraft's push, in blocks per tick^2, before the x400 to b/s^2. */
+const PUSH_PER_TICK = { water: 0.014, lavaOverworld: 0.0023, lavaNether: 0.007 }
+
+/** Vanilla's box deflation before the scan: 0.4 vertical, 0.001 horizontal. */
+const PUSH_DEFLATE_Y = 0.4
+const PUSH_DEFLATE_XZ = 0.001
+
+/**
+ * WHO IS IN THE WATER.
+ *
+ * entityBox.js owns that question -- it was "built general because punching is
+ * coming", and a fluid tick is the second caller it was built for. The box is
+ * everything, because the question here really is "every simulated body":
+ * unlike a placement check or a punch there is no interesting region, and the
+ * list this walks is the same list that will grow when the next thing with a
+ * body arrives. Writing a second `getStatesList(physics)` loop in this file
+ * would be a second answer to a question that already has one.
+ */
+const EVERYWHERE = 1e7
+
+export function installFluidPush(noa, { flow }) {
+  let lastPush = [0, 0, 0]
+
+  function pushOf(entity) {
+    const box = entityBox(noa, entity)
+    if (!box) return null
+    const x0 = Math.floor(box.min[0] + PUSH_DEFLATE_XZ)
+    const x1 = Math.floor(box.max[0] - PUSH_DEFLATE_XZ)
+    const z0 = Math.floor(box.min[2] + PUSH_DEFLATE_XZ)
+    const z1 = Math.floor(box.max[2] - PUSH_DEFLATE_XZ)
+    const yLo = box.min[1] + PUSH_DEFLATE_Y
+    const yHi = box.max[1] - PUSH_DEFLATE_Y
+    if (yHi < yLo) return null
+    let vx = 0, vy = 0, vz = 0
+    let fluid = null
+    for (let y = Math.floor(yLo); y <= Math.floor(yHi); y++) {
+      for (let x = x0; x <= x1; x++) {
+        for (let z = z0; z <= z1; z++) {
+          const m = flow.metaOf(noa.getBlock(x, y, z))
+          if (!m) continue
+          /*
+           * The SURFACE test, and it is why a shallow flow cannot push you.
+           * Vanilla: `d0 = (y + 1) - getLiquidHeightPercent(level)` is the top
+           * of the fluid, and the cell only counts if the deflated box reaches
+           * it. A level-7 cell's surface is a ninth of a block up; a box
+           * already shrunk 0.4 from the bottom never gets there.
+           */
+          const surface = y + 1 - (1 - flow.heightAt(x, y, z))
+          if (yHi < surface) continue
+          const [ax, ay, az] = flow.flowVectorAt(x, y, z)
+          vx += ax; vy += ay; vz += az
+          fluid = m.fluid
+        }
+      }
+    }
+    if (!fluid) return null
+    const n = Math.hypot(vx, vy, vz)
+    if (n === 0) return null
+    const scale = fluid === 'water'
+      ? PUSH_PER_TICK.water
+      : (currentDimension() === 'nether' ? PUSH_PER_TICK.lavaNether : PUSH_PER_TICK.lavaOverworld)
+    // b/tick^2 -> b/s^2, the conversion this file's header derives.
+    const a = scale * 400
+    return [vx / n * a, vy / n * a, vz / n * a]
+  }
+
+  /*
+   * GROUND FRICTION HAS TO STAND DOWN WHILE THE CURRENT IS ON YOU, and this
+   * is the one thing here that touches the existing physics at all.
+   *
+   * voxel-physics-engine's friction is COULOMB -- `dvMax = |friction *
+   * dvNormal|`, where dvNormal is the velocity a tick of gravity just added
+   * into the floor. That is about 1.07 b/s per tick at this gravity, against
+   * the 0.19 b/s the push adds, so a body standing on the bottom had its
+   * lateral velocity clamped to exactly zero every single tick. Measured: the
+   * player drifted 0 blocks in two seconds with the force applying correctly.
+   *
+   * Minecraft has no such term. Entity.travel takes its water branch on
+   * `isInWater()` and that branch never reads Block.getSlipperiness at all --
+   * the only retention in water is the fluid's own 0.8, which here is
+   * `body.fluidDrag` and is already set by the tuning above. So zeroing the
+   * ground friction while the flow is acting is not a workaround for the
+   * engine, it is the engine being asked the question vanilla asks.
+   *
+   * SCOPED TO FLOWING FLUID, WHICH IS WHY IT IS SAFE. `pushOf` returns null
+   * for still water -- a settled pool has a zero flow vector everywhere -- so
+   * every existing fluid spec, all of which use still pools, sees the friction
+   * it has always seen. The saved value is restored the moment the push stops.
+   */
+  const savedFriction = new Map()
+
+  noa.on('tick', () => {
+    const lo = [-EVERYWHERE, -EVERYWHERE, -EVERYWHERE]
+    const hi = [EVERYWHERE, EVERYWHERE, EVERYWHERE]
+    let seen = [0, 0, 0]
+    for (const id of entitiesInBox(noa, lo, hi)) {
+      const a = pushOf(id)
+      const body = noa.ents.getPhysics(id)?.body
+      if (!a || !body) {
+        if (body && savedFriction.has(id)) {
+          body.friction = savedFriction.get(id)
+          savedFriction.delete(id)
+        }
+        continue
+      }
+      if (!savedFriction.has(id)) savedFriction.set(id, body.friction)
+      body.friction = 0
+      /*
+       * A FORCE, not a velocity write, and not an impulse. The rest of this
+       * file's fluid behaviour is expressed as accelerations into the same
+       * solver, and the buoyancy top-up a few lines up is applied exactly this
+       * way. Writing velocity directly would fight the drag that the sink and
+       * climb constants were fitted against -- the one thing the header says
+       * not to disturb.
+       */
+      body.applyForce([a[0] * body.mass, a[1] * body.mass, a[2] * body.mass])
+      if (id === noa.playerEntity) seen = a
+    }
+    lastPush = seen
+  })
+
+  return {
+    /** The acceleration the flow applied to one entity this tick, b/s^2. */
+    accelOn: (entity) => pushOf(entity) || [0, 0, 0],
+    /** What the player got last tick. The debug HUD and the specs read it. */
+    lastPlayerPush: () => lastPush,
+    PUSH_PER_TICK,
+  }
 }

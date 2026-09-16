@@ -218,3 +218,72 @@ test.describe('flowing water has a shape', () => {
     await page.evaluate(() => { window.noa.off('tick', window.__shapePin); window.__shapePin = null })
   })
 })
+
+/*
+ * THE PUSH.
+ *
+ * Reported from play: "Water should be pushing me and Evan!"
+ *
+ *   World.handleMaterialAcceleration, MCP-919:
+ *       vec3 = vec3.normalize();  double d1 = 0.014D;
+ *       entityIn.motionX += vec3.xCoord * d1; ...
+ *
+ *   0.014 b/tick^2 is 5.6 b/s^2 at 400 ticks^2 per second^2, which is the
+ *   conversion src/fluids.js derives for every other fluid constant.
+ *
+ * IT DISCRIMINATES, AND THE MUTATION WAS RUN. `PUSH_PER_TICK.water` in
+ * src/fluids.js was set to 0 and all three failed:
+ *
+ *   the push is 5.6 ...       Expected: 5.6000000000000005  Received: 0
+ *   carries the player ...    the player drifted downstream  Expected: > 0.5  Received: 0
+ *   pushes Evan as well ...   Evan drifted downstream  Expected: > 0.5  Received: 0
+ */
+const PUSH_ACCEL = 0.014 * 400
+
+test.describe('flowing water pushes what is standing in it', () => {
+  test('the push is 5.6 b/s^2 and it points downstream', async ({ page }) => {
+    await buildChannel(page)
+    await pour(page)
+    // Feet on the channel floor, in the middle of the run.
+    await teleport(page, 3.5, Y, 0.5)
+    const a = await page.evaluate(() =>
+      window.game.fluids.flow.push.accelOn(window.noa.playerEntity))
+    expect(Math.hypot(a[0], a[1], a[2])).toBeCloseTo(PUSH_ACCEL, 4)
+    // The channel runs east from the source at x=0, so the push is +x and
+    // nothing else: the walls make the z component exactly zero.
+    expect(a[0]).toBeGreaterThan(0)
+    expect(Math.abs(a[2])).toBeLessThan(1e-9)
+  })
+
+  test('standing in the current carries the player downstream', async ({ page }) => {
+    await buildChannel(page)
+    await pour(page)
+    await teleport(page, 2.5, Y, 0.5)
+    const start = await page.evaluate(() => window.noa.ents.getPosition(window.noa.playerEntity)[0])
+    // No keys are pressed. Anything that moves him is the water.
+    await page.waitForTimeout(2000)
+    const end = await page.evaluate(() => window.noa.ents.getPosition(window.noa.playerEntity)[0])
+    expect(end - start, 'the player drifted downstream').toBeGreaterThan(0.5)
+  })
+
+  test('it pushes Evan as well, and he has his own body', async ({ page }) => {
+    await buildChannel(page)
+    await pour(page)
+    const drift = await page.evaluate(async ([y]) => {
+      const noa = window.noa
+      // Every simulated body except the player: that is Evan.
+      const bodies = noa.ents.getStatesList(noa.ents.names.physics)
+        .map(s => s.__id).filter(id => id !== noa.playerEntity)
+      if (bodies.length === 0) return null
+      const evan = bodies[0]
+      noa.ents.setPosition(evan, 2.5, y, 0.5)
+      // The player stands well clear so nothing they do reaches him.
+      noa.ents.setPosition(noa.playerEntity, 4.5, y + 6, 6.5)
+      const x0 = noa.ents.getPosition(evan)[0]
+      await new Promise(r => setTimeout(r, 2000))
+      return noa.ents.getPosition(evan)[0] - x0
+    }, [Y])
+    expect(drift, 'there is a second body in the world to push').not.toBeNull()
+    expect(drift, 'Evan drifted downstream').toBeGreaterThan(0.5)
+  })
+})
