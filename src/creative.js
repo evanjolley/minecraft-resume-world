@@ -157,8 +157,9 @@ const RULES = [
     'vanilla has these as Natural Blocks because they ARE blocks there; here they '
     + 'are items with no block, and an item in a block tab would be a lie about what it places'],
   [/^(torch|ladder)$/, 'functional_blocks',
-    'Functional Blocks. Both are unplaceable here (no block mesh yet, see items.js) '
-    + 'but the tab is about what the thing IS, and vanilla lists both here'],
+    'Functional Blocks, which is where vanilla lists both. The torch is a real '
+    + 'block now and places one; the ladder is still unplaceable (no block mesh, '
+    + 'see items.js), and the tab is about what the thing IS either way'],
 
   /* ---- colour, before the material rules: a `blue_concrete` is colour
      first and concrete second, which is exactly what the tab means ---- */

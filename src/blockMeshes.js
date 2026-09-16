@@ -125,6 +125,35 @@ for (const facing of Object.keys(FACINGS)) {
   }
 }
 
+/*
+ * The torch, and it is ONE BOX. That is worth saying out loud, because the
+ * torch everybody remembers is two crossed transparent planes and a little
+ * post, and that model is gone: modern `block/template_torch.json` (read out
+ * of 1.21.8's jar, not from memory) is a single element
+ *
+ *     from [7, 0, 7] to [9, 10, 9]
+ *
+ * with all six faces textured and no planes at all. A 2x2 post, ten pixels
+ * tall, sitting in the middle of the cell.
+ *
+ * THE UVS COME OUT RIGHT WITHOUT ASKING, which is luck worth recording so
+ * nobody "fixes" it. Vanilla's side faces are `uv [7, 6, 9, 16]` -- columns
+ * 7..9, rows 6..16 counted from the TOP of the image. This file's mesher cuts
+ * every face from the slice of the texture its box occupies, and a box
+ * spanning x 7..9 and y 0..10 is columns 7..9 and (Babylon uploads flipped,
+ * so v = 0 is the bottom row) the bottom ten rows -- rows 6..16 from the top.
+ * The same pixels, arrived at from the other end.
+ *
+ * The two faces that do NOT match are the cap and the underside, where
+ * vanilla hand-picks `uv [7, 6, 9, 8]` and `[7, 13, 9, 15]` instead of the
+ * natural slice's rows 7..9. Both are 2x2 pixels: one is the lit tip seen
+ * from directly above, the other is against the floor. Reproducing them means
+ * a per-face UV override in `buildShapeMesh` for a two-pixel difference
+ * nobody can see. Rejected; if a sign ever needs real per-face UVs, that is
+ * the change to make and this is the note that says it was considered.
+ */
+SHAPE_BOXES.torch = [[7 / 16, 0, 7 / 16, 9 / 16, 10 / 16, 9 / 16]]
+
 /* ------------------------------------------------------------------ *
  * Meshing.
  *
@@ -407,7 +436,7 @@ export function installThinInstanceUploadFix(noa) {
  * Signs are next and will be in this set for the same reason (docs/FUTURE.md
  * item 1). It is a capability of the file, not a torch's special case.
  */
-export const PASS_THROUGH_SHAPES = new Set()
+export const PASS_THROUGH_SHAPES = new Set(['torch'])
 
 /** Minecraft's player step height: onto a slab, never onto a full block. */
 const STEP_HEIGHT = 0.6

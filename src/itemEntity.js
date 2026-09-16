@@ -13,6 +13,7 @@ import { BLOCK_BY_ID } from './blocks.js'
 import { MC } from './physics.js'
 import { shapeBoxesFor } from './blockMeshes.js'
 import { createHeldBlockMesh, blockTextureUrl } from './heldItem.js'
+import { trackEntityLight } from './entityLight.js'
 import { item, isBlockItem, stackMax, dropFor, rollDrops } from './items.js'
 
 /*
@@ -176,7 +177,9 @@ export function installItemEntities(noa, deps = {}) {
     if (!def) return null
 
     let mesh
-    if (isBlockItem(id)) {
+    // `!def.flat`: a torch places a block and is still drawn as a sprite,
+    // because vanilla's item model for it is `item/generated`. See items.js.
+    if (isBlockItem(id) && !def.flat) {
       const block = BLOCK_BY_ID.get(def.places)
       if (!block) return null
       mesh = createHeldBlockMesh(noa, `drop-${def.key}`)
@@ -205,6 +208,34 @@ export function installItemEntities(noa, deps = {}) {
     }
 
     mesh.material.specularColor = new Color3(0, 0, 0)
+    /*
+     * A drop responds to light like the thing it was a moment ago.
+     *
+     * The block branch above got this from createHeldBlockMesh; the sprite
+     * branch builds its own material and has to ask. Without it a dropped
+     * ingot was the one object in the world that never got dark -- the same
+     * bug the held block had, in the same shape, because both skipped the
+     * same call.
+     *
+     * THE PROBE IS THE PLAYER, NOT THE DROP, and that is a real difference
+     * from vanilla: ItemEntityRenderer lights each dropped item at its OWN
+     * position. It cannot be done here. Every drop of one item type is a THIN
+     * INSTANCE of a single mesh sharing a single material, and a material
+     * carries one brightness, so there is no per-drop channel to put a
+     * per-drop light in. Rejected: a per-instance colour buffer plus
+     * VERTEXCOLOR on the material, which is the honest fix and is a rewrite
+     * of the matrix-upload path below for an object a quarter of a block
+     * across. Rejected also: no probe at all (sky-only, block light ignored),
+     * which is defensible until you drop something at your feet under a
+     * glowstone and watch it stay black while you are lit.
+     *
+     * What it costs: a drop far from the player in DIFFERENT light than the
+     * player is lit by the player's light. Worst case is a drop across a dark
+     * room from a glowstone you are standing on.
+     */
+    if (!isBlockItem(id)) {
+      trackEntityLight(mesh.material, () => noa.ents.getPosition(noa.playerEntity))
+    }
     /*
      * The instance matrices carry world coordinates, so the base mesh's own
      * bounding box says nothing about where the drops are. Skip the octree's

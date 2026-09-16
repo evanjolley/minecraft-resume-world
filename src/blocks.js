@@ -957,7 +957,44 @@ const FLUID_FLOW_BLOCKS = [
   ...flowSet(647, FLUID_BY_KEY.get('lava'), 'Lava'),
 ]
 
-export const BLOCK_TYPES = normaliseHardness([...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER, ...FLUID_FLOW_BLOCKS])
+/* ------------------------------------------------------------------ *
+ * Torches.
+ *
+ * The third kind of non-cube, and the first that is not a solid lump of a
+ * cube's texture. Three things about it are new to this table and each of
+ * them is a general capability rather than a torch's special case -- see
+ * blockMeshes.js, which owns all three:
+ *
+ *   - `cutout`, because a torch's texture is mostly nothing and an opaque
+ *     material draws the nothing as a black box.
+ *   - a PASS_THROUGH shape, because you walk through a torch.
+ *   - `flatItem`, because vanilla's item model for a torch is
+ *     `item/generated` -- a flat sprite, not a little cube. items.js has the
+ *     long version.
+ *
+ * `alpha: true` here does exactly one thing and it is not rendering: a shape
+ * block passes no material to noa (see registerBlocks), so the flag only
+ * decides which atlas PAGE the name `torch` is filed on. It buys the layer
+ * nothing, and it is set anyway because the texture really does have alpha
+ * and a transparent PNG on the opaque page is a lie waiting to be believed by
+ * whatever reads the page flags next.
+ *
+ * Hardness 0, requiring no tool: vanilla's, and it is why a torch breaks the
+ * instant you touch it.
+ *
+ * APPENDED LAST, after the sixteen flow ids, for the reason every other
+ * comment in this file about ids gives: they are save data and the only safe
+ * place to add one is the end.
+ * ------------------------------------------------------------------ */
+const TORCHES = [
+  {
+    id: 655, key: 'torch', name: 'Torch', all: 'torch', alpha: true,
+    shape: 'torch', cutout: true, flatItem: true, hardness: T(0, false),
+  },
+]
+
+export const BLOCK_TYPES = normaliseHardness(
+  [...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER, ...FLUID_FLOW_BLOCKS, ...TORCHES])
 
 // Ids must be contiguous from 1. noa fills any gap with a silently-registered
 // filler block that has no material, which renders as untextured white and is
@@ -1273,7 +1310,10 @@ export function registerBlocks(noa) {
         // faces a slab doesn't actually cover.
         solid: false,
         opaque: false,
-        blockMesh: buildShapeMesh(scene, def.key, boxes, materialFor(def.all)),
+        // `cutout` is opt-in per block and the cache keys on it, so asking for
+        // one here cannot turn the 280 slab and stair materials transparent.
+        blockMesh: buildShapeMesh(
+          scene, def.key, boxes, materialFor(def.all, { cutout: def.cutout === true })),
       })
       continue
     }

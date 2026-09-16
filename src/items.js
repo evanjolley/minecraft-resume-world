@@ -133,23 +133,34 @@ const MATERIALS = [
 /*
  * Items that would be blocks in Minecraft but cannot be here.
  *
- * A torch and a ladder are both non-cube geometry, and this world is
- * 355 full cubes -- noa supports custom block meshes via `blockMesh` and
- * nothing here uses it yet (docs/FUTURE.md calls that out as the thing
- * standing between this and importing real builds). So they craft, they
- * stack, they sit in the inventory, and `itemPlaces` says 0.
+ * A ladder is non-cube geometry and there is no ladder block yet, so it
+ * crafts, it stacks, it sits in the inventory, and `itemPlaces` says 0.
  *
- * Including them rather than dropping their recipes is the deliberate choice:
- * a torch recipe that produces nothing is a hole a visitor notices, while an
- * item that exists and cannot yet be placed is exactly what it looks like --
- * a block that hasn't been modelled. When blockMesh lands, these gain a
- * `places` and every recipe below is already correct.
+ * Including it rather than dropping its recipe is the deliberate choice: a
+ * recipe that produces nothing is a hole a visitor notices, while an item
+ * that exists and cannot yet be placed is exactly what it looks like -- a
+ * block that hasn't been modelled.
+ *
+ * THE TORCH WAS HERE AND HAS LEFT, which is what this list was written for:
+ * "when blockMesh lands, these gain a `places` and every recipe below is
+ * already correct". It landed. The torch is now a real block in blocks.js and
+ * therefore a real BLOCK ITEM below, with the id of the block it places.
+ *
+ * That renumbered every item after it by one -- ladder, the 45 tools, the 20
+ * armour pieces, the gear. Item ids are world data and the rule at the top of
+ * this file is append-never-renumber, so this is a deliberate exception taken
+ * while it is still free: nothing in this project writes an item id anywhere
+ * that outlives the tab. There is no save format, the worker carries presence
+ * and chat rather than inventories, and the only other numbering (block ids)
+ * was appended to rather than disturbed. The alternative was leaving the
+ * torch at 1033 while it places block 655, which breaks the one rule the
+ * shared number space exists to express -- that an item's id IS its block's.
+ * Take the renumber now or take it never.
  */
 const UNPLACEABLE = [
-  // `from: 'block'` because that is where vanilla keeps their art too:
-  // models/item/torch.json is an `item/generated` whose layer0 is
-  // `block/torch`. There is no textures/item/torch.png in the game.
-  { key: 'torch', name: 'Torch', from: 'block' },
+  // `from: 'block'` because that is where vanilla keeps its art too:
+  // models/item/ladder.json is an `item/generated` whose layer0 is
+  // `block/ladder`. There is no textures/item/ladder.png in the game.
   { key: 'ladder', name: 'Ladder', from: 'block' },
 ]
 
@@ -281,9 +292,34 @@ function titleCase(key) {
  * and would silently stop matching the day a family is named differently.
  */
 const isOrientationVariant = (b) => b.shape !== undefined && b.drops !== undefined
+
+/*
+ * FLAT BLOCK ITEMS, and the rule is vanilla's rather than an exception.
+ *
+ * A block item is drawn as a little 3D cube in the slot, in the hand and on
+ * the floor -- three renderers, one question, `def.places`. That is right for
+ * 355 cubes and wrong for a torch, because in Minecraft a block's ITEM MODEL
+ * decides how it is held, and `models/item/torch.json` is an `item/generated`
+ * whose layer0 is `block/torch`: a flat sprite. Vanilla holds a torch as a
+ * picture of a torch, not as a cube with torch art on all six faces, and the
+ * same is true of every ladder, rail, flower and sign in the game.
+ *
+ * So blocks.js marks such a block `flatItem`, and the three renderers ask
+ * `def.flat` alongside `def.places`. One word each, and they are the same
+ * three branches that already existed -- the alternative was a fourth
+ * concept ("blocks that render like items") threaded through all of them.
+ *
+ * `texture` and `from` ride along because that is what the sprite path needs
+ * and where vanilla keeps the art: there is no textures/item/torch.png in the
+ * game, the item model points at `block/torch`, and ITEM_TEXTURES below tells
+ * the build to resolve it out of `block/` for exactly that reason.
+ */
 const BLOCK_ITEMS = BLOCK_TYPES
   .filter(b => !b.fluid && !b.invisible && !isOrientationVariant(b))
-  .map(b => ({ id: b.id, key: b.key, name: b.name, places: b.id, block: b }))
+  .map(b => ({
+    id: b.id, key: b.key, name: b.name, places: b.id, block: b,
+    ...(b.flatItem ? { flat: true, texture: b.key, from: 'block' } : {}),
+  }))
 
 const NON_BLOCK = [...MATERIALS, ...UNPLACEABLE, ...TOOLS, ...ARMOR, ...GEAR]
   .map((def, i) => ({
@@ -359,9 +395,14 @@ export const armorOf = (id) => ITEM_BY_ID.get(id)?.armor ?? null
  * Exported for the same reason blocks.js exports MATERIALS: so the build
  * script reads the list from the one file that defines it instead of keeping
  * a parallel copy that drifts. Block items are absent -- they render as CSS
- * cubes off the block textures that already exist.
+ * cubes off the block textures that already exist -- EXCEPT the flat ones,
+ * which are drawn as sprites and therefore need a sprite. Filtering on
+ * `texture` rather than on the list an item came from is what keeps those two
+ * facts as one fact.
  */
-export const ITEM_TEXTURES = NON_BLOCK.map(({ texture, from }) => ({ name: texture, from }))
+export const ITEM_TEXTURES = ITEMS
+  .filter(i => i.texture)
+  .map(({ texture, from }) => ({ name: texture, from }))
 
 /*
  * Sanity: every block item must resolve back to its block. Cheap, and it
@@ -708,6 +749,14 @@ const DROP_RULES = [
   [/_(slab|slab_top|stairs)$|_stairs_(north|south|east|west)_(top|bottom)$/, self,
     'every non-cube variant drops the family block blocks.js already points it at'],
   [/^tinted_glass$/, self, 'the one glass that survives being broken -- vanilla exception, not an oversight'],
+  /*
+   * The torch, and the wall torches it becomes when you put it on a wall.
+   * `self` is enough for all five because blocks.js points each wall variant's
+   * `drops` at the floor torch, exactly as it does for a stair -- so mining
+   * one off a wall gives you a Torch, not a Torch (East).
+   */
+  [/^torch$|^wall_torch_(north|south|east|west)$/, self,
+    'a torch drops itself, from the floor or off a wall'],
   [/^planks$|_planks$|_log$|_wood$|_stem$|_hyphae$|^bamboo_(planks|mosaic|block)$|^stripped_bamboo_block$/, self,
     'every wood: logs, planks, stems, hyphae and the bamboo set'],
   [/_wool$|_concrete$|_concrete_powder$|terracotta$/, self,

@@ -188,7 +188,9 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
   inventory.onChange((inv) => {
     const stack = inv.slots[inv.selected]
     const def = stack ? item(stack.id) : null
-    const block = def?.places ? BLOCK_BY_ID.get(def.places) : null
+    // `!def.flat` -- a torch places a block and is held as a sprite anyway,
+    // which is vanilla's rule about item models. See items.js.
+    const block = def?.places && !def.flat ? BLOCK_BY_ID.get(def.places) : null
 
     handMode = block ? 'block' : def ? 'item' : 'empty'
     handBlock.setEnabled(handMode === 'block')

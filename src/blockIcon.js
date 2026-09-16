@@ -24,7 +24,15 @@ import { item, itemPlaces } from './items.js'
  * and we lose the ability to size icons with CSS alone.
  */
 export function createItemIcon(itemId, size = 32) {
-  return itemPlaces(itemId)
+  /*
+   * `!item(itemId)?.flat` is the third case this function grew: an item that
+   * PLACES a block and is still drawn flat. It is vanilla's own rule -- a
+   * block's item model decides how the item looks, and a torch's is
+   * `item/generated`, a sprite. items.js has the long version and marks the
+   * item; without this a torch would be a little cube wearing torch art on
+   * all three faces, which is not a thing Minecraft has ever drawn.
+   */
+  return itemPlaces(itemId) && !item(itemId)?.flat
     ? blockCube(itemPlaces(itemId), size)
     : flatSprite(itemId, size)
 }

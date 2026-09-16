@@ -75,10 +75,50 @@ const qB = new Quaternion()
 const qC = new Quaternion()
 
 /*
+ * WHERE A HELD THING GETS ITS LIGHT, and the one rule this file now keeps.
+ *
+ * THE BUG: three material factories live in this file and only ONE of them
+ * called trackEntityLight. A diamond axe dimmed at dusk because createItemMesh
+ * was wired up; the dirt block in the same hand did not, because the cube
+ * factory below and the viewmodel's own `held-mat` were not. Same hand, same
+ * frame, two different worlds.
+ *
+ * Vanilla's rule, read off ItemRenderer rather than remembered:
+ *
+ *   private void setLightMapFromPlayer(AbstractClientPlayer clientPlayer) {
+ *       int i = this.mc.theWorld.getCombinedLight(new BlockPos(
+ *           clientPlayer.posX,
+ *           clientPlayer.posY + (double)clientPlayer.getEyeHeight(),
+ *           clientPlayer.posZ), 0);
+ *       ...
+ *       OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit, f, f1);
+ *   }
+ *
+ * (MCP-919, net/minecraft/client/renderer/ItemRenderer.java, called from
+ * renderItemInFirstPerson.) One lightmap coordinate, set once, before EITHER
+ * the item or the bare arm is drawn. So the held thing is not lit where it is
+ * and not lit by what you are looking at -- IT IS AS BRIGHT AS YOU ARE, and
+ * that is why the arm and the thing in it always agree.
+ *
+ * Note the sample is at the player's EYE, and this probe answers his FEET,
+ * because that is the voxel every other entity material here is already
+ * probed at (entityLight.js says why, and playerModel.js's skin -- which IS
+ * the first-person arm -- uses it). Rejected: an eye-height probe just for
+ * held things, which is one voxel more faithful and makes the item disagree
+ * with the arm holding it every time you stand in a doorway. Agreeing with
+ * the arm is the whole point of the vanilla behaviour above; being right
+ * about which of two voxels is not.
+ */
+const atPlayer = (noa) => () => noa.ents.getPosition(noa.playerEntity)
+
+/*
  * A cube showing one block type, built from that block's pre-baked 3-tile
  * atlas [side | top | bottom] via Babylon faceUV. Shared by the first-person
- * viewmodel and the block held in the third-person model's hand, so both
- * always show the same thing.
+ * viewmodel, the block held in the third-person model's hand, and the block
+ * lying on the ground as a drop, so all three always show the same thing --
+ * and, since the trackEntityLight call lives HERE rather than at the three
+ * call sites, are lit the same too. That placement is the fix: a fourth
+ * caller cannot forget it.
  *
  * Babylon's face order is [+Z, -Z, +X, -X, +Y, -Y].
  */
@@ -95,6 +135,8 @@ export function createHeldBlockMesh(noa, name) {
   ]
   const mesh = CreateBox(name, { size: 1, faceUV, wrap: true }, scene)
   mesh.material = noa.rendering.makeStandardMaterial(`${name}-mat`)
+  // See atPlayer above. This is the line whose absence was the bug.
+  trackEntityLight(mesh.material, atPlayer(noa))
   mesh.isPickable = false
   noa.rendering.addMeshToScene(mesh)
   return mesh
@@ -155,7 +197,7 @@ export function createItemMesh(noa, name) {
    * has to dim at dusk along with the hand holding it. This was the same flat
    * 0.45 the skin had, and had the same bug; entityLight.js owns it now.
    */
-  trackEntityLight(mat, () => noa.ents.getPosition(noa.playerEntity))
+  trackEntityLight(mat, atPlayer(noa))
   mesh.material = mat
   mesh.isPickable = false
   mesh.rotationQuaternion = new Quaternion()
@@ -250,24 +292,6 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
   scene.setRenderingAutoClearDepthStencil(1, true, true, true)
 
   /*
-   * One box, one texture. Each block type has a pre-baked 3-tile atlas
-   * [side | top | bottom], and faceUV maps each of the box's six faces onto
-   * the right third of it. Road not taken: a MultiMaterial, which needs
-   * hand-built submeshes and six draw calls for one small cube.
-   *
-   * Babylon's face order is [back, front, right, left, top, bottom].
-   */
-  const third = 1 / 3
-  const faceUV = [
-    new Vector4(0, 0, third, 1),           // back   -> side tile
-    new Vector4(0, 0, third, 1),           // front  -> side tile
-    new Vector4(0, 0, third, 1),           // right  -> side tile
-    new Vector4(0, 0, third, 1),           // left   -> side tile
-    new Vector4(third, 0, third * 2, 1),   // top    -> top tile
-    new Vector4(third * 2, 0, 1, 1),       // bottom -> bottom tile
-  ]
-
-  /*
    * The viewmodel root: one node holding the hand's PLACE, with the block cube
    * and the item slab hanging off it as siblings.
    *
@@ -288,21 +312,30 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
   const viewmodel = new TransformNode('viewmodel', scene)
   viewmodel.parent = camera
 
-  const mesh = CreateBox('held', { size: 1, faceUV, wrap: true }, scene)
-  mesh.material = noa.rendering.makeStandardMaterial('held-mat')
+  /*
+   * The held block, from the SAME factory the third-person hand and the
+   * ground drop use.
+   *
+   * This used to be its own CreateBox with its own copy of the faceUV table
+   * and its own bare `held-mat` -- byte-identical geometry to
+   * createHeldBlockMesh, built four lines away from it -- and the copy is why
+   * this one cube was the last unlit thing in the hand. Calling the factory
+   * keeps the name ('held', hence 'held-mat', unchanged for anything reading
+   * the scene) and picks up trackEntityLight for free. Rejected: adding a
+   * second trackEntityLight call here, which fixes today's bug and leaves the
+   * duplicated cube in place to grow the next one.
+   */
+  const mesh = createHeldBlockMesh(noa, 'held')
   mesh.parent = viewmodel
   mesh.renderingGroupId = 1
-  mesh.isPickable = false
   mesh.scaling.setAll(SCALE)
   // Rotations are composed as quaternions below, so Babylon must be told to
   // use the quaternion rather than the Euler `rotation` vector.
   mesh.rotationQuaternion = new Quaternion()
-
-  // REQUIRED. noa installs its own selection octree on the scene, so Babylon
-  // picks what to render from that octree rather than from scene.meshes. A
-  // mesh built directly in the scene and never registered here is simply
-  // never drawn -- no error, no warning, it just isn't there.
-  noa.rendering.addMeshToScene(mesh)
+  // isPickable and the addMeshToScene registration came with the factory. That
+  // second one is REQUIRED and easy to lose in a move like this: noa renders
+  // from its own selection octree rather than from scene.meshes, so a mesh it
+  // was never handed is silently never drawn.
 
   /*
    * The non-block item, and the thing this file used to draw nothing at all
@@ -477,7 +510,9 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
     const def = stack ? item(stack.id) : null
     if (!def) { mode = EMPTY; return }
 
-    const block = def.places ? BLOCK_BY_ID.get(def.places) : null
+    // `!def.flat` -- a torch places a block and is held as a sprite anyway,
+    // which is vanilla's rule about item models. See items.js.
+    const block = def.places && !def.flat ? BLOCK_BY_ID.get(def.places) : null
     if (block) {
       mode = BLOCK
       mesh.material.diffuseTexture = textureFor(blockTextureUrl(block))
