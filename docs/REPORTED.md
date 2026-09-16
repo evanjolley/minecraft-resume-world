@@ -260,21 +260,76 @@ left standing rather than edited because the corrections are the useful part.
 **Two new reports from play, both consequences of this build.**
 
 **5a. Glowstone lights directionally rather than radially.** Evan, 2026-09-16 —
-it does not diffuse out evenly in all directions. The BFS is almost certainly
-not the culprit; it floods all six neighbours symmetrically and the falloff is
-covered by `test/56-block-light.spec.js`. **The leading hypothesis is the
-mesher.** noa merges faces greedily and its merge predicate compares material
-and the AO mask and *nothing else*, because noa has no light to compare. So a
-flat floor becomes one enormous quad with four vertices at its far corners,
-light is sampled only at those corners, and the GPU interpolates linearly
-across the whole span — a glowstone in the middle contributes almost nothing to
-any corner, and whatever gradient appears leans toward the nearest one. Vanilla
-avoids this by refusing to merge faces whose light levels differ. **Flagged as
-a hypothesis, NOT a diagnosis** — it has not been reproduced by experiment. The
-cheap test is glowstone against a small irregular surface where greedy merging
-has nothing to merge, and seeing whether the falloff goes round. If confirmed,
-the fix sits *inside* noa's greedy mesher, below the instance-level wrap this
-engine uses to stay off a fork.
+it does not diffuse out evenly in all directions.
+
+**CONFIRMED 2026-09-16 by experiment, and the hypothesis below was right.** It
+is written out in full first, because it was recorded as a hypothesis and the
+point of the record is that it survived a test rather than that it sounded
+good. The hypothesis was: the BFS is not the culprit — it floods all six
+neighbours symmetrically and `test/56-block-light.spec.js` covers the falloff —
+and the mesher is. noa merges faces greedily and its merge predicate
+(`node_modules/noa-engine/src/lib/terrainMesher.js`, `maskCompare`) compares
+the material id and the AO mask and **nothing else**, because noa has no light
+to compare. So a flat floor becomes a handful of enormous quads, light is
+sampled only at their corners, and the GPU interpolates linearly across the
+whole span. Vanilla avoids this by refusing to merge faces whose light levels
+differ.
+
+`test/58-glowstone-radial.spec.js` is the cheap test that 5a named and never
+ran: a glowstone on a 25x25 flat pad, and the same pad chequered so that no two
+top faces are coplanar and greedy merging has nothing to merge. It reads the
+finished Babylon buffers back and reports each up-facing quad's span in blocks
+and its four corner light levels. The numbers, and they are not close:
+
+```
+[flat]    up-facing quads over the 25x25 pad: 17    widest quad: 13 blocks
+[flat]      quad at (-12,-12) 12x11  corners 0 / 2 / 13 / 1
+[flat]      quad at (-12,  0) 13x11  corners 2 / 0 /  1 / 13
+[flat]      quad at ( -1,  2) 11x5   corners 12 / 1 / 0 / 10
+[chequer] up-facing quads over the 25x25 pad: 624   widest quad: 1 block
+[chequer]   quad at (-10,-1) 1x1  corners 2 / 3 / 4 / 3
+```
+
+625 floor blocks become **seventeen quads**, one of them thirteen blocks wide
+with corner values 2, 0, 1 and 13. That last quad *is* the report: the GPU is
+drawing a straight ramp from 13 down to 0 across thirteen blocks, so the light
+leans toward whichever corner happens to be nearest the glowstone instead of
+falling off around it. Which corner that is depends on where the emitter sits
+relative to the **chunk-origin-relative greedy sweep**, not on anything about
+the light — which is exactly why it reads as a direction. Chequer the same pad
+and every quad is 1x1, every corner carries its own BFS value, and the falloff
+goes round. Screenshots: `test/screenshots/glowstone-flat-top.png` against
+`glowstone-chequer-top.png`.
+
+Worth recording because it is worse than 5a guessed: on a pad large enough that
+no quad corner is within 15 blocks of the emitter, the floor gets **no light at
+all**. The first run of this probe reported zero lit vertices and a visible
+glow, and the glow turned out to be the night fog vignette. A glowstone on a
+big open floor is not dimly lit from one side; it is unlit, and only the
+broken-up floor of a small room lights at all — which is why
+`test/56-block-light.spec.js` passes. Its 7x7 walled room is too small and too
+chopped up by AO for the mesher to eat.
+
+**The fix does not need a fork, and that is the one thing 5a got wrong.** 5a
+said the fix "sits *inside* noa's greedy mesher, below the instance-level wrap
+this engine uses to stay off a fork". The merge predicate does, but the fix
+need not live there. noa's `MeshBuilder` lays its buffers out perfectly
+regularly — four vertices per quad in a fixed order (`addPositionValues`: v0 =
+corner, v1 = corner + width, v3 = corner + height), six indices per quad, and
+UVs linear in width and height — so `writeVertexLight` can read a quad's span
+straight off the buffer, which is what the probe above already does. Splitting
+the lit ones into unit sub-quads in the readback is therefore possible entirely
+inside `src/blockLight.js`, with no fork and no vendoring. **Not built**, and
+two things have to be decided before it is:
+
+- **Which quads to split.** Splitting everything undoes greedy meshing and the
+  vertex count it exists to control; splitting only quads a lit voxel touches
+  keeps the cost proportional to the number of emitters, but leaves
+  T-junctions where a split quad meets an unsplit neighbour.
+- **AO and triangulation.** Colours interpolate per-triangle, and noa picks
+  each quad's diagonal with `decideTriDir`. Subdividing changes both, so
+  ambient occlusion will shift slightly on any quad that is split.
+  `test/36-face-shading.spec.js` is the spec that would catch it going wrong.
 
 **5b. Sky light is not built, so caves are still bright.** The block half is
 what shipped. Vanilla seeds sky light at 15 in every column open to the sky,

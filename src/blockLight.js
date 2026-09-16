@@ -510,6 +510,28 @@ export function installBlockLight(noa, { ids = {} } = {}) {
    * normal says which side "outside" is; the other two axes give the 2x2.
    * Opaque voxels are skipped rather than counted as zero -- counting them
    * would draw a dark rim around every lit block where it meets the floor.
+     *
+   * KNOWN BROKEN, and measured rather than suspected. A terrain vertex is NOT
+   * a block corner once noa's greedy mesher has been at it: `maskCompare` in
+   * `terrainMesher.js` merges faces whose material and AO mask agree and knows
+   * nothing about light, so a flat floor arrives here as a handful of quads
+   * many blocks wide. This loop then writes light at their four corners and
+   * the GPU ramps linearly across the whole span -- which is what Evan saw as
+   * "glowstone lights directionally instead of radially" (docs/REPORTED.md
+   * 5a, confirmed). `test/58-glowstone-radial.spec.js` has the numbers: 625
+   * floor blocks become 17 quads, one of them 13 wide with corner levels
+   * 2/0/1/13, and the same floor chequered so nothing can merge gives 624
+   * quads of 1x1 and a falloff that goes round.
+   *
+   * The fix does NOT need a fork, which is the part the docs had wrong. noa's
+   * MeshBuilder writes four vertices per quad in a fixed order (v0 = corner,
+   * v1 = corner + width, v3 = corner + height) with six indices and linear
+   * UVs, so a quad's span is readable straight off these same buffers and lit
+   * quads could be split into unit sub-quads right here. Undecided and
+   * therefore unbuilt: which quads to split (splitting all of them undoes
+   * greedy meshing; splitting only lit ones leaves T-junctions at the border)
+   * and what the resulting retriangulation does to AO, which interpolates
+   * per-triangle and whose diagonal noa picks with `decideTriDir`.
    */
   function writeVertexLight(mesh, chunk) {
     const pos = mesh.getVerticesData(VertexBuffer.PositionKind)
