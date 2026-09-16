@@ -483,7 +483,58 @@ async function meanColour(page, clip) {
   }), `data:image/png;base64,${buf.toString('base64')}`)
 }
 
-test('the torch is a torch and not a black box, and here is the picture', async ({ page, terrain }) => {
+test('the cutout material is on the torch and on nothing else', async ({ page }) => {
+  /*
+   * WHAT THE TRIAGE EXPECTED, AND WHAT IS ACTUALLY THERE.
+   *
+   * docs/REPORTED.md 3 called alpha the cheapest of the four obstacles: "a
+   * torch is a 16x16 sprite that is mostly transparent, so it needs a cutout
+   * material". That was written about the torch everybody remembers -- two
+   * crossed full-cell planes, which really are 252 transparent pixels each.
+   *
+   * The modern model is one 2x2 post, and its faces sample columns 7..9 and
+   * rows 6..16 of the sprite, which is EXACTLY the part with paint on it. A
+   * torch drawn with a plain opaque material looks identical, and that is not
+   * a guess: `cutout` was forced off and the picture was taken again, and the
+   * torch came back a torch. Obstacle 1 dissolves on contact with the actual
+   * model.
+   *
+   * So this test does not claim a pixel difference there is none of. It
+   * asserts the thing that DOES matter about the cutout and is the reason it
+   * was built as a capability of the cache rather than a torch's special
+   * case: the torch has it, and the 280 slab and stair variants that share
+   * the cache do NOT. Signs are the consumer that will need the pixels.
+   */
+  const flags = await page.evaluate(([torch, slab]) => {
+    const look = (id) => {
+      const mesh = window.noa.registry._blockMeshLookup[id]
+      if (!mesh || !mesh.material) return null
+      return {
+        hasAlpha: !!mesh.material.diffuseTexture?.hasAlpha,
+        backFaceCulling: mesh.material.backFaceCulling,
+        material: mesh.material.name,
+      }
+    }
+    return { torch: look(torch), slab: look(slab) }
+  }, [TORCH, 356])
+
+  console.log('[cutout]', JSON.stringify(flags))
+
+  // Non-vacuous: both meshes have to exist before their flags mean anything.
+  expect(flags.torch).not.toBeNull()
+  expect(flags.slab).not.toBeNull()
+
+  expect(flags.torch.hasAlpha).toBe(true)
+  expect(flags.torch.backFaceCulling).toBe(false)
+  // THE HALF THAT PROTECTS THE 280. An oak slab goes through the same cache
+  // and must come back with the plain material, or the cutout flag leaked.
+  expect(flags.slab.hasAlpha).toBe(false)
+  expect(flags.slab.backFaceCulling).toBe(true)
+  // ...and they are two different materials, which is what the cache key buys.
+  expect(flags.torch.material).not.toBe(flags.slab.material)
+})
+
+test('five torches in a dark room, photographed', async ({ page, terrain }) => {
   await terrain.keep([CX - 6, PY - 1, CZ - 6], [CX + 6, PY + 6, CZ + 6])
   await torchRoom(page)
   await useGamemode(page, 'creative')
@@ -554,13 +605,13 @@ test('the torch is a torch and not a black box, and here is the picture', async 
   await shot(page, 'torch-room-overview')
 
   /*
-   * THE CUTOUT, as a number. A torch sprite is 2 pixels of art in a 16x16
-   * tile; drawn with an opaque material the other 252 pixels are BLACK, and
-   * the whole cell reads as a dark rectangle. So: sample a crop containing
-   * the floor torch and compare it against the same crop with the torch gone.
-   * If the margin were opaque the crop would get DARKER when the torch
-   * appears. It gets brighter, because a lit torch is the brightest thing in
-   * a midnight room and nothing around it is being blacked out.
+   * The one number in a test full of pictures: the torch is actually DRAWN
+   * and actually LIT. Sample a crop aimed at the floor torch, then take the
+   * torch away and sample the same crop. A torch that failed to mesh, or one
+   * whose material never loaded, leaves those two equal.
+   *
+   * This was written as a cutout measurement and is not one -- see the test
+   * above for why a torch looks the same either way.
    */
   /*
    * Aimed AT the floor torch from two blocks away and a little above, so the
@@ -581,12 +632,11 @@ test('the torch is a torch and not a black box, and here is the picture', async 
   await waitFrames(page, 6)
   const without = await meanColour(page, clip)
 
-  console.log(`[cutout] crop with torch ${withTorch.join('/')}, without ${without.join('/')}`)
+  console.log(`[drawn] crop with torch ${withTorch.join('/')}, without ${without.join('/')}`)
   const mean = (c) => (c[0] + c[1] + c[2]) / 3
   // Non-vacuous: a crop of pure black in BOTH states would mean the camera is
   // pointed at nothing and the comparison below is meaningless.
   expect(mean(withTorch) + mean(without)).toBeGreaterThan(1)
-  // Brighter with the torch than without. An opaque 16x16 sprite would do the
-  // opposite -- it would paint a black square over the wall behind it.
-  expect(mean(withTorch)).toBeGreaterThan(mean(without))
+  // Brighter with the torch than without, by a margin no dithering explains.
+  expect(mean(withTorch)).toBeGreaterThan(mean(without) + 5)
 })

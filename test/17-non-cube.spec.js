@@ -39,7 +39,11 @@ import {
  *
  * All of it sits inside the 80-block island and above the grass at y=64.
  */
-const IDS_AT = { x: 8, y: 72, z: 0, wide: 20, deep: 14 }   // 280 ids, 20 a row
+// 300 cells, 20 a row. It was 14 rows for the 280 slab and stair variants and
+// held exactly them, so the five torch ids overflowed it the day they landed
+// -- which is the check below doing its job. One more row, not a bigger
+// assertion.
+const IDS_AT = { x: 8, y: 72, z: 0, wide: 20, deep: 15 }
 const ORIENT_AT = { x: -10, y: 76, z: 0 }
 /*
  * The slab/stair rig, built in mid-air well clear of the terrain.
@@ -82,7 +86,7 @@ test.describe('non-cube blocks', () => {
 
       expect(placement.bad, `${placement.bad.length} of ${placement.count} ids did not`
         + ` round-trip: ${placement.bad.slice(0, 5).join(' | ')}`).toEqual([])
-      // Sanity on the fixture itself: 14 rows of 20 is the box kept above, and
+      // Sanity on the fixture itself: 15 rows of 20 is the box kept above, and
       // a table that outgrows it would silently leave blocks behind.
       expect(placement.count,
         `${placement.count} non-cube blocks, more than the scratch box holds`)
@@ -109,7 +113,7 @@ test.describe('non-cube blocks', () => {
         .toBeGreaterThanOrEqual(placement.count)
 
       // Babylon reports a shape it could not build as a console error rather
-      // than by throwing, so placing all 280 is the moment to look.
+      // than by throwing, so placing every one of them is the moment to look.
       expect(errors.since(since), 'placing every non-cube block logged an error')
         .toEqual([])
     })
