@@ -59,8 +59,10 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
  * arrives through diffuseTexture, which is what baseColor.rgb multiplies by.
  *
  * Rejected: reading light from the voxel the entity stands in, like vanilla.
- * noa has no light engine -- ambient occlusion and one directional vector,
- * with no per-voxel value to query. See the cave limitation below.
+ * That was rejected because noa had no light engine -- ambient occlusion and
+ * one directional vector, with no per-voxel value to query. THAT IS NO LONGER
+ * TRUE: src/blockLight.js shipped 2026-09-16 and exposes getBlockLight, so
+ * the rejection stands only on inertia now. See the cave limitation below.
  */
 
 /** Vanilla light.glsl's `* 0.6 + 0.4`, and the reason those two sum to 1. */
@@ -71,9 +73,11 @@ export const ENTITY_DIFFUSE = 1 - ENTITY_FLOOR
  * WHAT THIS DOES NOT DO: BLOCK LIGHT, AND THEREFORE CAVES.
  *
  * Minecraft lights an entity from max(skyLight * daylight, blockLight) at its
- * position. Only the first half is implementable here, because noa has no
- * light propagation at all -- the same gap that made the F3 screen drop its
- * Client/Server Light lines. So this is correct outdoors and WRONG
+ * position. Only the first half is implemented here. The REASON has changed
+ * and the comment is corrected rather than deleted: it used to be that noa had
+ * no light propagation at all. It has block light now (src/blockLight.js), and
+ * this file has simply not been wired to getBlockLight -- which is a small job,
+ * not a missing feature. Sky light is still genuinely absent. So this is correct outdoors and WRONG
  * UNDERGROUND: a player in a cave stays lit as if they were standing in the
  * open, and a torch does not light them.
  *

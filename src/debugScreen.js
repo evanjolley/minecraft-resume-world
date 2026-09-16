@@ -43,10 +43,14 @@ import { FONT_PX, px } from './hud.js'
  *   Biome                  the terrain asset has no per-column biome data. The
  *                          one genuine gap rather than a genuine absence -- see
  *                          the note on BIOME below.
- *   Client/Server Light    noa has no light engine at all. It does ambient
- *                          occlusion (useAO) and a single directional
- *                          lightVector; there is no per-voxel sky/block light
- *                          to read, so there is no number to print.
+ *   Client/Server Light    STALE REASON, kept because the lines are still
+ *                          absent: this said noa has no light engine at all.
+ *                          It does now -- src/blockLight.js -- and
+ *                          window.blockLight.getBlockLight(x,y,z) is exactly
+ *                          the number Client Light wants. What is missing is
+ *                          sky light, so Server Light has no source yet.
+ *                          Wiring the block half is a small job nobody has
+ *                          done; see docs/FUTURE.md.
  *   CH / SH heightmaps     server-side acceleration structures. No server, and
  *                          island.js answers a column by scanning it.
  *   Local Difficulty       no difficulty system, no regional difficulty.

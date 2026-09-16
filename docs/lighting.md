@@ -1,7 +1,18 @@
 # Lighting
 
-Diagnosis and a plan. The only code changed alongside this document was the
-face-shading fix in §6; **no light engine was built.**
+Diagnosis and a plan.
+
+> **STATUS, 2026-09-16: the block half of this plan is BUILT** —
+> `src/blockLight.js`. This document is now **partly historical**. It remains
+> the best account of what noa 0.33 does and does not offer, and §6 is still
+> live, but two of its conclusions were overtaken by the implementation: the
+> mesher turned out to be reachable **on the noa instance** so nothing had to
+> be vendored, and the engine rides vertex colour **alpha** rather than the
+> AO-premultiplied RGB lane proposed here. **Sky light is still not built**,
+> which is why caves are bright. See `docs/REPORTED.md` 5, 5a and 5b.
+
+When it was written, the only code changed alongside it was the face-shading
+fix in §6, and no light engine existed.
 
 Reported from play (`docs/REPORTED.md` items 5 and 6):
 

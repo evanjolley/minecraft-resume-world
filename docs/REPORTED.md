@@ -7,15 +7,22 @@ closed, one is triaged-and-waiting, and five are open. Where a cause is still a
 guess it is marked as a guess — this file exists so the reports survive, not so
 anybody acts on a hunch written down at speed.
 
+**Updated 2026-09-16.** The counts above are as of `3b8ef66` and one has moved
+since: **5 is built.** The light engine exists, which also means 3 is no longer
+waiting on it and the four-symptoms note at the bottom of this file needed
+rewriting. Two new reports from play arrived with it and are recorded under 5
+rather than opened as fresh numbers, because they are consequences of that
+build rather than independent finds.
+
 Status at `3b8ef66`, which is where every claim below was checked:
 
 | | | |
 | --- | --- | --- |
 | 1 icon shows the wrong shape | FIXED | `blockIcon.js` draws the real boxes |
 | 2 hover should name the block | FIXED | a real tooltip, not `el.title` |
-| 3 torches | TRIAGED, WAITING ON 5 | |
+| 3 torches | TRIAGED, and 5 no longer blocks it | waits on `blockMesh` |
 | 4 Escape leaves the cursor | **OPEN, and not testable here** | needs a human |
-| 5 glowstone emits no light | **OPEN — the big one** | `docs/lighting.md` |
+| 5 glowstone emits no light | **BUILT** (`src/blockLight.js`) | see the new report under it |
 | 6 the east face is brighter | FIXED (`56d40d2`) | it was a frozen uniform |
 | 7 Evan should fall and walk | BUILT | and he falls when you mine under him |
 | 8 boats | OPEN, untouched | |
@@ -127,6 +134,21 @@ free per-vertex lane it would ride on. Nothing about this entry changed; what
 changed is that "build the light engine first" is now a plan rather than a
 deferral.
 
+**UNBLOCKED 2026-09-16, and still not built.** The light engine shipped, so
+the reason to do none of it yet is gone: `EMISSION.torch` is **14** in
+`src/blockLight.js` and has been since that landed, which means a placed torch
+would light its surroundings the moment it can exist at all. Evan reported
+this a second time from play on 2026-09-16 — a torch in the hotbar that places
+nothing reads as broken whether or not it would glow.
+
+**The four obstacles above are untouched and all four still apply**, and they
+are now the whole of the work rather than the second half of it. The honest
+read is that this is a `blockMesh` job, which is the same missing piece the
+build importer waits on and the same class of problem flowing water hit, where
+giving a block a `shape` costs it the category it was registered under. Nothing
+about the cutout material, the collision opt-out, the 22.5-degree tilt or the
+pop-on-neighbour-break got cheaper; they just stopped being blocked.
+
 **4. Returning from the Escape menu leaves the cursor on screen.**
 > "when I press esc or back to game on the esc menu, my cursor should not be
 > visible, should go back to the crosshair."
@@ -195,6 +217,11 @@ giving the crosshair back, fixed in `98c3e86` with `test/50-inventory-escape.spe
 That is a different keypress on a different screen and it does not close this.
 
 **5. Glowstone emits no light.**
+> **SUPERSEDED — this is BUILT as of 2026-09-16.** The two paragraphs that
+> follow are the original diagnosis and are kept because two of their claims
+> turned out to be wrong in instructive ways. Read them as history, not as the
+> state of the engine; the update is below them.
+
 Not a glowstone bug. **noa has no light engine at all** — ambient occlusion plus
 one directional vector, no per-voxel light value to read or write. This was
 established twice already: the F3 screen had to cut its Client/Server Light
@@ -211,6 +238,52 @@ is a **free per-vertex channel**: AO is premultiplied into vertex colour RGB,
 so a light term can ride the same lane without a second attribute. Estimate is
 two to four days. That document is now the entry point for this item, for 3,
 and for the entity half in `src/entityLight.js`.
+
+**BUILT 2026-09-16, `src/blockLight.js`.** Glowstone lights the world. Sea
+lanterns, lava and magma too, by flooding a BFS out over the voxel data and
+writing the result into the vertex colour alpha channel.
+
+**Two claims in the paragraphs above turned out to be wrong**, and they are
+left standing rather than edited because the corrections are the useful part.
+
+  - "The mesher takes no callbacks" — so a light engine "means editing that
+    file", i.e. vendoring noa. **It does not.** `meshChunk` is reachable **on
+    the noa instance**, so it can be wrapped, the finished vertex buffers read
+    back and rewritten, and `npm update` still works. Nothing was vendored.
+    That was read out of `node_modules/` too, which is worth noting: reading
+    the source proved the hard part was reachable *and* produced a wrong
+    conclusion about how to reach it.
+  - The "free per-vertex channel" was going to ride the **RGB** lane AO is
+    premultiplied into. The shipped engine uses **alpha** instead, which
+    leaves AO alone rather than sharing with it.
+
+**Two new reports from play, both consequences of this build.**
+
+**5a. Glowstone lights directionally rather than radially.** Evan, 2026-09-16 —
+it does not diffuse out evenly in all directions. The BFS is almost certainly
+not the culprit; it floods all six neighbours symmetrically and the falloff is
+covered by `test/56-block-light.spec.js`. **The leading hypothesis is the
+mesher.** noa merges faces greedily and its merge predicate compares material
+and the AO mask and *nothing else*, because noa has no light to compare. So a
+flat floor becomes one enormous quad with four vertices at its far corners,
+light is sampled only at those corners, and the GPU interpolates linearly
+across the whole span — a glowstone in the middle contributes almost nothing to
+any corner, and whatever gradient appears leans toward the nearest one. Vanilla
+avoids this by refusing to merge faces whose light levels differ. **Flagged as
+a hypothesis, NOT a diagnosis** — it has not been reproduced by experiment. The
+cheap test is glowstone against a small irregular surface where greedy merging
+has nothing to merge, and seeing whether the falloff goes round. If confirmed,
+the fix sits *inside* noa's greedy mesher, below the instance-level wrap this
+engine uses to stay off a fork.
+
+**5b. Sky light is not built, so caves are still bright.** The block half is
+what shipped. Vanilla seeds sky light at 15 in every column open to the sky,
+propagates it DOWN with no decay at all, sideways at the usual 1 per block, and
+renders a voxel at `max(skyLight * daylight, blockLight)` — only the first term
+following `src/sky.js`. That asymmetry is the whole feature: it is what makes a
+torch matter at midnight and not at noon. Until it exists, a cave is lit as if
+the roof were not there, and the entity half in `src/entityLight.js` stays
+wrong underground for the same reason. `docs/FUTURE.md` carries both.
 
 **6. The east face of every block is brighter, and the lighting does not move.**
 > "the east edge of blocks has weirdly more lighting than the rest, even at
@@ -347,11 +420,17 @@ concurrently, a commit swallowed another agent's staged work.
 **5 and 6 are the same missing feature**, and **2 and 1 are the same missing
 affordance.** Worth triaging together rather than one at a time:
 
-- No light engine means no glowstone (5), no torch light if torches land (3),
-  no cave darkness for entities, and no F3 light readout. **One feature behind
-  four symptoms, and it is still true.** It is no longer "not on the roadmap":
-  `docs/lighting.md` costs it and `docs/FUTURE.md` carries it. It is now the
-  largest open item in this project that is not content.
+- No light engine meant no glowstone (5), no torch light if torches land (3),
+  no cave darkness for entities, and no F3 light readout. One feature behind
+  four symptoms. **HALF CUT, 2026-09-16.** `src/blockLight.js` shipped the
+  block half: glowstone lights the world and 3 is unblocked. The other two
+  symptoms did NOT fall with it, and it is worth being exact about why, because
+  the prediction that one feature covered all four was only half right.
+  `src/entityLight.js` has the engine available and has simply not been wired
+  to it, which is a small job. The F3 lines are the same small job. What is
+  genuinely still missing is **sky light** — the reason a cave is still lit as
+  if the roof were not there — and that is a second channel through a pipe that
+  is now laid rather than a new feature. See 5a and 5b under report 5.
 - An item needs to show what it *is* — its name on hover (2) and its real shape
   as an icon (1). One answer covers both. **CUT.** Both shipped, and it is
   worth saying they shipped as two answers rather than one: `inventory.js` drew
