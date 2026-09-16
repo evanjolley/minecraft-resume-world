@@ -104,6 +104,26 @@ export const ENTITY_DIFFUSE = 1 - ENTITY_FLOOR
  * propagated value says 15 because the doorway voxel is lit from the opening
  * beside it. Written down in docs/FUTURE.md as rejected.
  *
+ * AN OPEN QUESTION, FLAGGED RATHER THAN SETTLED. The held-item agent read
+ * `EntityRenderer.updateLightmap` in the MCP-919 decompile and found sky and
+ * block combined ADDITIVELY (`f8 = f4 + f3`), not as the `max` this file is
+ * built on. MCP-919 is 1.8.9; this project targets 1.21.8, and `LightTexture`
+ * was rewritten in between -- the 1.8 lightmap is a 16x16 texture built per
+ * (block, sky) pair, so "additive" there may be describing how the TEXTURE is
+ * built rather than the per-voxel rule. Not changed on the strength of a
+ * thirteen-year-old source. Whoever settles it should settle it against 1.21.
+ *
+ * AND A WARNING ABOUT MEASURING ANY OF THIS. noa sets
+ * `scene.performancePriority = Intermediate`, Babylon turns that into
+ * `checkReadyOnlyOnce`, `isFrozen` IS `checkReadyOnlyOnce`, and
+ * `StandardMaterial` guards its whole material-UBO write behind
+ * `!this.isFrozen` -- so `vEmissiveColor` and `vDiffuseColor` upload ONCE and
+ * never again. Every number this file writes can be correct in JavaScript and
+ * absent from the screen. `src/playerModel.js`'s `keepMaterialLive` shadows
+ * the getter to stop it; it belongs in `trackEntityLight` below and is not
+ * there yet only because the two changes were in flight at once. Third time
+ * `performancePriority` has done this here -- see 56d40d2.
+ *
  * A material with NO PROBE gets the old behaviour exactly -- `level` alone,
  * sky treated as open. That is deliberate rather than an oversight: a
  * material nobody has told where it is cannot be darkened honestly, and the

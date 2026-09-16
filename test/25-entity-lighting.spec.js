@@ -226,6 +226,7 @@ const samplePlayer = (page) => page.evaluate(() => {
   const mat = window.game.skinMaterial
   return {
     light: window.blockLight.getBlockLight(p[0], p[1], p[2]),
+    sky: window.blockLight.getSkyLight(p[0], p[1], p[2]),
     emissive: mat.emissiveColor.r,
     diffuse: mat.diffuseColor.r,
     sun: noa.rendering.getScene().lights.find((l) => l.name === 'light')?.intensity ?? null,
@@ -246,6 +247,9 @@ const sampleEvan = (page) => page.evaluate(() => {
   }
 })
 
+/** How dark a voxel with no light of any kind is. blockLight.js's LIGHT_FLOOR. */
+const LIGHT_FLOOR = 0.05
+
 test.describe('entity lighting reads block light at the entity', () => {
   test('a glowstone lights the player in a dark sealed room, and taking it'
     + ' away puts him back', async ({ page, terrain }) => {
@@ -261,9 +265,24 @@ test.describe('entity lighting reads block light at the entity', () => {
     // had not moved, the comparison below would be two identical numbers.
     expect(dark.light, 'the sealed room already had block light in it').toBe(0)
     expect(dark.sun, `sun intensity at midnight was ${dark.sun}`).toBeLessThan(0.3)
-    expect(dark.emissive).toBeCloseTo(dark.sun * 0.4, 2)
-    expect(dark.diffuse, 'no block light, so the diffuse gain must be exactly 1')
-      .toBeCloseTo(0.6, 3)
+    /*
+     * THESE TWO NUMBERS MOVED WHEN SKY LIGHT LANDED, and the move is the
+     * point. They used to be `dark.sun * 0.4` and a gain of exactly 1 -- the
+     * player in a sealed room lit by the midnight sun, because `skyTerm` was
+     * the daylight level with sky light treated as 15 everywhere. The room is
+     * sealed, so the real sky level in it is 0, and what is left is the
+     * lightmap floor. He is now dark because of the ROOF and not because of
+     * the clock, which is what the whole change was for.
+     *
+     * LIGHT_FLOOR duplicated from blockLight.js rather than imported, for the
+     * reason helpers/world.js gives for duplicating the block ids: if someone
+     * retunes it, this should fail rather than quietly follow along.
+     */
+    expect(dark.sky, 'the sealed room let sky light in').toBe(0)
+    expect(dark.emissive, `emissive ${dark.emissive.toFixed(4)} at sky 0`)
+      .toBeCloseTo(LIGHT_FLOOR * 0.4, 3)
+    expect(dark.diffuse, `diffuse ${dark.diffuse.toFixed(4)} at sky 0`)
+      .toBeCloseTo(0.6 * LIGHT_FLOOR / dark.sun, 2)
 
     // One block east of his feet. The feet voxel is air, so it takes 14.
     await setBlock(page, GLOWSTONE, CX + 1, FLOOR + 1, CZ)
@@ -293,7 +312,7 @@ test.describe('entity lighting reads block light at the entity', () => {
     expect(out.light, 'removing the glowstone left light behind').toBe(0)
     expect(out.emissive, 'he stayed lit after the glowstone was gone')
       .toBeCloseTo(dark.emissive, 3)
-    expect(out.diffuse).toBeCloseTo(0.6, 3)
+    expect(out.diffuse).toBeCloseTo(dark.diffuse, 3)
   })
 
   test('Evan is lit by the glowstone next to HIM, and the player is not',

@@ -461,10 +461,17 @@ test.describe('F3 debug screen', () => {
  * under "noa has no light engine at all", and src/blockLight.js made that
  * false. These tests are the other half of that correction.
  *
- * TWO THINGS THEY DELIBERATELY DO NOT CLAIM. There is no sky light in this
- * engine, so the sky slot is a dash and the combined value is the block level
- * -- a LOWER BOUND on what vanilla prints at the same spot. And there is no
- * Server Light line to test, because both of its halves would be invented.
+ * THE DASH IS GONE. The sky slot printed `-` until 2026-09-16 because sky
+ * light did not exist and a `0` would have been a lie in the one place on this
+ * screen where people read numbers off. It exists, so the slot is a number and
+ * the combined value is a real `max(sky, block)` rather than a lower bound.
+ *
+ * WHAT IS STILL NOT CLAIMED: Server Light. Its two halves are now both real,
+ * which removes one of the two reasons it was cut -- but not the other, and
+ * the other is that THERE IS NO SERVER. Vanilla prints the server's
+ * authoritative copy beside the client's so you can see them disagree; there
+ * is one copy here, and printing it twice under two headings would invent an
+ * agreement rather than a number. Which is worse.
  *
  * GLOWSTONE is duplicated from blocks.js for the reason helpers/world.js
  * gives for duplicating the block ids it duplicates.
@@ -472,22 +479,52 @@ test.describe('F3 debug screen', () => {
 const GLOWSTONE = 129
 
 test.describe('F3 Client Light', () => {
-  test('the line reads vanilla\'s shape, with a dash where sky light would be',
+  test('the line reads vanilla\'s shape, with both channels in it',
     async ({ page }) => {
       const { left } = await lines(page)
       const light = left.find(l => l.startsWith('Client Light: '))
       /*
        * Vanilla: `Client Light: 15 (15 sky, 0 block)`. The regex pins the
-       * punctuation, the word order and the dash -- a line that merely
-       * contained the right number in some layout of someone's invention
-       * would pass a `toContain` and fail this.
+       * punctuation and the word order -- a line that merely contained the
+       * right numbers in some layout of someone's invention would pass a
+       * `toContain` and fail this. It also pins that the sky slot is a NUMBER,
+       * which is the thing that changed.
        */
       expect(light, 'no Client Light line on the debug screen')
-        .toMatch(/^Client Light: \d+ \(- sky, \d+ block\)$/)
-      // And the two numbers are the same number, which is what "no sky light"
-      // means arithmetically.
-      const [, combined, block] = light.match(/^Client Light: (\d+) \(- sky, (\d+) block\)$/)
-      expect(combined).toBe(block)
+        .toMatch(/^Client Light: \d+ \(\d+ sky, \d+ block\)$/)
+      const [, combined, sky, block] =
+        light.match(/^Client Light: (\d+) \((\d+) sky, (\d+) block\)$/)
+      // The leading number is vanilla's max of the two, not either one of them.
+      expect(Number(combined)).toBe(Math.max(Number(sky), Number(block)))
+      // The player boots standing on open ground, so the sky half is full.
+      expect(Number(sky)).toBe(15)
+    })
+
+  test('the sky number is read, not printed -- a roof moves it',
+    async ({ page, terrain }) => {
+      /*
+       * A constant 15 would pass everything above. This is the test it fails:
+       * build a roof over the player's head and the number has to fall.
+       */
+      const before = await sample(page)
+      const [bx, by, bz] = before.block
+      await terrain.keep([bx - 3, by - 1, bz - 3], [bx + 3, by + 4, bz + 3])
+      expect(before.light.sky, 'the player did not start under open sky').toBe(15)
+
+      await page.evaluate(([x, y, z, stone]) => {
+        for (let dx = -3; dx <= 3; dx++) {
+          for (let dz = -3; dz <= 3; dz++) window.noa.setBlock(stone, x + dx, y + 3, z + dz)
+        }
+      }, [bx, by, bz, ID.stone])
+      await waitTicks(page, 5)
+
+      const after = await sample(page)
+      const engine = await page.evaluate(([x, y, z]) =>
+        window.blockLight.getSkyLight(x, y, z), [bx, by, bz])
+      expect(after.light.sky,
+        `F3 says ${after.light.sky}, the engine says ${engine}`).toBe(engine)
+      expect(after.light.sky, 'the roof did not move the sky number')
+        .toBeLessThan(before.light.sky)
     })
 
   test('Server Light is not drawn, because every character of it would be'
@@ -507,8 +544,6 @@ test.describe('F3 Client Light', () => {
        */
       const before = await sample(page)
       expect(before.light, 'sample() has no light field at all').not.toBeNull()
-      expect(before.light.sky, 'a sky light number appeared from somewhere')
-        .toBeNull()
 
       const [bx, by, bz] = before.block
       await terrain.keep([bx - 1, by - 1, bz - 1], [bx + 1, by + 1, bz + 1])
@@ -527,8 +562,11 @@ test.describe('F3 Client Light', () => {
       expect(after.light.block, 'the glowstone did not move the number')
         .toBeGreaterThan(before.light.block)
 
+      const skyEngine = await page.evaluate(([x, y, z]) =>
+        window.blockLight.getSkyLight(x, y, z), [bx, by, bz])
       const { left } = await lines(page)
       expect(left.find(l => l.startsWith('Client Light: ')))
-        .toBe(`Client Light: ${engine} (- sky, ${engine} block)`)
+        .toBe(`Client Light: ${Math.max(skyEngine, engine)} `
+          + `(${skyEngine} sky, ${engine} block)`)
     })
 })
