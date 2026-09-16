@@ -204,6 +204,21 @@ export function createAuthority({ world, storage = globalThis.localStorage } = {
     gamerule: (name) => GAMERULES[name]?.value,
 
     /**
+     * Every rule name that currently exists, live.
+     *
+     * The table is NOT static: weather.js:101 adds `doWeatherCycle` at install
+     * time, so anything that hardcodes the list is wrong the moment a module
+     * registers a rule. The test suite's resetWorld used to carry its own
+     * copy of the names and therefore never restored doWeatherCycle -- a
+     * weather spec that failed between disabling and re-enabling it left a
+     * frozen weather clock in every spec that ran afterwards.
+     *
+     * Read-only on purpose: the names, not the values, and no way to write.
+     * `gamerule(name)` above is still the only way to read one.
+     */
+    gameruleNames: () => Object.keys(GAMERULES),
+
+    /**
      * Become an operator. Open to everyone by necessity -- it is the door.
      * @returns {Promise<{ok: boolean, message?: string, error?: string}>}
      */

@@ -65,8 +65,26 @@ export const ID = {
  */
 export const OP_PASSPHRASE = 'diamond-pickaxe'
 
-/** Every game rule resetWorld has to put back. Vanilla defaults are all true. */
-const GAMERULES = ['doDaylightCycle', 'fallDamage', 'naturalRegeneration']
+/*
+ * Every game rule resetWorld has to put back. Vanilla defaults are all true.
+ *
+ * DERIVED FROM THE LIVE TABLE, never listed here. This used to be the literal
+ * ['doDaylightCycle', 'fallDamage', 'naturalRegeneration'], which is the
+ * contents of the static GAMERULES object in authority.js and NOT the contents
+ * of the table at runtime: weather.js:101 registers `doWeatherCycle` when it
+ * installs. So reset never put doWeatherCycle back, and a weather spec that
+ * failed between disabling it and re-enabling it leaked a frozen weather clock
+ * into every spec that followed -- a cross-spec failure whose cause is three
+ * files away from the spec that reports it.
+ *
+ * The other duplicated constants in this file (block ids, the OP passphrase)
+ * are duplicated ON PURPOSE, so that a renumber breaks the tests loudly. This
+ * one is the opposite case: a NEW rule must be picked up silently, because
+ * forgetting to add it here fails as pollution rather than as a red test.
+ * That asymmetry is why this one reads the table and those ones do not.
+ */
+const gameruleNames = (page) =>
+  page.evaluate(() => window.game.authority.gameruleNames())
 
 /*
  * Heading in noa is measured so that direction = (sin h, cos h).
@@ -281,7 +299,7 @@ export async function resetWorld(page) {
     await a.requestOp(pass)
     for (const rule of rules) await a.requestGamerule(rule, 'true')
     await a.requestDeop()
-  }, [OP_PASSPHRASE, GAMERULES])
+  }, [OP_PASSPHRASE, await gameruleNames(page)])
 
   await page.evaluate((spawn) => {
     const { noa, game } = window
