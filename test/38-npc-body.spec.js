@@ -208,6 +208,40 @@ test('spectator noclip does not sink him through the planet', async ({ page }) =
   expect(after.pos[1]).toBeCloseTo(before[1], 1)
 })
 
+test('mining the floor out from under him makes him fall', async ({ page }) => {
+  /*
+   * THE OTHER READING OF "NO FLOOR", and the bug the first version of the
+   * gate shipped with.
+   *
+   * The gate above releases him on `testSolid` under his home column, which
+   * answers false for a chunk that has not loaded, false under noclip -- and
+   * false when somebody simply mines the block he is standing on. The first
+   * two are the solver lying about a world that is there. The third is the
+   * world actually changing, and freezing for it means a man hanging in the
+   * air over the hole you just dug, teleported back on top of it every tick.
+   *
+   * So this asserts the thing that separates the readings: he does not merely
+   * keep gravity, he ENDS UP LOWER. An assertion on gravityMultiplier would
+   * pass against a version that put him back where he was.
+   */
+  const before = await evanAt(page)
+  const [fx, fy, fz] = [Math.floor(before[0]), Math.round(before[1]) - 1, Math.floor(before[2])]
+  const floor = await getBlock(page, fx, fy, fz)
+  expect(floor, 'nothing under him to mine').not.toBe(0)
+  expect(await getBlock(page, fx, fy - 1, fz), 'nothing for him to land on').not.toBe(0)
+
+  await setBlock(page, ID.air, fx, fy, fz)
+  await waitTicks(page, 30)
+
+  const after = await evanState(page)
+  expect(after.pos[1], 'he is hanging over the hole').toBeCloseTo(before[1] - 1, 1)
+  expect(after.grounded, 'he never settled').toBe(true)
+
+  await setBlock(page, floor, fx, fy, fz)
+  await resetEvan(page)
+  expect((await evanAt(page))[1]).toBeCloseTo(before[1], 1)
+})
+
 test('walk_to moves him across the ground and stops him there',
   async ({ page }) => {
     const start = await evanAt(page)
@@ -473,6 +507,65 @@ test('the tool refuses a destination it cannot take a number from',
  * person walking. Frames across a walk, so the legs are caught at different
  * points in the cycle rather than at whichever phase a single shot lands on.
  */
+test('screenshots: Evan falls into a pit mined under him', async ({ page }) => {
+  /*
+   * The evidence for the test above, which can only say he is lower.
+   *
+   * A four-block pit rather than the single block that test mines: one block
+   * is a quarter of a second of falling, which no frame catches, and the
+   * question a picture is here to answer is whether he FALLS -- upright, in
+   * the air, with the hole he is falling into visible around him.
+   *
+   * TWO BLOCKS WIDE, and that is the only reason the shot works. A 1x1 shaft
+   * photographed from anywhere is a black slot: the near lip occludes the
+   * whole interior for any camera low enough to see the sky. Widening it
+   * toward the camera by one block is what lets a sight line reach the floor.
+   *
+   * And the camera is ABOVE, which costs a game mode: it is dropped in the
+   * air and falls for the two ticks the shot needs, so creative is on to stop
+   * that being a fall-damage death. Rejected: spectator, which would hold the
+   * camera still and is the one mode that cannot be used here -- noclip is
+   * global, so a spectating camera freezes the thing it came to photograph.
+   */
+  const evan = await evanAt(page)
+  const [fx, fy, fz] = [Math.floor(evan[0]), Math.round(evan[1]) - 1, Math.floor(evan[2])]
+
+  await useGamemode(page, 'creative')
+  const eye = async () => {
+    await teleport(page, evan[0] + 3, SURFACE_Y + 6, evan[2])
+    await aim(page, { heading: Math.atan2(-3, 0), pitch: 1.15 })
+  }
+  await eye()
+
+  const dug = []
+  for (let d = 0; d < 4; d++) {
+    // Stop before the LAST solid layer. A pit with nothing under it is not a
+    // fall, it is the void, and the overworld is four blocks thick now --
+    // digging a fixed four would drop him out of the world and leave this
+    // shot photographing the hole he went through.
+    if (await getBlock(page, fx, fy - d - 1, fz) === ID.air) break
+    for (const x of [fx, fx + 1]) {
+      dug.push([x, fy - d, await getBlock(page, x, fy - d, fz)])
+      await setBlock(page, ID.air, x, fy - d, fz)
+    }
+  }
+  // Two ticks in: gravity has had him for a fraction of a four-block drop, so
+  // he is off the lip and nowhere near the bottom.
+  await waitTicks(page, 2)
+  await shot(page, 'npc-evan-falling')
+
+  await waitTicks(page, 40)
+  // Re-aimed because the camera has been falling too.
+  await eye()
+  await shot(page, 'npc-evan-landed')
+  const landed = await evanState(page)
+  expect(landed.pos[1], 'he did not reach the bottom').toBeLessThan(evan[1] - 2)
+  expect(landed.grounded, 'he is still in the air').toBe(true)
+
+  for (const [x, y, id] of dug) await setBlock(page, id, x, y, fz)
+  await resetEvan(page)
+})
+
 test('screenshots: Evan mid-stride', async ({ page }) => {
   const evan = await evanAt(page)
 

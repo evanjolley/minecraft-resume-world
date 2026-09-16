@@ -110,11 +110,18 @@ function angleDelta(a, b) {
  * @param {string} opts.skin          skin png url
  * @param {string} [opts.cape]        cape png url -- omit for no cape
  * @param {object} opts.chat          chat.js api
+ * @param {function} opts.caps        `authority.caps` -- the CURRENT game
+ *   mode's capability flags, read fresh every tick. Only `noClip` is used,
+ *   and the gate below is the whole reason it is here. Defaulted rather than
+ *   required so a caller with no game modes at all still gets an NPC; the
+ *   cost of forgetting it is that spectator sinks him, which is the bug the
+ *   gate's second paragraph describes.
  * @param {object} [opts.agent]       { backend, tools } -- omit for a mute NPC
  * @param {object} [opts.script]      { greet }  what to say on approach
  */
 export function installNPC(noa, {
-  roster, id, position, skin, cape = null, chat, agent = null, script = {},
+  roster, id, position, skin, cape = null, chat, caps = () => ({ noClip: false }),
+  agent = null, script = {},
 }) {
   const entry = roster.get(id)
   if (!entry) throw new Error(`installNPC: no roster entry ${id}`)
@@ -412,8 +419,7 @@ export function installNPC(noa, {
     /*
      * THE GATE: he does not fall while the solver has no floor to stop him.
      *
-     * One question, asked of the PHYSICS ENGINE rather than of the world, and
-     * it turns out to be the same question twice.
+     * Two situations, and they are the same reading twice.
      *
      *   1. Boot. Chunks mesh asynchronously and installNPC runs during boot,
      *      so terrain that has not arrived reads as AIR. Release him at
@@ -427,21 +433,54 @@ export function installNPC(noa, {
      *      planet, and leaving it drops him back into whatever he ended up
      *      inside.
      *
-     * So the release condition is `testSolid` on his own floor: the solver's
-     * own answer to "would this stop him". Absent chunk, false. Noclip, false.
-     * Real ground, true. It re-arms as well as releases, which is what makes
-     * the spectator case recover instead of just not-starting.
+     * `testSolid` on his own floor is how both are DETECTED -- the solver's
+     * own answer to "would this stop him", which is false for an absent chunk
+     * and false under noclip. It is not, on its own, licence to freeze him,
+     * and that was the bug: mine the block he is standing on and the reading
+     * is false for a third reason, the honest one. The gate fired anyway,
+     * zeroed his gravity and teleported him back on top of the hole, so he
+     * hung in the air over it -- "just mined blocks below Evan and he doesn't
+     * fall lol". The absence of ground cannot tell you WHY there is no
+     * ground, so the answer is to stop asking it to.
+     *
+     * So each situation is now asked its own question, and `testSolid` only
+     * says whether there is anything to do about it:
+     *
+     *   - Noclip is `caps().noClip`, straight off gamemode.js, which is the
+     *     module that actually knows. Same seam interact.js and itemEntity.js
+     *     read for `mayBreak` and `infiniteResources`; nothing tests a mode
+     *     NAME, here or anywhere.
+     *   - Boot is `lastRest === null`: he has never once had ground under
+     *     him. It is the same fact the put-him-back clause below already
+     *     leans on, and it stops being true the instant he lands, which is
+     *     exactly when the boot window closes.
+     *
+     * Anything else -- and a mined floor is the anything else -- falls.
      *
      * It asks about his HOME column rather than about whatever is under his
      * feet right now, and that is on purpose: under his feet is legitimately
      * air whenever he is mid-hop or stepping off a ledge, and freezing him
      * there would be the walk breaking itself. Home is a fixed reference that
-     * is always resident and always solid, so a `false` from it means the
-     * solver has no world at all rather than that he is airborne.
+     * is always resident, so a `false` from it during boot means the solver
+     * has no world at all rather than that he is airborne.
      *
-     * Rejected: reading `noa.getBlock` and the registry, which was the first
-     * version. It answers the boot case and is blind to the second, because
-     * the block is still solid -- it is the SOLVER that has stopped caring.
+     * Rejected: reading `noa.getBlock` and the registry and comparing it with
+     * `testSolid`, so a disagreement means noclip. It works, and it is a
+     * roundabout way of asking what the game mode will tell you outright.
+     * Rejected too: probing chunk residency through noa's
+     * `world._getChunkByCoords` for the boot case. Private, and it answers a
+     * question `lastRest` already answers in a field we own.
+     *
+     * AND THE SLEEPING BODY IS NOT A SECOND BUG, which was worth checking
+     * before assuming. voxel-physics-engine puts a resting body to sleep and
+     * skips it entirely, so a man who has stood still for a second is not
+     * being stepped at all -- but `bodyAsleep` re-decides that every tick by
+     * sweeping half a frame of gravity and looking for a collision, so the
+     * tick after his floor goes away it finds nothing and steps him. Nothing
+     * has to wake him. Rejected on that evidence: subscribing to
+     * authority.js's `onBlockDestroyed` to wake him by hand, which would be a
+     * second mechanism for something the engine already does, and one that
+     * would miss every other way a block can vanish.
      *
      * AND THE TRAP: `testSolid` takes OFFSET coordinates, not world ones. The
      * physics engine runs in noa's rebased frame and noa's own block getter
@@ -451,8 +490,9 @@ export function installNPC(noa, {
      * somewhere else, which is worse.
      */
     const offset = noa.worldOriginOffset
-    if (!noa.physics.testSolid(
-      floorX - offset[0], home[1] - 1 - offset[1], floorZ - offset[2])) {
+    const floorUnderHome = noa.physics.testSolid(
+      floorX - offset[0], home[1] - 1 - offset[1], floorZ - offset[2])
+    if (!floorUnderHome && (caps().noClip || lastRest === null)) {
       body.gravityMultiplier = 0
       body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
       move.running = false
