@@ -1193,11 +1193,14 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
   should be read first; it has been triaged three times and what is below is
   the engineering that sits under it, not a replacement for it.
 
-  **Three concrete things were found by reading, and two of them are real
-  defects rather than open questions.**
+  **All three items below are built** (`8fe9274`, `8d2fce5`, `9230d22`), and
+  **#4 is still open**, which is the point worth keeping: two were real defects
+  found by reading, the third is a guard against a browser nothing here has
+  ever run in, and none of them is the report. Each is marked with what it
+  actually turned out to be.
 
-  **(a) Chat never got the cancel that the inventory has, and it is a one-line
-  asymmetry.** `inventory.js` calls `cancelPersistentLock()` when it OPENS, and
+  **(a) BUILT (`8fe9274`). Chat never got the cancel that the inventory has,
+  and it is a one-line asymmetry.** `inventory.js` calls `cancelPersistentLock()` when it OPENS, and
   the comment above it says exactly why: without it, closing one screen starts
   a ~2.1 s retry loop that is still asking for the lock when you open the next
   one, and it grabs the lock out from under the screen you just opened.
@@ -1205,10 +1208,11 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
   not even import the function. So close the inventory, immediately press T,
   and the inventory's loop can pull the cursor away mid-sentence. This is the
   chat-window half of the report and it is a genuine bug, not a browser
-  mystery.
+  mystery. It was exactly that on inspection -- `menu.js` and `respawn.js` both
+  had the cancel too, so chat was the only screen of four missing it.
+  `test/59-chat-lock-handoff.spec.js` fails on both projects without it.
 
-  **(b) The Firefox double-handle is still unfixed, and main.js can now own the
-  fix.** The pause menu does not open on a keydown at all — `main.js` opens it
+  **(b) BUILT AND UNVERIFIED (`9230d22`). The Firefox double-handle.** The pause menu does not open on a keydown at all — `main.js` opens it
   from `lostPointerLock`, because Chrome eats the Escape that exits pointer
   lock. `inventory.js` records that **Firefox DOES deliver that keydown**, so
   Firefox runs the synchronous handler first and `lostPointerLock` afterwards,
@@ -1220,7 +1224,15 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
   boolean. Still read from a source comment — nothing here has ever run in
   Firefox and it is not in the suite's projects.
 
-  **(c) "Which screens are open" is hand-maintained in four places.** The same
+  That is what shipped: `inputLock` stamps a clock when a screen closes and
+  main.js returns for 250 ms afterwards, so a lock change arriving behind a
+  delivered Escape cannot open the pause menu on top of the close. The spec
+  that covers it models the Firefox ordering and says so in its first line --
+  green means main.js is right IF the hypothesis is. **Still not a fix anyone
+  may claim**, and `REPORTED.md` #4 says so too.
+
+  **(c) BUILT (`8d2fce5`). "Which screens are open" is hand-maintained in four
+  places -- five, on a proper count.** The same
   list appears in `main.js`'s `lostPointerLock` guard, in `chat.js` twice (its
   re-lock condition and its T/slash open guard) and in `inventory.js`, each one
   enumerating the others. That is N screens each keeping a list of N-1 peers,
@@ -1230,6 +1242,16 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
   add a screen, and every one of those four conditions is silently wrong the
   day it lands. That is the structural version of this bug, and it is the one
   that stops it recurring.
+
+  The fifth copy was main.js's click-to-recapture guard, and menu.js's Escape
+  guard was a sixth that named two of the four. `inputLock` exposes
+  `anyScreenOpen()` and `otherScreenOpen(mine)` and all of them use it; chat.js
+  no longer takes `inventory`, `menu` or `survival` at all, and menu.js no
+  longer takes `survival`. A screen is tracked separately from a lock even
+  though today they are the same set, so the first thing that locks input
+  without being a panel passes `{ screen: false }` rather than quietly
+  breaking every guard. **Item 1 below can now add a screen without editing
+  any of them.**
 
   **What still needs a human**, and it is unchanged: ten minutes in a real
   browser window with `REPORTED.md` #4 open. **The first question is still

@@ -21,7 +21,7 @@ Status at `3b8ef66`, which is where every claim below was checked:
 | 1 icon shows the wrong shape | FIXED | `blockIcon.js` draws the real boxes |
 | 2 hover should name the block | FIXED | a real tooltip, not `el.title` |
 | 3 torches | TRIAGED, and 5 no longer blocks it | waits on `blockMesh` |
-| 4 Escape leaves the cursor | **OPEN, and not testable here** | needs a human |
+| 4 Escape leaves the cursor | **OPEN, and not testable here** | needs a human; three defects under it fixed |
 | 5 glowstone emits no light | **BUILT** (`src/blockLight.js`) | see the new report under it |
 | 6 the east face is brighter | FIXED (`56d40d2`) | it was a frozen uniform |
 | 7 Evan should fall and walk | BUILT | and he falls when you mine under him |
@@ -209,9 +209,33 @@ have been worked and neither closed, and a third path opened.
     from the source comment rather than reproduced -- nothing here has ever
     been run in Firefox, and it is not in the suite's projects.
 
+**2026-09-16, later: the engineering under this entry landed and this entry is
+still OPEN.** Three things were found by reading and all three were fixed
+(`8fe9274`, `8d2fce5`, `9230d22`), and none of them closes this:
+
+  - **Chat never cancelled the re-lock loop the inventory cancels.** Every
+    screen hands the cursor back on close through a ~2.1 s retry loop, and
+    every screen but chat killed a running one on the way in. Escape out of the
+    inventory, press T inside two seconds, and the loop captured the mouse with
+    the chat bar open. Real, one line, `test/59-chat-lock-handoff.spec.js`.
+    It is the chat-window half of what Evan asked about and it is NOT this.
+  - **"Which screens are open" was hand-kept in five conditions** that
+    enumerated each other, and they had already drifted -- menu.js named the
+    inventory and death and not chat. `src/inputLock.js` already knew and was
+    not being asked; it answers all five now. This is the one that stops the
+    class of bug recurring, and it changes no behaviour a player can see.
+  - **The Firefox double-handle has a guard, and the guard is UNVERIFIED.**
+    main.js now returns for 250 ms after any screen closes, so a lock change
+    that arrives behind a delivered Escape keydown cannot open the pause menu
+    on top of the close. That is the third path named below. It is written
+    against a browser nothing here has ever run in. **Do not read it as a fix
+    for this report.** If Evan plays in Firefox it is the first thing to check;
+    if he does not, it is dead code doing no harm.
+
 So the honest status is **UNRESOLVED and NOT REPRODUCIBLE BY AN AGENT.** It
 needs ten minutes in a real browser window with this entry open, and the first
-question is still which browser Evan was in. Note the sibling report that DID
+question is STILL which browser Evan was in -- asked four times now, and the
+Firefox guard above is the fourth time it has decided what an agent could do. Note the sibling report that DID
 land: Escape out of the *inventory* used to open the pause menu instead of
 giving the crosshair back, fixed in `98c3e86` with `test/50-inventory-escape.spec.js`.
 That is a different keypress on a different screen and it does not close this.
