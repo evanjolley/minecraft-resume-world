@@ -506,6 +506,16 @@ const SWIM_INTERVAL = 0.3
 const ambientGap = () => 2 + Math.random() * 6
 
 /*
+ * The flowing-water trickle. See the long note at its call site for where the
+ * two numbers come from: vanilla samples 667 positions per tick and rolls
+ * 1/64, this samples 32 and rolls 667/(64*32) for the same expected rate.
+ */
+const FLOW_SOUND_SAMPLES = 32
+const FLOW_SOUND_CHANCE = 667 / (64 * FLOW_SOUND_SAMPLES)
+/* Vanilla's box is 16 either side of the camera on every axis. */
+const rand16 = () => Math.floor(Math.random() * 33) - 16
+
+/*
  * How loud the underwater bed sits. Vanilla's ambient.underwater.loop is 0.65,
  * and the synthesised stand-in below is quieter because it is broadband and
  * never stops -- a filtered noise bed at the same number is a hiss you notice.
@@ -969,6 +979,10 @@ export function installSounds(noa, deps = {}) {
    * ------------------------------------------------------------------ */
   if (fluids) {
     const body = () => noa.ents.getPhysics(noa.playerEntity)?.body
+    /* The flow engine arrives on the same object, but later -- installFluids
+     * runs after installSounds in main.js -- so it is read per tick rather
+     * than captured here. Undefined until then, and the guard says so. */
+    const flowMeta = (id) => fluids.flow?.metaOf(id)
 
     let wasFeet = null
     let wasEyes = null
@@ -1013,6 +1027,60 @@ export function installSounds(noa, deps = {}) {
         // Reset rather than freeze, so pushing off after treading water
         // starts a stroke instead of finishing a half-elapsed one.
         sinceSwim = SWIM_INTERVAL
+      }
+
+      /*
+       * ---- the trickle of a run of water you can HEAR but not be in ----
+       *
+       * Vanilla, BlockLiquid.randomDisplayTick (MCP-919):
+       *
+       *     if (this.blockMaterial == Material.water) {
+       *         int i = state.getValue(LEVEL);
+       *         if (i > 0 && i < 8) {
+       *             if (rand.nextInt(64) == 0) {
+       *                 worldIn.playSound(x + 0.5, y + 0.5, z + 0.5,
+       *                     "liquid.water", rand.nextFloat() * 0.25F + 0.75F,
+       *                     rand.nextFloat() * 1.0F + 0.5F, false);
+       *             }
+       *         }
+       *     }
+       *
+       * `i > 0 && i < 8` is FLOWING water specifically -- a source is 0 and a
+       * still pool never makes this noise. It is the sound of a run, which is
+       * exactly the thing that just got a shape.
+       *
+       * No new sample and no change to build-sounds.mjs: `liquid/water.ogg` is
+       * already extracted, and sounds.js already declares it as `waterAmbient`
+       * for the submerged ambience. Same event, second trigger. (Checked
+       * before planning to add one, which is the cheap half of this.)
+       *
+       * THE SAMPLING RATE IS DERIVED, not guessed. RenderGlobal calls
+       * randomDisplayTick on 667 random positions in a 32^3 box around the
+       * camera every tick, and each flowing cell it lands on rolls 1/64. This
+       * cannot afford 667 getBlock calls per tick, so it takes SAMPLES of them
+       * and raises the probability to keep the expected rate identical:
+       *     p = 667 / (64 * SAMPLES)
+       * With 32 samples that is 0.326. Same sound, same frequency, one
+       * twentieth of the reads.
+       *
+       * SILENT IN THE FREE BUILD, and that is worth stating rather than
+       * discovering. `npm run sounds:free` has no liquid sample of any kind --
+       * sounds-src/free carries footsteps, digging, damage and two UI clicks
+       * and nothing else -- so the deploy has no splash, no swim and now no
+       * trickle. play() on a missing set is already a no-op, so this is quiet
+       * rather than broken, which is the same bargain every other water sound
+       * in this block already made.
+       */
+      if (flowMeta) {
+        for (let n = 0; n < FLOW_SOUND_SAMPLES; n++) {
+          const p = noa.ents.getPosition(noa.playerEntity)
+          const x = Math.floor(p[0]) + rand16()
+          const y = Math.floor(p[1]) + rand16()
+          const z = Math.floor(p[2]) + rand16()
+          const m = flowMeta(noa.getBlock(x, y, z))
+          if (!m || m.fluid !== 'water' || m.level === 0 || m.falling) continue
+          if (Math.random() < FLOW_SOUND_CHANCE) { play('waterAmbient'); break }
+        }
       }
 
       /* ---- the ambience under it all ---- */

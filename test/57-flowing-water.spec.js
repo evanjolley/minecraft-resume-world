@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures.js'
-import { teleport, look, waitFrames } from './helpers/world.js'
+import { teleport, look, waitFrames, waitTicks } from './helpers/world.js'
+import { armAudio } from './helpers/audio.js'
 import { shot } from './helpers/shots.js'
 
 /*
@@ -286,4 +287,96 @@ test.describe('flowing water pushes what is standing in it', () => {
     expect(drift, 'there is a second body in the world to push').not.toBeNull()
     expect(drift, 'Evan drifted downstream').toBeGreaterThan(0.5)
   })
+})
+
+/*
+ * THE SOUND.
+ *
+ * Vanilla, BlockLiquid.randomDisplayTick (MCP-919):
+ *
+ *     if (this.blockMaterial == Material.water) {
+ *         int i = state.getValue(LEVEL);
+ *         if (i > 0 && i < 8) {
+ *             if (rand.nextInt(64) == 0) {
+ *                 worldIn.playSound(..., "liquid.water", ...);
+ *             }
+ *         }
+ *     }
+ *
+ * `i > 0 && i < 8` is FLOWING water and nothing else: a source is level 0 and
+ * a still pool is silent. That is the whole assertion below, and the control
+ * is a source block standing where the flowing one was.
+ *
+ * NO NEW SAMPLE AND NO CHANGE TO build-sounds.mjs. `liquid/water.ogg` was
+ * already extracted and sounds.js already declares it as `waterAmbient` for
+ * the submerged ambience -- checked before planning to add one. The FREE
+ * build is another matter and is stated at the call site: sounds-src/free
+ * carries no liquid sample of any kind, so a deploy has no splash, no swim
+ * and no trickle. Quiet, not broken.
+ *
+ * IT DISCRIMINATES, AND BOTH MUTATIONS WERE RUN.
+ *   FLOW_SOUND_CHANCE -> 0 in src/sounds.js:
+ *     Error: flowing water is heard
+ *     Expected value: "liquid/water"   Received array: []
+ *   the `m.level === 0 || m.falling` exclusion removed, so sources count too:
+ *     Error: a still source is silent
+ *     Expected value: not "liquid/water"
+ *     Received array: ["liquid/water", "liquid/water", "liquid/water",
+ *                      "liquid/swim10", "liquid/water", ...]
+ *
+ * DETERMINISTIC, because vanilla's own rate is far too sparse to wait for --
+ * 667 samples a tick at 1/64 over a seven-block run is one noise every
+ * twenty-odd seconds. Math.random is stubbed with the four-value cycle the
+ * sampler consumes per attempt (three offsets, then the roll), so the sampler
+ * lands on the player's own cell and the roll passes.
+ */
+test.describe('flowing water can be heard', () => {
+  const stubRandom = (page) => page.evaluate(() => {
+    window.__realRandom = Math.random
+    // 0.5 -> floor(0.5 * 33) - 16 = 0, so all three offsets pick the
+    // player's own cell. 0 passes any probability.
+    const cycle = [0.5, 0.5, 0.5, 0]
+    let i = 0
+    Math.random = () => cycle[i++ % cycle.length]
+  })
+  const unstubRandom = (page) => page.evaluate(() => {
+    if (window.__realRandom) Math.random = window.__realRandom
+  })
+
+  test('standing in a run makes the water noise; a still source does not',
+    async ({ world }) => {
+      const page = world.page
+      /*
+       * `drain()` rather than `lastPlayed`, and it is not a preference: the
+       * suite shares one page, lastPlayed is a page-lifetime value, and the
+       * control read it stale from an earlier spec and passed a silent world
+       * as noisy. Draining the capture makes each half of this test read only
+       * what it caused.
+       */
+      const audio = await armAudio(page)
+      await buildChannel(page)
+      await pour(page)
+
+      // The control FIRST: a SOURCE under the player's feet. Level 0, which
+      // vanilla's `i > 0 && i < 8` excludes.
+      await teleport(page, 4.5, Y, 0.5)
+      await page.evaluate(([y]) => window.noa.setBlock(636, 4, y, 0), [Y])
+      await audio.drain()
+      await stubRandom(page)
+      await waitTicks(page, 6)
+      await unstubRandom(page)
+      const still = await audio.drain()
+      expect(still.map(r => r.name), 'a still source is silent')
+        .not.toContain('liquid/water')
+
+      // ...and now flowing water in the same cell.
+      await page.evaluate(([y]) => window.noa.setBlock(642, 4, y, 0), [Y])
+      await audio.drain()
+      await stubRandom(page)
+      await waitTicks(page, 6)
+      await unstubRandom(page)
+      const flowing = await audio.drain()
+      expect(flowing.map(r => r.name), 'flowing water is heard')
+        .toContain('liquid/water')
+    })
 })
