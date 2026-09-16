@@ -37,12 +37,34 @@ const REQUIRED = [
  * whether that may be republished (docs/DEPLOYMENT.md carries the question).
  * Until someone does, the answer is that it does not leave this machine.
  *
+ * HALF OF THAT PROBLEM IS NOW GONE, and it is worth being precise about
+ * which half, because the rule below did not change and a reader could
+ * reasonably assume nothing did.
+ *
+ *   OVERWORLD -- CLEAN. It is no longer imported at all. src/flatworld.js
+ *     generates it in the browser from a layer preset, so there is no
+ *     terrain.bin, nothing to forbid, and nothing of Mojang's in it.
+ *   NETHER -- UNCHANGED. public/terrain/nether.bin is still an extraction
+ *     from a locally generated world, and this rule is still the thing
+ *     keeping it off a public site.
+ *
+ * So `dist/terrain/` today means the Nether and only the Nether. The rule
+ * stays as a DIRECTORY rule rather than narrowing to nether.bin on purpose:
+ * the next imported asset should be refused by default, not permitted by an
+ * omission.
+ *
+ * KNOWN CONSEQUENCE, not a bug in this file: `npm run build:deploy` deletes
+ * dist/terrain wholesale, so a deployed build has no Nether asset and
+ * `/dimension nether` fails there with a 404 that src/dimensions.js reports
+ * to the player. That was already true before the overworld was generated.
+ *
  * This is not belt-and-braces over .assetsignore. That file governs what
  * wrangler uploads; this governs what the build is allowed to produce, and
  * only one of them fails loudly.
  */
 const FORBIDDEN = [
-  ['terrain', 'generated Minecraft terrain, licence unresolved -- see docs/DEPLOYMENT.md'],
+  ['terrain', 'imported Minecraft terrain (the Nether), licence unresolved'
+    + ' -- see docs/DEPLOYMENT.md'],
 ]
 
 /*
