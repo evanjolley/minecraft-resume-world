@@ -528,14 +528,16 @@ const tabList = installTabList(noa, {
   skinOf: (entry) => (entry.id === EVAN_ID ? '/skins/evan.png' : '/skins/default.png'),
 })
 
-const menu = installMenu(noa, { inputLock, inventory, inventoryScreen, survival })
+const menu = installMenu(noa, { inputLock, inventory, inventoryScreen })
 
 /*
  * Chat. Local only for now -- there is no transport, so your messages come
  * straight back to you.
  */
 const chat = installChat(noa, {
-  inputLock, inventory, menu, survival,
+  // No inventory, menu or survival here any more: chat asked them "are you
+  // open" and inputLock answers that for every screen at once now.
+  inputLock,
   // Read at send time, so the echo follows a rename. See chat.js.
   speaker: () => roster.get(LOCAL_ID),
   /*
@@ -724,7 +726,9 @@ inventory.add(ids.dirt, 32)
  */
 const gameEl = document.getElementById('game')
 gameEl.addEventListener('mousedown', () => {
-  if (inventory.open || menu.isOpen || survival.dead || chat.isOpen) return
+  // "Is a screen up" is inputLock's to answer, not a list of screens kept
+  // here -- see the note on `screens` in inputLock.js.
+  if (inputLock.anyScreenOpen()) return
   if (!noa.container.hasPointerLock) requestLockPersistently(noa)
 })
 
@@ -752,10 +756,17 @@ noa.container.on('lostPointerLock', () => {
   // back open while it retried.
   if (!wasLocked) return
   wasLocked = false
-  // Chat is in this list for the same reason as the others: it releases the
-  // lock on purpose, and without the guard opening chat would stack the pause
-  // menu on top of it.
-  if (inventory.open || survival.dead || menu.isOpen || chat.isOpen) return
+  /*
+   * Any open screen released the lock on purpose, and without this guard each
+   * one would immediately stack the pause menu on top of itself.
+   *
+   * This used to name the four of them. It asks inputLock now, which is where
+   * "a screen is up" already lives -- and which every screen tells on the way
+   * in, BEFORE it touches pointer lock, so the answer is already true by the
+   * time this event fires synchronously off their setPointerLock(false).
+   * inputLock.js has the full argument.
+   */
+  if (inputLock.anyScreenOpen()) return
   menu.open()
 })
 

@@ -79,7 +79,9 @@ export function cancelPersistentLock() {
   lockTimer = null
 }
 
-export function installMenu(noa, { inputLock, inventory, inventoryScreen, survival }) {
+// `survival` is gone from this list: the only thing it answered was "is the
+// death screen up", which inputLock answers for every screen at once.
+export function installMenu(noa, { inputLock, inventory, inventoryScreen }) {
   const screen = document.getElementById('pause')
   const buttonRows = document.getElementById('pause-buttons')
   const controls = document.getElementById('controls')
@@ -179,8 +181,16 @@ export function installMenu(noa, { inputLock, inventory, inventoryScreen, surviv
    */
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Escape') return
-    if (inventory.open) return   // inventory.js handles its own close
-    if (survival.dead) return
+    /*
+     * Another screen is up, so the key is not this menu's -- the inventory
+     * handles its own close, and the death screen has no Escape at all.
+     *
+     * This named those two and NOT chat, which was wrong and survived only
+     * because chat's capture-phase handler eats the key before this runs.
+     * That is the drift the four hand-kept copies of this list produced; see
+     * the note on `screens` in inputLock.js.
+     */
+    if (inputLock.otherScreenOpen('menu')) return
     if (!screen.classList.contains('hidden')) {
       setOpen(false)
       requestLockPersistently(noa)

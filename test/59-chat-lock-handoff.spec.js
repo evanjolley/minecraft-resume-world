@@ -1,7 +1,12 @@
 import { test, expect } from './fixtures.js'
 
 /*
- * Closing one screen must not steal the cursor back from the next one.
+ * Screens handing the cursor to each other. Two tests, one subject.
+ *
+ * The first is the defect: closing one screen must not steal the cursor back
+ * from the next one. The second is the structure under it -- "is a screen
+ * open" is inputLock's answer now, not a list of peers each screen keeps, so
+ * a screen this suite has never heard of is honoured by main.js's guard.
  *
  * THE BUG, found by reading rather than by playing: every screen that
  * releases pointer lock hands it back on close through
@@ -145,6 +150,59 @@ test.describe('one screen closing, the next one opening', () => {
       } finally {
         await page.evaluate(() => {
           window.game.chat.close()
+          window.__fakePL.restore()
+        })
+      }
+    })
+
+  /*
+   * The same guard, asked about a screen that does not exist yet.
+   *
+   * main.js used to decide whether a lost pointer lock means "open the pause
+   * menu" by naming the four screens it knew about, and chat.js and menu.js
+   * kept their own copies of that list. Signs and written books
+   * (docs/FUTURE.md item 1) add a fifth screen, and every one of those
+   * conditions would have been silently wrong the day it landed -- the pause
+   * menu popping up on top of the sign you just opened.
+   *
+   * So this test opens a screen by the only thing a screen has to do,
+   * inputLock.lock(), with a reason nothing in src/ mentions. If it stays
+   * shut, the guard is asking the registry rather than reciting a list.
+   *
+   * The second half is what stops it passing vacuously: with the same reason
+   * unlocked, the identical release DOES open the menu.
+   */
+  test('a screen inputLock has never heard of still keeps the pause menu shut',
+    async ({ page }) => {
+      await installFakePointerLock(page)
+      try {
+        const relock = async () => {
+          await page.evaluate(() => window.noa.container.setPointerLock(true))
+          await page.waitForFunction(() => window.__fakePL.locked, null, { timeout: 5000 })
+        }
+        // Not a user Escape: a screen releasing the lock on purpose, which is
+        // the case the guard exists for and the one signs will be.
+        const release = () => page.evaluate(() => {
+          window.noa.container.setPointerLock(false)
+        })
+
+        await relock()
+        await page.evaluate(() => window.game.inputLock.lock('signs'))
+        await release()
+        await expect(page.locator('#pause')).toBeHidden()
+        expect(await page.evaluate(() => window.game.menu.isOpen),
+          'the pause menu opened on top of a screen it had never been told about')
+          .toBe(false)
+
+        /* ---- and it is not passing because nothing ever opens ---- */
+        await page.evaluate(() => window.game.inputLock.unlock('signs'))
+        await relock()
+        await release()
+        await expect(page.locator('#pause')).toBeVisible()
+      } finally {
+        await page.evaluate(() => {
+          window.game.inputLock.unlock('signs')
+          window.game.menu.close()
           window.__fakePL.restore()
         })
       }

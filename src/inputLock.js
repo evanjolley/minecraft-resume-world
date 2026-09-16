@@ -12,6 +12,41 @@
  */
 export function createInputLock(noa) {
   const reasons = new Set()
+  /*
+   * WHICH SCREENS ARE OPEN, and this Set is the whole point of it living here.
+   *
+   * Four conditions around the codebase used to answer that question by
+   * enumerating each other -- main.js's lostPointerLock guard and its
+   * click-to-recapture guard, and chat.js twice. N screens each keeping a list
+   * of N-1 peers, and the copies had already drifted apart: menu.js's Escape
+   * guard named the inventory and death and not chat, and got away with it
+   * only because chat's capture-phase handler eats the key first. The day a
+   * fifth screen lands (signs and written books, docs/FUTURE.md item 1) every
+   * one of those conditions is silently wrong and nothing fails.
+   *
+   * This file already knew the answer. Every screen calls lock('chat'),
+   * lock('inventory'), lock('menu'), lock('dead') on the way in and unlock on
+   * the way out, so the roster is a by-product of the thing they already do.
+   * A new screen is correct in all four places for free, which is the only
+   * version of this that stops recurring.
+   *
+   * ORDERING, which is load-bearing and is why this can be trusted at all:
+   * every screen locks BEFORE it touches pointer lock. It has to -- releasing
+   * the lock fires lostPointerLock synchronously and main.js reads this to
+   * decide whether that event opens the pause menu. Both chat.js and
+   * inventory.js comment the same trap about their own open flags; it is the
+   * same trap and the same answer.
+   *
+   * NOT simply `reasons`, though today it is the same set. A lock is "stop
+   * reading my input" and a screen is "there is a panel in front of the
+   * world", and those coincide right now because every holder is a panel.
+   * When something locks input without being a screen -- a cutscene, a
+   * teleport settle -- it passes `{ screen: false }` and the four guards stay
+   * right. Rejected: a hand-maintained SCREENS list of known reasons here.
+   * That is the same four-place list with three places deleted, and signs
+   * would still have to remember to edit it.
+   */
+  const screens = new Set()
   const player = noa.playerEntity
   const baseSensitivity = noa.camera.sensitivityMult
   let applied = false
@@ -119,9 +154,34 @@ export function createInputLock(noa) {
   }
 
   return {
-    lock(reason) { reasons.add(reason); apply() },
-    unlock(reason) { reasons.delete(reason); apply() },
+    /**
+     * @param {string} reason
+     * @param {{ screen?: boolean }} [opts] `screen: false` for a lock that is
+     *   not a panel in front of the world. See the note on `screens` above.
+     */
+    lock(reason, { screen = true } = {}) {
+      reasons.add(reason)
+      if (screen) screens.add(reason)
+      apply()
+    },
+    unlock(reason) { reasons.delete(reason); screens.delete(reason); apply() },
     has(reason) { return reasons.has(reason) },
     get locked() { return reasons.size > 0 },
+
+    /** Is any screen up? The question main.js asks before opening the menu. */
+    anyScreenOpen() { return screens.size > 0 },
+
+    /**
+     * Is any screen up OTHER than mine? What a screen asks about its peers --
+     * "may I open", "may I take the cursor back" -- without naming one of
+     * them. Passing your own reason rather than reading it off a `this` is
+     * what keeps this a plain query: chat asks the same question whether or
+     * not chat is currently holding a lock, which matters because it calls
+     * this on the way out, after its own unlock has already run.
+     */
+    otherScreenOpen(mine) {
+      for (const reason of screens) if (reason !== mine) return true
+      return false
+    },
   }
 }

@@ -100,11 +100,16 @@ function timeFactor(ticks) {
  */
 const normalize = (s) => s.trim().replace(/\s+/g, ' ')
 
+/*
+ * `inventory`, `menu` and `survival` used to be taken here, purely so this
+ * file could ask whether one of them was up. That is inputLock's question
+ * now, and dropping the three parameters is the part of the change worth
+ * noticing: a chat overlay that holds references to the inventory, the pause
+ * menu and the survival model knows about three things it has no business
+ * knowing about, and the next screen would have made it four.
+ */
 export function installChat(noa, {
   inputLock,
-  inventory,
-  menu,
-  survival,
   requestPointerLock,
   /*
    * WHO YOU ARE, read at send time rather than captured at install time.
@@ -383,7 +388,11 @@ export function installChat(noa, {
       input.value = ''
       inputLock.unlock('chat')
       document.getElementById('game').focus()
-      if (!menu?.isOpen && !inventory?.open && !survival?.dead) requestPointerLock?.()
+      // Take the cursor back only if nothing else still wants it. Asked of
+      // inputLock rather than of three named peers -- see the note on
+      // `screens` there. 'chat' is already unlocked two lines up, so this is
+      // "is anything open", written so it stays right if the order changes.
+      if (!inputLock.otherScreenOpen('chat')) requestPointerLock?.()
     }
     paint()
   }
@@ -411,7 +420,8 @@ export function installChat(noa, {
     if (!open) {
       // Never steal the browser's own chords: Ctrl+T is a new tab.
       if (e.ctrlKey || e.metaKey || e.altKey) return
-      if (inventory?.open || menu?.isOpen || survival?.dead) return
+      // T and / do nothing while another screen owns the view.
+      if (inputLock.otherScreenOpen('chat')) return
       // Matching on e.key, not e.code: "/" is Shift+7 on a German layout and
       // the key is what Minecraft binds.
       if (e.key === 't' || e.key === 'T') { e.preventDefault(); setOpen(true, '') }
