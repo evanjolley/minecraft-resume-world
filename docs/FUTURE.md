@@ -1142,6 +1142,48 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
 - **Passive ambient animals.** Deliberately NOT hostile mobs (see below), but
   a couple of wandering chickens would make the island feel alive for a
   fraction of the cost. The model infrastructure now exists.
+- **Flowing water: the tail of a build that mostly landed.** The geometry,
+  the push and the sound all shipped on 2026-09-16 (`20627d5`, `b545cf7`,
+  `8d4cd53`). A run now steps down level by level with vanilla's corner
+  averaging, so it reads as a continuous sloping sheet rather than a staircase,
+  and it pushes both the player and Evan. What follows is only what did not
+  finish, recorded because the agent building it was killed by a watchdog
+  rather than stopping cleanly.
+
+  **THREE TEST FILES ARE UNCOMMITTED IN THE WORKING TREE** —
+  `test/01-world.spec.js`, `test/39-animated-textures.spec.js` and
+  `test/57-flowing-water.spec.js`. They contain real work, including the
+  diagnosis below. **Nobody has confirmed they pass**, because the process died
+  mid-verification. First job for whoever picks this up: run those three on
+  both browser projects, then commit them. They are the most losable thing in
+  this repo right now.
+
+  **`39-animated-textures.spec.js:172` is diagnosed, and it was never an
+  animation bug.** That frozen-water control — still water must produce zero
+  changed pixels — had been red for a long stretch and was verified red
+  independently by two agents, including with block light disabled. The cause
+  is in the fixture: it **never disabled the flow engine**, so the walls of the
+  air pocket it carves were pouring water into the room, correctly and at four
+  blocks a second, while the camera photographed it. It failed at 31% of pixels
+  changed. `src/fluids.js` had already specified the missing line in as many
+  words — "the seam is here rather than a flag in their file: `flow.setEnabled`
+  is one line at the top of that fixture" — and nobody had written it. The fix
+  has to restore the engine in teardown, because the suite shares one page and
+  `45-buckets` and `46-water-look` both need it running.
+
+  **The flow TEXTURE is the one stage that did not happen, and it is a decision
+  rather than an omission.** Flow levels render with `water_still`, and
+  `src/blocks.js` argues for keeping it that way: `terrainAnimation.js` keys
+  its layer-remap uniform on MATERIAL NAME, so a flow level registered against
+  the still material animates through the table that already exists — no new
+  atlas frames, no second animation entry, no change to that module. Vanilla's
+  directional `water_flow` needs a per-level rotated UV and a material per
+  direction, which is four more ids again, and that file records it as
+  **rejected** on those grounds. Overriding that is Evan's call, not an
+  oversight to quietly correct. The visible gap is that water does not show
+  which way it is going, which matters less than it sounds while the overworld
+  is superflat and runs are short.
+
 - **Escape, the cursor, and who owns pointer lock.** Evan asked for further
   investigation into escaping the inventory and into the chat window, and the
   two are the same problem wearing different hats. `docs/REPORTED.md` #4 is the
