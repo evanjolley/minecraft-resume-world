@@ -1,0 +1,109 @@
+Monocraft, by Idrees Hassan.  https://github.com/IdreesInc/Monocraft
+SIL Open Font License 1.1.  Full licence text: public/fonts/OFL.txt
+
+
+WHAT IS IN HERE
+
+Monocraft.ttf is the upstream file, unmodified, 210,192 bytes, 1,475 mapped
+codepoints. It is the pinned third-party drop docs/DEPLOYMENT.md refers to.
+
+It is NOT deployed. What ships is public/fonts/Monocraft.woff2 -- the same
+typeface subset to the 177 codepoints this game can actually draw, at 2,648
+bytes. The original lives here rather than being thrown away because a subset
+you cannot regenerate is a dead end: the day the UI needs a character outside
+the set below, this is the file you re-cut it from.
+
+
+WHY THE SUBSET IS WORTH IT
+
+The full TTF was 210 KB, and a font is already-compressed binary that gzip and
+brotli barely touch -- so it arrived over the wire at very close to its full
+210 KB, which was 21% of the entire boot payload and second only to the JS
+bundle. Nothing else in dist/ was close. The subset is 1.3% of that.
+
+Two separate savings, and it is worth not confusing them: dropping 1,298
+unused codepoints takes 210 KB -> 12.4 KB, and the WOFF2 container (which is
+brotli-compressed glyph data, unlike TTF) takes 12.4 KB -> 2.6 KB. The first
+is the big one; the second is nearly free once you are re-cutting the file
+anyway.
+
+
+WHAT THE SUBSET COVERS
+
+  U+0020-U+007E   printable ASCII -- the entire game UI. Every string in
+                  src/ and index.html is ASCII; the only non-ASCII bytes in
+                  the whole source tree are six section signs, all of them
+                  inside comments about Minecraft's colour codes.
+  U+00A0-U+00FF   the Latin-1 letters and a few symbols, plus U+00A7 itself
+  U+2013 U+2014   en and em dash
+  U+2018-U+201D   curly quotes
+  U+2022 U+2026   bullet, ellipsis
+  U+2190-U+2193   arrows
+
+Everything past ASCII is there for ONE reason: AI Evan's chat replies come out
+of an LLM, and an LLM emits curly quotes and em dashes no matter what the rest
+of the code does. Those are the characters worth paying a few hundred bytes to
+get right. Anything outside the set falls through to the `ui-monospace,
+SFMono-Regular, Menlo, monospace` stack in index.html, which is a slightly
+wrong-looking glyph in a chat line -- not a missing one.
+
+
+LICENCE: THE SUBSET KEEPS THE NAME, DELIBERATELY
+
+OFL 1.1 forbids a derivative from using a Reserved Font Name. Monocraft
+declares none -- its copyright line is bare:
+
+  Copyright (c) 2022, Idrees Hassan (https://github.com/IdreesInc/Monocraft)
+
+with no "with Reserved Font Name ..." clause. So the subset may keep the
+family name "Monocraft", which is why index.html's `font-family: 'Monocraft'`
+and the canvas font specs in src/nametag.js, src/chat.js, src/hud.js and
+src/tabList.js all still work untouched. Had there been an RFN, every one of
+those would have needed renaming too.
+
+OFL still requires the licence to travel with the font. public/fonts/OFL.txt
+ships and is unchanged. The subset's own `name` table is preserved intact,
+so the embedded copyright and designer records survive the cut.
+
+Note that "the licence file ships" is NOT the same as "the page carries the
+attribution" -- see DECISIONS.md #3, which is open and is Evan's call. Nothing
+here changes that either way.
+
+
+HOW TO REGENERATE
+
+Deliberately a documented manual step rather than a build script. Every other
+asset here has one because textures and sounds are rebuilt constantly and
+depend on which Minecraft you have installed; this font is a pinned file that
+changes approximately never, and the price of a script would be adding
+fonttools (Python) or a WOFF2 subsetter (npm) to a repo that needs neither.
+
+Requires `pip install fonttools brotli`, then from the repo root:
+
+  pyftsubset fonts-src/Monocraft.ttf \
+    --output-file=public/fonts/Monocraft.woff2 \
+    --flavor=woff2 \
+    --unicodes=U+0020-007E,U+00A0,U+00A7,U+00A9,U+00AE,U+00B0,U+00B7,U+00C0-00FF,U+00D7,U+00F7,U+2013,U+2014,U+2018,U+2019,U+201C,U+201D,U+2022,U+2026,U+2190-2193 \
+    --layout-features= \
+    --no-hinting \
+    --drop-tables+=FFTM,GPOS,GSUB,GDEF,gasp,cvt\ ,fpgm,prep \
+    --name-IDs='*' \
+    --notdef-outline
+
+`--layout-features=` drops kerning and ligatures, which a monospaced pixel
+font has no use for. `--name-IDs='*'` is the one flag that is NOT about size:
+it keeps the name table so the copyright and designer records stay in the
+file. Do not drop it.
+
+VERIFY AFTER RE-CUTTING. The metrics must come out byte-identical to the
+original, because layout code depends on them numerically -- src/chat.js:48
+and src/hud.js:29 both hardcode the 2/3-em advance, and src/nametag.js
+measures against it:
+
+  unitsPerEm 1080, ascent 1200, descent -240, lineGap 97
+  typoAscender 960, typoDescender -120, winAscent 1200, winDescent 240
+  every ASCII advance width exactly 720  (= 2/3 of 1080)
+  family name "Monocraft", subfamily "Regular"
+
+If the advance is not 720 the HUD and chat will still render and will be
+subtly misaligned, which is the kind of wrong nobody files a bug about.

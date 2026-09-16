@@ -6,10 +6,22 @@
   <title>world.evanjolley.com</title>
   <style>
     /* Monocraft, a Minecraft-inspired typeface by Idrees Hassan, SIL OFL 1.1.
-       Mojang's own font is not redistributable. License in public/fonts/. */
+       Mojang's own font is not redistributable. License in public/fonts/.
+
+       SUBSET, and the name is still "Monocraft" on purpose: Monocraft declares
+       no Reserved Font Name, so OFL lets the derivative keep it -- which is
+       why nothing below and no canvas font spec in src/ had to be renamed.
+       177 codepoints instead of 1,475, WOFF2 instead of TTF, 2.6 KB instead of
+       210 KB. It was 21% of the boot payload and is now 0.3%. fonts-src/
+       holds the untouched original and the command that re-cuts this one.
+
+       The fallback stack below is load-bearing now rather than decorative:
+       AI Evan's chat comes out of an LLM and can emit anything, and anything
+       outside the subset lands on ui-monospace. Common typographic
+       punctuation is included precisely so that stays rare. */
     @font-face {
       font-family: 'Monocraft';
-      src: url('/fonts/Monocraft.ttf') format('truetype');
+      src: url('/fonts/Monocraft.woff2') format('woff2');
       font-display: swap;
     }
 
