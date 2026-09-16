@@ -486,9 +486,30 @@ export function createMaterialCache(noa) {
     let mat = cache.get(key)
     if (mat) return mat
     mat = noa.rendering.makeStandardMaterial(`noncube-${key}`)
-    // NEAREST, or 16x16 pixel art turns to soup the moment it is minified.
+    /*
+     * NEAREST, or 16x16 pixel art turns to soup the moment it is minified.
+     *
+     * AND invertY TRUE, which this argument list used to say FALSE, and the
+     * torch is what found it. Babylon's fourth positional argument is
+     * `invertY` and it defaults to true: v = 0 is the BOTTOM row of the
+     * image, which is what the FACES table at the top of this file has always
+     * said it assumed. Passing false silently turned every non-cube texture
+     * upside down.
+     *
+     * It was invisible for 280 slabs and stairs because their textures are
+     * cobblestone, planks and brick -- flip one and you get a different
+     * arrangement of the same noise, and the only real symptom was that a
+     * bottom slab showed the TOP half of its texture where Minecraft shows
+     * the bottom. A torch is the first texture here that is 2 pixels of art
+     * and 252 of nothing, so on a torch the bug is the whole picture: the
+     * flame rendered at the FOOT of the post and the post's lower half
+     * vanished into the transparent rows the flip had moved down there.
+     *
+     * So this is a fix to the 280 as well, in the direction of Minecraft's
+     * own rule, and it is one character.
+     */
     const tex = new Texture(
-      `${path}${textureName}.png`, scene, false, false, Texture.NEAREST_SAMPLINGMODE)
+      `${path}${textureName}.png`, scene, false, true, Texture.NEAREST_SAMPLINGMODE)
     mat.diffuseTexture = tex
     if (cutout) {
       tex.hasAlpha = true
