@@ -11,6 +11,18 @@
 
 name = "world"
 
+# AI Evan's brain. This is the line that turns a static-asset deploy into a
+# real Worker, and it exists for exactly one reason: the Anthropic key. See
+# the header of worker/index.js.
+#
+# worker/index.js imports worker/prompt.generated.js, which is GITIGNORED and
+# built from corpus/ by `npm run prompt`. That is why `prompt` is the first
+# step of both `deploy` and `deploy:dry-run` in package.json -- a deploy
+# without it fails at bundle time, which is the correct failure. The
+# alternative, a committed placeholder prompt, would deploy an Evan who
+# confidently knows nothing about Evan.
+main = "./worker/index.js"
+
 # Pinned deliberately. Cloudflare gates runtime behaviour changes behind this
 # date, so a deploy a year from now behaves like a deploy today. Bumping it is
 # a decision, not a chore.
@@ -31,12 +43,45 @@ enabled = true
 # -- see deploy/.assetsignore for the reason that distinction is load-bearing.
 directory = "./dist"
 
+# The Worker's handle on the asset server, so `export default { fetch }` can
+# fall through to the site for everything that is not /api/agent. Without this
+# binding, setting `main` above would mean every non-asset request 404s from
+# the Worker instead of reaching the asset server's own handling.
+binding = "ASSETS"
+
+# The chat endpoint must reach the Worker rather than the asset server, which
+# would answer /api/agent with a 404 before any code runs. Scoped to the one
+# path: everything else still skips the Worker entirely, which is why serving
+# the site costs nothing.
+run_worker_first = ["/api/agent"]
+
 # not_found_handling is left at its default ("none": a real 404) rather than
 # "single-page-application". SPA handling would answer /textures/atlas9.png
 # with index.html and a 200, so a texture the build forgot to emit would render
 # as a broken image instead of a 404 in the network tab. This site has exactly
 # one HTML page and no client-side routes, so it gains nothing from SPA
 # handling and loses the only signal that says an asset is missing.
+
+# --------------------------------------------------------------------------
+# The rate limit on AI Evan.
+#
+# Keyed on a session id minted in the browser at world boot, NOT on IP --
+# Cloudflare's own docs recommend against IP for this, and an office behind one
+# NAT is exactly the group of visitors most likely to arrive together.
+#
+# `unsafe.bindings` is how the rate-limiting binding is declared today; the
+# name is Cloudflare's and means "not yet stable", not "dangerous". It is
+# approximate and PER-COLO, which is documented as fine at this traffic and is
+# the first thing to move into a Durable Object if a suspiciously even spread
+# across regions ever shows up.
+#
+# namespace_id is a local label, not an account resource. Changing it resets
+# the counters.
+[[unsafe.bindings]]
+name = "AGENT_LIMIT"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 15, period = 60 }
 
 # --------------------------------------------------------------------------
 # Multiplayer, later. Commented out because none of it exists yet.

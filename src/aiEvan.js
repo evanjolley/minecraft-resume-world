@@ -462,3 +462,86 @@ function nameIsKnown(messages) {
   }
   return false
 }
+
+/* ------------------------------------------------------------------ *
+ * The real brain
+ * ------------------------------------------------------------------ */
+
+/*
+ * THE SWAP. One line in main.js:
+ *
+ *   backend: stubBackend,   ->   backend: workerBackend(),
+ *
+ * (plus `workerBackend` added to the import on line 47, which is the only
+ * other character that moves.)
+ *
+ * Everything above this comment stays. The stub is not deleted, and that is
+ * deliberate: it is the OFFLINE PATH. It needs no key, no Worker and no
+ * network, so `npm run dev` keeps working on a plane and test/21-ai-evan.spec
+ * keeps asserting on the seam without spending money. A stub you delete on
+ * launch day is a stub you rewrite the first time the API is down.
+ *
+ * WHAT THIS FUNCTION IS NOT ALLOWED TO CONTAIN. No key, no system prompt, no
+ * corpus, no model name. Every one of those is a server decision, and the
+ * reason is the same each time: this file is bundled by vite and served to
+ * strangers as readable text. The request this sends is the conversation and
+ * the tool schemas, nothing else -- and the Worker ignores a `system` field
+ * even if one turns up, so a visitor editing this in devtools gains nothing.
+ */
+
+/*
+ * A session id, minted once per page load, kept in memory.
+ *
+ * Only job is to be the key the Worker's rate limit counts on. Cloudflare's
+ * own docs recommend against keying a rate limit on IP, and an office behind
+ * one NAT is precisely the group of visitors most likely to arrive together.
+ *
+ * Deliberately NOT persisted to localStorage and deliberately not an identity.
+ * Persisting it would make it a tracking cookie in everything but name, which
+ * needs a privacy notice this project does not have; refreshing the page to
+ * get a new one is a hole an attacker walks through, and the caps that matter
+ * do not depend on plugging it (see CAPS in worker/index.js).
+ */
+const SESSION_ID = (() => {
+  const b = new Uint8Array(16)
+  crypto.getRandomValues(b)
+  return [...b].map((n) => n.toString(16).padStart(2, '0')).join('')
+})()
+
+/**
+ * A backend that posts the conversation to the Worker.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.url]       where the Worker is. Same origin by default.
+ * @param {function} [opts.fetch]   injected in tests.
+ */
+export function workerBackend({ url = '/api/agent', fetch: f = globalThis.fetch } = {}) {
+  return async ({ messages, tools }) => {
+    let res
+    try {
+      res = await f(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: SESSION_ID, messages, tools }),
+      })
+    } catch {
+      /*
+       * A network failure returns a VALID BACKEND REPLY rather than throwing.
+       * agent.js has no catch around `backend(...)` on purpose -- it is one
+       * function call in a loop -- so a throw here would abort the turn and
+       * leave the player looking at an NPC that stopped mid-sentence. A
+       * sentence is the honest failure mode, and it keeps the contract at the
+       * top of agent.js true: a backend always returns a /v1/messages reply.
+       */
+      return offline('I lost my connection there. Say that again?')
+    }
+    if (!res.ok && res.status >= 500) return offline('Something broke on my end. One more time?')
+    try {
+      return await res.json()
+    } catch {
+      return offline('That came back garbled. Try again?')
+    }
+  }
+}
+
+const offline = (text) => ({ content: [{ type: 'text', text }], stop_reason: 'end_turn' })

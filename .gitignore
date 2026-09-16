@@ -42,6 +42,11 @@ public/terrain/
 # committed.
 .mcgen/
 
+# The system prompt, built from corpus/ by `npm run prompt` at deploy time.
+# Same rule as corpus/ itself and for the same reason: it IS corpus content,
+# rearranged. See the header of scripts/build-prompt.mjs.
+worker/prompt.generated.js
+
 # Evan's own answers for the AI Evan corpus -- name, hometown, career detail,
 # and things explicitly marked private. THIS REPO IS PUBLIC. The canonical copy
 # lives in the artifact database behind the quiz; this is a local backup and

@@ -26,10 +26,12 @@
     "terrain:mountains": "SEED=434533485056755 PATCH_X=-112 PATCH_Z=0 PATCH_SIZE=256 PATCH_NAME=mountains SPAWN_AT=-32,116 node scripts/build-terrain.mjs",
     "terrain:mountains:verify": "node scripts/terrain/verify.mjs mountains",
     "postinstall": "node scripts/build-textures.mjs --ensure && node scripts/build-sounds.mjs --ensure",
+    "prompt": "node scripts/build-prompt.mjs",
+    "prompt:check": "node scripts/build-prompt.mjs --check",
     "test": "playwright test -c test/playwright.config.js",
     "build:deploy": "rm -rf dist && node scripts/build-textures.mjs --source=ce --no-cape && npm run sounds:free && vite build && rm -rf dist/terrain && cp deploy/_headers deploy/.assetsignore dist/ && node scripts/check-deploy-assets.mjs",
-    "deploy": "npm run build:deploy && npx --yes wrangler@4 deploy",
-    "deploy:dry-run": "npm run build:deploy && npx --yes wrangler@4 deploy --dry-run"
+    "deploy": "npm run prompt && npm run build:deploy && npx --yes wrangler@4 deploy",
+    "deploy:dry-run": "npm run prompt && npm run build:deploy && npx --yes wrangler@4 deploy --dry-run"
   },
   "dependencies": {
     "@babylonjs/core": "^6.49.0",
