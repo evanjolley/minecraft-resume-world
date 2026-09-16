@@ -1142,6 +1142,59 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
 - **Passive ambient animals.** Deliberately NOT hostile mobs (see below), but
   a couple of wandering chickens would make the island feel alive for a
   fraction of the cost. The model infrastructure now exists.
+- **Escape, the cursor, and who owns pointer lock.** Evan asked for further
+  investigation into escaping the inventory and into the chat window, and the
+  two are the same problem wearing different hats. `docs/REPORTED.md` #4 is the
+  symptom and is **still UNRESOLVED and still not reproducible by an agent** —
+  `docs/browsers.md` §5 is structural about why, since no headless browser
+  grants pointer lock or real user activation in **either** engine. That entry
+  should be read first; it has been triaged three times and what is below is
+  the engineering that sits under it, not a replacement for it.
+
+  **Three concrete things were found by reading, and two of them are real
+  defects rather than open questions.**
+
+  **(a) Chat never got the cancel that the inventory has, and it is a one-line
+  asymmetry.** `inventory.js` calls `cancelPersistentLock()` when it OPENS, and
+  the comment above it says exactly why: without it, closing one screen starts
+  a ~2.1 s retry loop that is still asking for the lock when you open the next
+  one, and it grabs the lock out from under the screen you just opened.
+  `chat.js` releases the lock on open and **never cancels that loop** — it does
+  not even import the function. So close the inventory, immediately press T,
+  and the inventory's loop can pull the cursor away mid-sentence. This is the
+  chat-window half of the report and it is a genuine bug, not a browser
+  mystery.
+
+  **(b) The Firefox double-handle is still unfixed, and main.js can now own the
+  fix.** The pause menu does not open on a keydown at all — `main.js` opens it
+  from `lostPointerLock`, because Chrome eats the Escape that exits pointer
+  lock. `inventory.js` records that **Firefox DOES deliver that keydown**, so
+  Firefox runs the synchronous handler first and `lostPointerLock` afterwards,
+  against a flag the first one already cleared — and the pause menu opens on
+  top. `REPORTED.md` notes the fix is a wider guard in `main.js` and that the
+  file was not the reporting agent's to change. **It is available now.** The
+  shape is that the guard has to know a screen closed *just now*, not only
+  whether one is open *right now*, which means a timestamp rather than a
+  boolean. Still read from a source comment — nothing here has ever run in
+  Firefox and it is not in the suite's projects.
+
+  **(c) "Which screens are open" is hand-maintained in four places.** The same
+  list appears in `main.js`'s `lostPointerLock` guard, in `chat.js` twice (its
+  re-lock condition and its T/slash open guard) and in `inventory.js`, each one
+  enumerating the others. That is N screens each keeping a list of N-1 peers,
+  and it is already slightly inconsistent between copies. **`src/inputLock.js`
+  is already the authority for whether a screen is open** and is not being
+  asked. Worth fixing before item 1 rather than after: signs and written books
+  add a screen, and every one of those four conditions is silently wrong the
+  day it lands. That is the structural version of this bug, and it is the one
+  that stops it recurring.
+
+  **What still needs a human**, and it is unchanged: ten minutes in a real
+  browser window with `REPORTED.md` #4 open. **The first question is still
+  which browser Evan plays in**, which has been asked repeatedly and not
+  answered, and the second is what the console says when the menu closes — a
+  refused lock request logs. Fixing (a) and (c) is worth doing regardless,
+  because neither depends on the answer.
 - **Sky light, which is the half of the light engine that is not built.**
   The block half shipped — `src/blockLight.js` floods light out from glowstone,
   lava, sea lanterns and magma through a BFS over the voxel data, and writes the
