@@ -1,6 +1,7 @@
 import { Engine } from 'noa-engine'
 
-import { registerBlocks, BLOCK_TYPES } from './blocks.js'
+import { registerBlocks, BLOCK_TYPES, BLOCK_SUPPORT } from './blocks.js'
+import { installAttachment } from './blockMeshes.js'
 import { getVoxelID, terrainInfo, SPAWN } from './island.js'
 import { installPhysics, installSpeedModes, MC } from './physics.js'
 import { createSurvival } from './survival.js'
@@ -487,6 +488,25 @@ const drops = installItemEntities(noa, { inventory, authority, sounds, inputLock
  */
 const buckets = installBuckets(noa, { inventory, authority, inputLock })
 installFurnaceDrops(inventory.furnaces, authority, drops.popResource)
+
+/*
+ * A torch falls off a wall you mine, and lands as a torch.
+ *
+ * Installed HERE, after `drops`, and that ordering is the whole point: the
+ * break is handed to the authority's own request path, which itemEntity.js
+ * has already decorated, so a torch that loses its wall pops exactly the way
+ * a mined one does -- same loot table, same scatter, same creative rule that
+ * a player with infinite resources gets nothing. blockMeshes.js knows when a
+ * block has lost its support and deliberately does not know how to remove one
+ * politely; that is the authority's job and the authority is assembled here.
+ *
+ * The promise is dropped on purpose. Nothing is waiting on it: the world has
+ * already changed, the drop spawns when the request resolves a microtask
+ * later, and there is no caller to tell.
+ */
+installAttachment(noa, BLOCK_SUPPORT, (x, y, z) => {
+  authority.requestBlockChange({ id: 0, position: [x, y, z], cause: 'break' })
+})
 
 /*
  * F3. Installed after `drops` and `particles` because it counts both, and it

@@ -1,5 +1,5 @@
 import {
-  SHAPE_BOXES, SHAPE_ROTATION, PASS_THROUGH_SHAPES, buildShapeMesh,
+  FACINGS, SHAPE_BOXES, SHAPE_ROTATION, PASS_THROUGH_SHAPES, buildShapeMesh,
   createMaterialCache, facingFromNormal, installNonCubeCollision,
   installPlacementOrientation, installThinInstanceUploadFix,
 } from './blockMeshes.js'
@@ -1047,6 +1047,25 @@ for (const facing of WALL_TORCH_FACINGS) {
  * something under it or behind it" is the same sentence whether the support
  * was never there or was mined away.
  */
+/**
+ * Block id -> the neighbour offset that has to be solid, or the block falls.
+ *
+ * Exported rather than installed in registerBlocks below, because taking a
+ * block off the world so that it DROPS is the authority's job and the
+ * authority is main.js's to hand out. This file knows which blocks need
+ * holding up; it does not know how to break one politely.
+ *
+ * A floor torch needs the block under it. A wall torch needs the one BEHIND
+ * it, which is the opposite of the direction it points -- see the facing
+ * convention above.
+ * @type {Map<number, number[]>}
+ */
+export const BLOCK_SUPPORT = new Map([
+  [TORCH_ID, [0, -1, 0]],
+  ...WALL_TORCH_FACINGS.map((facing, i) =>
+    [TORCH_ID + 1 + i, FACINGS[facing].map(v => (v ? -v : 0))]),
+])
+
 NON_CUBE_VARIANTS.set(TORCH_ID, (_facing, _half, normal) => {
   const facing = facingFromNormal(normal)
   if (!facing) return TORCH_ID

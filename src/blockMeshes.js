@@ -93,7 +93,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture.js'
  * that is where its tall half will be. Before this commit it would have been
  * built pointing the other way.
  */
-const FACINGS = {
+export const FACINGS = {
   north: [0, 0, -1],
   south: [0, 0, 1],
   west: [1, 0, 0],
@@ -1010,6 +1010,97 @@ export function installPlacementOrientation(noa, variantOf) {
     const facing = headingToFacing(noa.camera.heading)
     return originalSetBlock(
       resolve(facing, halfFromTarget(normal, hitY), normal), x, y, z)
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Attachment: the blocks that need something to hold them up.
+ *
+ * THE FIRST NEIGHBOUR-DEPENDENT BEHAVIOUR IN THIS WORLD, and it is worth
+ * being precise about how that differs from the fence problem at the bottom
+ * of this file. A fence needs neighbour-dependent GEOMETRY -- what it looks
+ * like changes when something is built next to it, which noa cannot express
+ * because every voxel of an id shares one mesh. A torch needs
+ * neighbour-dependent EXISTENCE: it looks the same forever and simply stops
+ * being there when its wall goes. Nothing about the mesh changes, so nothing
+ * about the engine's one-mesh-per-id rule is in the way.
+ *
+ * Vanilla calls this `canSurvive`, checks it on every neighbour update, and
+ * on a false answer breaks the block and drops it. This is that, narrowed to
+ * the one shape of support a torch has: ONE neighbour, at a fixed offset.
+ * A sign on a wall is the same shape of rule and will reuse this; a sugar
+ * cane that wants "water within one block" is not, and would want its own.
+ *
+ * IT DROPS, it does not vanish. That is the whole reason the break goes
+ * through a callback instead of a bare `setBlock(0)`: the caller hands us the
+ * authority's own break path, so the torch pops as an item exactly the way a
+ * mined one does, honours creative's no-drops rule, and is announced to every
+ * listener that cares. Writing air here would have been one line and would
+ * have eaten the torch.
+ *
+ * IT ALSO VALIDATES PLACEMENT, and that was not extra code. The sweep runs
+ * after every write, not only after a break, so a torch placed where nothing
+ * can hold it is taken back off in the same breath -- which is what makes
+ * "click a ceiling with a torch" behave when the placement seam has no way to
+ * say no. One rule, both directions.
+ *
+ * WHAT COUNTS AS SUPPORT is noa's own solidity, which means a full cube. That
+ * is narrower than vanilla, where a torch stands on a bottom slab's sturdy
+ * top face; here a slab is registered non-solid (the whole reason this file
+ * has a collision resolver at all) and a torch will not stay on one. Named
+ * rather than hidden: the fix is a "does this shape fill the face I need"
+ * question asked of SHAPE_BOXES, and it is not worth building until something
+ * asks for it.
+ * ------------------------------------------------------------------ */
+
+/** The six neighbours, in the order the sweep visits them. */
+const NEIGHBOURS = [
+  [0, -1, 0], [0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1],
+]
+
+/**
+ * @param {*} noa
+ * @param {Map<number, number[]>} supportOffset block id -> the [dx,dy,dz] of
+ *        the neighbour that must be solid for it to stay
+ * @param {(x: number, y: number, z: number) => void} breakBlock how to take one
+ *        off the world so that it DROPS -- the authority's break path
+ */
+export function installAttachment(noa, supportOffset, breakBlock) {
+  if (supportOffset.size === 0) return
+  const originalSetBlock = noa.setBlock.bind(noa)
+  const solid = noa.registry.getBlockSolidity.bind(noa.registry)
+
+  /** Is the block at these coordinates still held up? */
+  const supported = (x, y, z) => {
+    const off = supportOffset.get(noa.getBlock(x, y, z))
+    if (!off) return true
+    return solid(noa.getBlock(x + off[0], y + off[1], z + off[2]))
+  }
+
+  /*
+   * Re-entrancy is real and is not a hypothetical: `breakBlock` goes back
+   * through the authority, which comes back through `noa.setBlock`, which is
+   * this function. The guard keeps one sweep running at a time and lets the
+   * inner write land without starting a second one -- the outer sweep has
+   * not finished its six neighbours yet and will see the result anyway.
+   */
+  let sweeping = false
+
+  noa.setBlock = (id, x, y, z) => {
+    const result = originalSetBlock(id, x, y, z)
+    if (sweeping) return result
+    sweeping = true
+    try {
+      // The block just written (did we place a torch on nothing?) and then
+      // the six around it (did we take something's wall away?).
+      if (!supported(x, y, z)) breakBlock(x, y, z)
+      for (const [dx, dy, dz] of NEIGHBOURS) {
+        if (!supported(x + dx, y + dy, z + dz)) breakBlock(x + dx, y + dy, z + dz)
+      }
+    } finally {
+      sweeping = false
+    }
+    return result
   }
 }
 
