@@ -126,14 +126,87 @@ import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData.js'
  * unreached mesh in the world would render pitch black. Inverted, the failure
  * mode is again "looks exactly like today".
  *
- * NOT DONE, and worth saying: block light here is not face-shaded. Vanilla
- * multiplies the five-value face table (UP 1.0, N/S 0.8, E/W 0.6, DOWN 0.5)
- * into the light level, so the underside of a glowstone-lit ceiling is dimmer
- * than the floor. Here all six faces of a lit block get the same level. The
- * hook to fix it is four lines below `CUSTOM_FRAGMENT_BEFORE_FOG` reading
- * `vNormalW` -- which is also, per docs/lighting.md section 6, the hook the
- * face-shading table itself has been waiting for. Both are now cheap.
+ * FACE SHADING NOW LIVES HERE TOO, and it is the same four lines the note
+ * that used to sit in this paragraph promised. `vNormalW` was the hook, and
+ * both things it was waiting on -- the five-value table and face-shading the
+ * block light -- fall out of one multiply at the end of the fragment code.
+ * See MC_FACE_SHADE below.
  */
+
+/*
+ * TERRAIN FACE SHADING, and why it is a table and not a light.
+ *
+ * Minecraft gives every face of every block a CONSTANT multiplier on its light
+ * level. From `ClientLevel.getShade(Direction, boolean)` in 1.21:
+ *
+ *     case DOWN:  return flag ? 0.9F : 0.5F;
+ *     case UP:    return flag ? 0.9F : 1.0F;
+ *     case NORTH: case SOUTH: return 0.8F;
+ *     case WEST:  case EAST:  return 0.6F;
+ *
+ * (`flag` is `constantAmbientLight()`, the Nether/End dimension flag, and it
+ * touches UP and DOWN only -- the sides stay 0.8 and 0.6 either way. Not
+ * implemented here; dimensions.js would be where it went.)
+ *
+ * The table does not rotate with the sun and never has, which is the half of
+ * report #6 that was already right. What was WRONG is that sky.js expressed
+ * the table with a Babylon DirectionalLight, and `max(0, dot(n, -L))` is
+ * antisymmetric: it cannot give +X and -X the same number unless L is
+ * vertical, and a vertical L collapses all four sides AND the bottom onto one
+ * value. sky.js pointed it straight down to kill the asymmetry and said so in
+ * place -- the fix was right, the mechanism just could not say more than two
+ * numbers. The table can say five, so it takes the job and the light is freed
+ * for entities.
+ *
+ * Rejected: five directional lights, one per face direction. That does express
+ * the table, and sky.js already rejected it for the right reason -- Babylon
+ * lights are scene-wide, so they land on every entity too. Rejected: a
+ * per-face vertex attribute written by the mesher. The normal IS that
+ * attribute and it is already in the buffer; a second lane carrying a function
+ * of the first is a lane that can disagree with it.
+ *
+ * NORTH/SOUTH is the Z pair and EAST/WEST is the X pair here as in vanilla,
+ * and the compass mirror that debugScreen.js documents does not matter for
+ * once: mirroring X swaps east with west, and east and west are the same
+ * number.
+ */
+export const MC_FACE_SHADE = {
+  up: 1.0, down: 0.5, north: 0.8, south: 0.8, east: 0.6, west: 0.6,
+}
+
+/**
+ * Daylight for terrain, 0..1. Pushed by sky.js once a tick.
+ *
+ * It is a MODULE VARIABLE read at bind time rather than a value written onto
+ * each material, and that is not a style choice. Terrain used to take its
+ * daylight from the directional light's intensity, which lives in the LIGHT's
+ * uniform buffer and is therefore rebound every frame. Nothing else on a
+ * terrain material is: noa sets `scene.performancePriority = Intermediate`,
+ * Babylon turns that into `checkReadyOnlyOnce`, `isFrozen` IS
+ * `checkReadyOnlyOnce`, and StandardMaterial guards its whole material-UBO
+ * write -- `vDiffuseColor`, `vEmissiveColor`, `vAmbientColor` -- behind
+ * `!this.isFrozen`. So `scene.ambientColor` has not reached a terrain shader
+ * since the day the material first rendered, and writing the daylight into
+ * any StandardMaterial property would have been the fourth time that trap
+ * has been sprung in this repo (56d40d2, the held item, the nametag).
+ *
+ * A PLUGIN uniform is outside that guard. `hardBindForSubMesh` is called from
+ * StandardMaterial.bindForSubMesh BEFORE the `mustRebind` test and outside
+ * the `isFrozen` one, so a value written there reaches the GPU on every draw
+ * of a frozen material. That is the whole reason this file can own terrain's
+ * daylight at all.
+ */
+let terrainLevel = 1
+
+/** Called by sky.js, once a tick, with the same `level` entities get. */
+export function setTerrainLight(value) {
+  terrainLevel = value
+}
+
+/** Test seam: what the shader is actually being told the daylight is. */
+export function getTerrainLight() {
+  return terrainLevel
+}
 
 /** Vanilla's emission levels, by block key. Anything absent emits nothing. */
 export const EMISSION = {
@@ -202,6 +275,23 @@ class BlockLightPlugin extends MaterialPluginBase {
     // Priority 210: after terrainAnimation.js's 200, so that if both ever want
     // the same injection point the light lands on top of the animated texel.
     super(material, 'NoaBlockLight', 210, { NOA_BLOCK_LIGHT: false })
+    /*
+     * OPT IN, BEFORE _enable, or hardBindForSubMesh below is never called.
+     *
+     * MaterialPluginManager only wires `_callbackPluginEventHardBindForSubMesh`
+     * for plugins that set this; the default is false and the method is simply
+     * ignored. Measured, not read: with it missing, a GPU readback of a lit
+     * ground pixel at noon with the shader rewritten to output `uDaylight` in
+     * the red channel came back R=0 -- the uniform had never been written, and
+     * the whole world was rendering off the light floor instead.
+     *
+     * The ORDER is the other half of it. `_enable(true)` is what runs
+     * `_activatePlugin`, and `_activatePlugin` reads this flag once, there and
+     * then. Setting it after the enable compiles, type-checks and does
+     * nothing -- which is exactly what the second GPU read showed, still R=0
+     * with the flag apparently set.
+     */
+    this.registerForExtraEvents = true
     this._enable(true)
   }
 
@@ -241,6 +331,26 @@ class BlockLightPlugin extends MaterialPluginBase {
     defines['VERTEXALPHA'] = true
   }
   getClassName() { return 'NoaBlockLightPlugin' }
+
+  /*
+   * One float, declared into the MATERIAL uniform buffer by Babylon for us
+   * (materialPluginManager appends every `ubo` entry to the Material block and
+   * writes the GLSL declaration), so the shader just reads `uDaylight`.
+   */
+  getUniforms() {
+    return { ubo: [{ name: 'uDaylight', size: 1, type: 'float' }] }
+  }
+
+  /*
+   * HARD bind, not the ordinary one. `hardBindForSubMesh` is the hook
+   * StandardMaterial calls unconditionally; `bindForSubMesh` sits inside its
+   * `if (mustRebind)`. Both would work today, but only this one is immune to
+   * the frozen-material problem described at `terrainLevel`, and being immune
+   * to it by construction is the entire point of putting the daylight here.
+   */
+  hardBindForSubMesh(uniformBuffer) {
+    uniformBuffer.updateFloat('uDaylight', terrainLevel)
+  }
 
   /*
    * The sky lane's attribute. Babylon only puts a name in the compiled
@@ -306,8 +416,48 @@ class BlockLightPlugin extends MaterialPluginBase {
        * whole change exists to remove.
        */
       'CUSTOM_FRAGMENT_BEFORE_FOG': `
+        #ifdef NORMAL
+          /*
+           * The five-value table, branchless. For a unit normal the SQUARES of
+           * the components sum to 1, so weighting each axis's constant by its
+           * squared component is an exact lookup on an axis-aligned face and a
+           * smooth blend on anything else -- which is what a 45-degree stair
+           * or a torch wants anyway. The ternary is the only place up and down
+           * have to be told apart, because y*y cannot.
+           */
+          vec3 noaN = normalize(vNormalW);
+          vec3 noaAxis = noaN * noaN;
+          float noaFace = noaAxis.x * ${MC_FACE_SHADE.east.toFixed(3)}
+                        + noaAxis.z * ${MC_FACE_SHADE.north.toFixed(3)}
+                        + noaAxis.y * (noaN.y >= 0.0
+                            ? ${MC_FACE_SHADE.up.toFixed(3)}
+                            : ${MC_FACE_SHADE.down.toFixed(3)});
+        #else
+          float noaFace = 1.0;
+        #endif
+        /*
+         * AND HERE THE BABYLON LIGHTS ARE THROWN AWAY. color arrives holding
+         * finalDiffuse * baseAmbientColor + specular + reflection, all of
+         * which for terrain is one directional light's Lambert term plus a
+         * scene ambient that froze solid on the first frame. Replacing it
+         * outright rather than trying to correct it is what lets sky.js point
+         * that light wherever entities need it: terrain no longer reads it.
+         *
+         * Rejected: DISABLELIGHTING, which expresses the same intent as a
+         * define. It also clears Babylon's _needNormals, and NORMAL going
+         * off takes vNormalW -- the table's only input -- with it.
+         */
+        color.rgb = noaBaseCol * uDaylight;
         color.rgb = max(color.rgb * (1.0 - vNoaSkyDark), noaBaseCol * (1.0 - vColor.a));
         color.rgb = max(color.rgb, noaBaseCol * ${LIGHT_FLOOR.toFixed(3)});
+        /*
+         * Face shade multiplies the LIGHT, last, so it scales the sky term,
+         * the block term and the floor alike. That is vanilla's order --
+         * texture * lightmap * shade -- and it is also the line that makes
+         * the underside of a glowstone-lit ceiling dimmer than the floor under
+         * it, which the old comment in this file listed as not done.
+         */
+        color.rgb *= noaFace;
       `,
     }
   }
@@ -1520,6 +1670,12 @@ export function installBlockLight(noa, { ids = {} } = {}) {
     lastSeedMs: () => seedMs,
     /** Number of chunks currently holding light data. */
     chunkCount: () => store.size,
+    /** Daylight the terrain shader is being handed this tick. Test seam --
+     *  the only honest way to read it is from the module that binds it. */
+    terrainLight: () => terrainLevel,
+    /** Vanilla's per-face table, so a spec can assert against it without
+     *  retyping it (see 68-entity-shading / 36-face-shading). */
+    faceShade: MC_FACE_SHADE,
     EMISSION,
     MAX_LIGHT,
   }

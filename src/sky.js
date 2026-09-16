@@ -5,6 +5,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { MC } from './physics.js'
 import { setEntityLight } from './entityLight.js'
+import { setTerrainLight, MC_FACE_SHADE } from './blockLight.js'
 
 /*
  * FACE SHADING, and why the light points straight down.
@@ -53,10 +54,18 @@ import { setEntityLight } from './entityLight.js'
  * than the one being solved.
  */
 
-/** Minecraft's per-face multipliers, from BlockModelRenderer.EnumNeighborInfo. */
-export const MC_FACE_SHADE = {
-  up: 1.0, down: 0.5, north: 0.8, south: 0.8, east: 0.6, west: 0.6,
-}
+/*
+ * The table MOVED, and this is the only line of it left here.
+ *
+ * Everything above is still true and is still the reason report #6 happened,
+ * but the conclusion it reaches -- "getting the real five-value table needs
+ * per-face shading in the terrain fragment shader" -- has since been done.
+ * blockLight.js owns MC_FACE_SHADE and applies it from `vNormalW`, terrain
+ * reads no Babylon light at all any more, and this re-export exists so that
+ * anyone who follows the comment above lands on the table rather than on a
+ * missing symbol.
+ */
+export { MC_FACE_SHADE }
 
 /**
  * What a vertical face gets here. The mean of vanilla's 0.8 and 0.6, because
@@ -614,6 +623,7 @@ export function installSky(noa) {
     }
     scene_.ambientColor.set(level * SIDE_SHADE, level * SIDE_SHADE, level * SIDE_SHADE)
     setEntityLight(level)
+    setTerrainLight(level)
   }
 
   noa.on('tick', (dt) => {
@@ -704,6 +714,7 @@ export function installSky(noa) {
      * material's construction site.
      */
     setEntityLight(level)
+    setTerrainLight(level)
 
     /*
      * Cloud colour, Minecraft's Level.getCloudColor: white, tinted by the
