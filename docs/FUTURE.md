@@ -1,10 +1,25 @@
 # Future builds
 
-Everything here is secondary to one fact: **the island is empty.** The engine
-is in good shape and getting better, and it now stands on a real Minecraft
-landscape rather than a hand-built one. None of that is what a visitor came
-for. They came to find out who Evan is, and right now the world cannot tell
-them.
+Everything here is secondary to one fact: **the island is empty.** That
+sentence has opened this file for the project's whole life and it is still the
+true one. The engine is in good shape and getting better; it now stands on flat
+ground built to be built on. None of that is what a visitor came for. They came
+to find out who Evan is, and right now the world cannot tell them.
+
+Checked against `3b8ef66` on 2026-09-16, which is the commit every count and
+every file:line below was read at. **Two agents were live while this was
+written** and nothing uncommitted is claimed as shipped. What they hold, so
+that a reader who finds the world different knows which difference is theirs:
+
+- **A world registry**, making the superflat, an imported mountain seed and the
+  Nether switchable without a rebuild. In the working tree it is three rows in
+  `src/dimensions.js` plus `test/51-worlds.spec.js`, and `public/terrain/`
+  already carries `mountains.bin` (3.5MB raw, 1.4MB gzipped — which is why the
+  superflat is what you boot into and the seed patch is what you opt into).
+- **Water translucency and the falling rule.** Water renders opaque and spreads
+  sideways over empty air rather than falling first; `src/fluids.js`,
+  `src/blocks.js` and `test/46-water-look.spec.js` are theirs. Treat
+  `docs/REPORTED.md` #15 as finished on the spread and unfinished on the look.
 
 ## Already built
 
@@ -16,7 +31,11 @@ rain and thunder, Fancy 3D clouds, extruded item models so tools are visible
 in hand, shift-click, game modes behind an OP-gated authority, crafting (2x2
 and 3x3), armor and an offhand, a 355-block cube palette on a paged texture
 atlas plus 280 slabs and stairs for 28 material families with real sub-voxel
-collision, and a **313-test browser suite** across 32 spec files.
+collision, and a browser suite that is now **924 tests across 50 spec files**,
+run against two engines rather than one.
+
+That number wants a caveat more than it wants celebrating; see "The suite has
+outgrown being run casually" below.
 
 Four things landed since this file was last honest, and they are the reason
 several sections below now read differently:
@@ -114,6 +133,52 @@ be added to the list below.
   rather than as an idea. It is worth saying why it was the cheapest one: a
   figure that turns to face you reads as alive before it says anything.
 
+### Since, and this is the batch that rewrote the list below
+
+This file went stale at `afc6cc1` and the distance is large enough that three
+numbered items stopped existing rather than moving. They are recorded here
+because "shipped work moves up and loses its section" is this file's own rule.
+
+- **The overworld is generated, not imported** (`b5e2255`, `9d2d5ac`). It is
+  Classic Flat superflat now, produced in the browser by `src/flatworld.js`
+  from a layer preset, because the owner asked for flat ground to build on and
+  weighed a plains generator before choosing this one *for now* — which is why
+  the preset is a parameter and the ladder of blocks is data. Two things left
+  with `terrain.bin`: 981KB raw / 404KB gzipped, the single largest thing the
+  page downloaded; and, for the overworld only, the licence question. **Both of
+  those were numbered items on the list below, and both are gone.**
+- **The Nether is real and so are portals.** Build an obsidian frame, light it
+  with flint and steel, walk through (`1ee5c53`, `test/44-portals.spec.js`).
+  The "Someday" section's Nether entry carries the analysis and its own
+  BUILT banner; the accounting lives at the top of `src/dimensions.js`.
+- **Fluids flow.** Water and lava, vanilla's levels 0–7 plus a falling flag, at
+  vanilla's 5-tick and 30-tick rates (`ddc9997`, `test/41-fluid-flow.spec.js`).
+  Sixteen new ids per fluid, exactly as `docs/REPORTED.md` #15 costed it.
+- **Buckets, furnace smelting and furnace drops.** A bucket carries a source
+  block and only a source block, and breaking a furnace throws its contents on
+  the floor because `authority.js` announces every block that stops existing.
+- **Animated textures**, via the layer-remap uniform `docs/water.md` §3 argued
+  for — which landed with the discovery that the animation uniform had never
+  been declared in any shader, ever (`ac4d5d3`).
+- **Safari works** (`5634bde`, `docs/browsers.md`). Before it, WebKit rendered
+  no terrain at all; the whole world was one undeclared uniform away. The suite
+  has a `projects` block now, so every spec is a statement about two engines.
+- **Face shading is fixed** (`56d40d2`). The ambient term had been baked into a
+  frozen uniform buffer at boot and never written again, which is why the faces
+  kept their daytime relationship to each other at midnight.
+- **Evan falls** when you mine the floor out from under him (`f36116b`), and
+  **blocks cannot be placed inside bodies** (`6eea192`) — written as a general
+  box query in `src/entityBox.js` rather than as a placement check, because the
+  owner wants to punch him and a punch is the same query with a different box.
+- **Escape out of the inventory gives the crosshair back**, not the pause menu
+  (`98c3e86`). Not the same bug as `docs/REPORTED.md` #4, which is still open.
+- **The creative inventory, the tab list, F3, death messages and the heart
+  animation** all shipped in this stretch too.
+- **A seed scout with a real occlusion test** (`8aa37eb`,
+  `docs/seed-434533485056755.md`), and a 256-block patch cut from it sized by
+  measurement rather than by guess (`cf498ef`). This is the machinery the old
+  item 6 asked for, built after the world it was going to fix stopped existing.
+
 ## Next, in the order I'd take them
 
 Roughly ascending in how much they depend on a decision from Evan rather than
@@ -153,7 +218,33 @@ on effort.
    Plausibly the highest value-per-effort item on this entire list. Everything
    else here makes the world more elaborate. This is the first thing that lets
    it say anything. It absorbs "spawn signage" from "Also worth building".
-2. **Dropped non-block items are flat planes.** `itemModel.js` now extrudes
+2. **There is no light engine, and that is four reported symptoms.** New to
+   this list, and it arrives costed rather than as an idea: `docs/lighting.md`
+   is a full diagnosis and a plan, read out of `node_modules/noa-engine/` and
+   not from memory. The argument is not repeated here. What belongs here is the
+   shape of it and the price.
+
+   **One missing feature, four symptoms**, and fixing any one means building
+   all of it: glowstone lights nothing (`docs/REPORTED.md` #5), a torch would
+   light nothing either if torches landed (#3), a player in a cave is lit as if
+   outdoors (`src/entityLight.js`), and F3 has no Client/Server Light lines
+   (`src/debugScreen.js`). Four separate small disappointments, each filed on
+   its own, all the same hole.
+
+   **noa 0.33 offers nothing to build on and one thing to build with.** The
+   registry has no emission field, a chunk stores block ids and nothing else,
+   and the terrain mesher is a closed module that takes no callbacks — so
+   per-voxel light data means editing that file, which means vendoring noa
+   rather than depending on it. Against that, `docs/lighting.md` found a **free
+   per-vertex channel**: ambient occlusion is already premultiplied into vertex
+   colour RGB, so a light term can ride the lane that exists instead of adding
+   an attribute. **Two to four days.**
+
+   It is the largest open item in this project that is not content, and it is
+   the reason torches are deliberately not built — a torch that lights nothing
+   is the glowstone complaint arriving a second time, from a player who just
+   mined coal specifically to see in a cave.
+3. **Dropped non-block items are flat planes.** `itemModel.js` now extrudes
    item sprites for the hand, and the same mesh is reusable in
    `itemEntity.js` — but it needs a `ground` entry in `DISPLAY` (vanilla's is
    rotation [0,0,0], translation [0,2,0], scale 0.5, so double the current
@@ -161,7 +252,7 @@ on effort.
    first drop of a new item type pops in. Arguably not worth it: at drop scale
    an extruded sprite is a handful of pixels, which is why it was a plane in
    the first place.
-3. **Connected non-cube blocks** — fences, walls, panes, bars, and stair
+4. **Connected non-cube blocks** — fences, walls, panes, bars, and stair
    corner shapes. Slabs and stairs shipped; these did not, and the reason is
    structural rather than a matter of effort. noa draws a custom block mesh as
    a thin instance, so every voxel of a block id shares one geometry and can
@@ -171,7 +262,7 @@ on effort.
    system driven off the registry's onSet/onUnset hooks, which has to
    reimplement noa's origin rebasing because noa offers no hook to shift our
    matrices when it shifts its own.
-4. **Sneaking does not shrink you.** `MC.SNEAK_HEIGHT` (1.5) sits in
+5. **Sneaking does not shrink you.** `MC.SNEAK_HEIGHT` (1.5) sits in
    `src/physics.js` and is read by nothing — still true, checked. `SNEAK_EYE_HEIGHT`
    beside it IS read, so Shift already drops the camera, slows you and turns on
    the edge protection — everything sneaking does EXCEPT the part that changes
@@ -185,7 +276,7 @@ on effort.
    across. The catch is standing up: vanilla refuses to un-sneak while
    something is over your head, and without that check you would unsneak inside
    a block.
-5. **Movement is systematically 0.66% slow, and it is one line.** noa's
+6. **Movement is systematically 0.66% slow, and it is one line.** noa's
    movement component pushes toward the target with `responsiveness * (S - v)`
    while voxel-physics-engine drags back with `drag * v`, and those balance
    below `S` rather than at it. With `move.responsiveness = 15` and noa's
@@ -199,37 +290,6 @@ on effort.
    clamp landed in this same file and deliberately did not touch it — the
    clamp states a ceiling the existing constants already imply, where this
    would move the constants themselves.
-6. **Spawn is under a closed canopy and can see none of what it was picked
-   for.** `pickSpawn` in `scripts/build-terrain.mjs` scored candidate columns
-   on biomes and peak height "in sight", and the manifest duly records four
-   biomes and a peak at y=160. Neither is visible. Reading the encoded patch:
-   the spawn column is grass at y=135 with dark oak leaves at y=139 and 140
-   directly overhead, 75 of the surrounding 81 columns are roofed, and an
-   eye-level ray in all eight compass directions hits something within 4 to 13
-   blocks. The scorer never tested visibility at all — it sampled biome and
-   ground height at ring offsets and called that sight, and its headroom check
-   explicitly counts leaves as clear. So the patch was chosen for a view the
-   player is standing under. Cheapest fix is to re-score with an occlusion
-   test and re-run the spawn pick, which touches no game code; the alternative
-   is to clear a glade by hand once the island has a layout, which has to
-   happen anyway.
-
-   **And the patch itself is not settled.** Evan has said he does not love
-   this terrain and may want to revisit it, and the machinery makes that
-   cheap: `docs/TERRAIN.md` records the runner-up, seed 987654321 at
-   (-160, 128) — denser forest, better biome balance, 28 blocks of relief and
-   no mountain — and swapping to it is one `npm run terrain` away. The only
-   hand-maintained consequences are three constants at the top of
-   `island.js` — `PATCH_ORIGIN_X`, `PATCH_ORIGIN_Z` and `SURFACE_Y`, which
-   the scan prints and which nothing else duplicates, since the twelve spec
-   files that care import `SURFACE_Y` rather than writing 136.
-   (`PATCH_ORIGIN_X` is now the MIRRORED column index — the extractor writes
-   it into `terrain.json` as `spawn.x` and `npm run terrain:verify` fails if
-   `island.js` and the manifest disagree, so it is checked rather than
-   copied.) So do not read
-   the spawn problem as "fix the pick". Read it as: the pick and the patch
-   are both still open, and both are cheap while the island is empty. They
-   stop being cheap the moment content is authored onto specific blocks.
 7. **A credits surface — blocks deployment, not optional.** Confirmed still
    accurate. Pixel Perfection CE is CC BY-SA 4.0, Monocraft is SIL OFL 1.1,
    and the sound set is a mix of CC0, CC BY and CC BY-SA; all of them except
@@ -247,23 +307,21 @@ on effort.
    chat command, a footer around the canvas, or a link from the Controls
    sheet. Cheapest to build is the chat command, since chat already renders
    links.
-8. **The terrain asset may be too big, and nobody has decided.** `terrain.bin`
-   is 981KB raw and 414KB gzipped, against a JS bundle of 1.27MB raw and
-   333KB gzipped — so the world data is now the largest single thing a visitor
-   downloads, larger than the engine. The lever is the vertical range: the
-   patch is encoded from bedrock at y=-64 to y=185, and everything below about
-   y=60 is stone nobody will ever mine through. Trimming the bottom is
-   mechanical and costs the caves. Whether that trade is worth 414KB has not
-   been measured against how the entry screen actually feels, and it should be
-   measured before it is done.
-9. **The terrain licence question — blocks deployment, and it is not a
-   technical question.** The imported terrain is the output of Mojang's world
-   generator. `docs/DEPLOYMENT.md` sets out the three honest positions and why
-   none of them is obviously right; the conservative default is in force,
-   `public/terrain/` is gitignored, and `scripts/check-deploy-assets.mjs`
-   fails the build if `dist/terrain/` exists. That argument is not repeated
-   here on purpose. What belongs here is the consequence, in the next section.
-10. **Interview Evan, on tape.** The question set already exists and does not
+
+   **What a deployable build actually contains, as of `3b8ef66`**, because
+   this is the one item that has to know: CE textures, the free sound set, and
+   **no terrain asset at all.** `scripts/check-deploy-assets.mjs` reads a
+   `.source` marker back out of `dist/textures` and `dist/sounds` rather than
+   trusting `build:deploy`'s pinned flags, refuses `dist/skins/evan-cape.png`,
+   and refuses `dist/terrain/` as a whole directory. That last rule did not
+   change when the overworld became generated — what changed is what it now
+   catches. The overworld no longer produces a file for it to refuse; the
+   Nether still does. The rule stays a directory rule on purpose, so that the
+   next imported asset is refused by default rather than permitted by an
+   omission. **The known consequence is that `/dimension nether` 404s in a
+   deployed build**, which `src/dimensions.js` reports to the player rather
+   than failing silently, and which was already true before any of this.
+8. **Interview Evan, on tape.** The question set already exists and does not
     need designing — this item is doing the interview, not building one.
     `docs/ai-evan/03-corpus.md` ends with **43 questions in six groups, A
     through F**, budgeted at 75–100 minutes and split cleanly into two
@@ -286,7 +344,7 @@ on effort.
     it waits on him completely. Nothing has to be built first, no decision
     blocks it, and it unblocks both the content and the agent — which is why
     "Sequencing" below moves it off this list and onto the critical path.
-11. **Content on the island.** No resume content exists. This has been the
+9. **Content on the island.** No resume content exists. This has been the
     real gap for the entire life of this project, through every engine feature
     above, and it is still the gap. It now has a **shape**, though, which it
     has never had before: **one build per resume point**. That is Evan's
@@ -302,67 +360,69 @@ has been the fun half and it is essentially done for a first ship. Everything
 that remains between here and a site someone can visit is either content or a
 decision.
 
-**The critical path to a shippable site is six things, in this order.** It was
-four. Two were added rather than reordered, and both of them sit in front of
-the content: **the interview**, because the content cannot be written before
-the facts are settled, and **signs**, because there is nowhere to put the
-content once it is. Neither was a priority call — both were missing.
+**The critical path to a shippable site is five things, in this order.** It was
+four, then six, and it is five now — and the item that left is the one that had
+been sitting at the head of it.
 
-1. **Decide the terrain licence question.** It is first not because it is
-   urgent but because everything downstream inherits it. If the answer is the
-   conservative one, the public build cannot serve the imported patch, and any
-   resume content authored onto that patch is content authored onto a world
-   that never ships. That is the risk worth naming plainly: **building the
-   island before this resolves means possibly building it twice.** The
-   sidestep in `DEPLOYMENT.md` — an original generator tuned to look like the
-   scored patch — is the version of this with no licence question at all, and
-   it is a real project rather than an afternoon.
+**The terrain licence question is no longer first, because it is no longer on
+the path.** It used to open this list, on the grounds that content authored
+onto an unshippable patch is content authored twice. Generating the overworld
+removed the premise rather than answering the question: `src/flatworld.js`
+produces the ground in the browser from a layer preset, so for the world a
+visitor lands in there is no Mojang generator output to argue about. What is
+left of decision 1 in `DECISIONS.md` applies to the Nether and to the imported
+seed patch, neither of which any content depends on, and
+`check-deploy-assets.mjs` keeps both out of a deploy without anyone deciding
+anything. The same change deletes the other two items that used to sit here:
+the 404KB download, and spawn under a closed canopy. **You cannot spawn under
+a canopy in a superflat.**
 
-   The related question to settle in the same sitting is **which patch**. Evan
-   has said he does not love this terrain, and both the re-pick and the
-   re-score of spawn (item 6) cost one pipeline run and three constants while
-   the island is empty, and cost a rebuild of the island once it is not.
-2. **Do the interview** (item 10). Numbered second, but it should start the
-   same week as 1 and probably the same day, because **it blocks on nothing
-   and nothing blocks on it**. It is 75–100 minutes of Evan talking into a
-   recorder, it needs no code, and it does not care which patch or which
-   licence answer wins. It is first among the things that produce the site's
-   substance because writing resume content before the fact record exists
-   means writing content that has to be checked against a document that
-   disagrees with itself.
-3. **Signs** (item 1). The delivery surface. This is the one that reorders the
+The risk worth naming is now a different one, and it is smaller. The superflat
+is explicitly *for now* — `flatworld.js` says so, and the world registry in
+flight makes swapping to the mountain seed a row rather than a rebuild. So
+"which world the content is built on" is still open. It costs nothing while the
+island is empty and it costs a rebuild once it is not, which is the same shape
+the old warning had, minus the licence.
+
+1. **Do the interview** (item 8). It should start this week, because **it
+   blocks on nothing and nothing blocks on it**. It is 75–100 minutes of Evan
+   talking into a recorder, it needs no code, and it does not care which world
+   wins. It is first among the things that produce the site's substance because
+   writing resume content before the fact record exists means writing content
+   that has to be checked against a document that disagrees with itself.
+2. **Signs** (item 1). The delivery surface. This is the one that reorders the
    list: "content on the island" has been sitting at the top of the substance
    half of this file for the whole project, and the world has no mechanism for
    displaying a sentence. A build with no text in it is a shape. Signs are
    days, not weeks, and every piece of content authored after them is cheaper.
-4. **Content on the island** (item 11). Blocked on nothing technical once 2
-   and 3 are done, and it is the whole point. Everything else on this list
+3. **Content on the island** (item 9). Blocked on nothing technical once 1
+   and 2 are done, and it is the whole point. Everything else on this list
    makes the world more elaborate; only this makes it worth visiting. The
    shape is **one build per resume point** — see section 2 — and the authoring
    story is in "Also worth building" below.
-5. **The credits surface.** Cheap, small, and it stops being optional the
-   moment anything is served. Do it alongside content rather than after.
-6. **Deploy.** The platform is decided and the pipeline is built and exercised
+4. **The credits surface** (item 7). Cheap, small, and it stops being optional
+   the moment anything is served. Do it alongside content rather than after.
+5. **Deploy.** The platform is decided and the pipeline is built and exercised
    on every push — see `docs/DEPLOYMENT.md`. What is missing is a Cloudflare
    account, two repository secrets, and a decision about the domain. Nothing
    is live, so no visitor has ever seen any of this.
 
 **After a first ship**, in the order they earn their keep:
 
-7. **An AI version of Evan**, in the world, that visitors can talk to and book
+6. **An AI version of Evan**, in the world, that visitors can talk to and book
    time with. See section 2. This displaced multiplayer, and the reasoning is
    in section 2b. It needs the Worker and it needs content to be grounded in,
    so it cannot start earlier than it appears here.
-8. **The guided tour** — he walks you from build to build. Section 2 again,
+7. **The guided tour** — he walks you from build to build. Section 2 again,
    and it is the reason items 3 and 4 above are worth doing well: the tour is
    a route through the content, so it is worthless before the content and
    obvious after it. Note it does NOT have to wait for a real model. A
    scripted walk on the stub brain is the honest way to find out whether being
    led around this world feels good before paying per token to find out.
-9. **Video screens.** The richest way to deliver the content, independent of
+8. **Video screens.** The richest way to deliver the content, independent of
    everything else, and gated on recording the clips rather than on code.
-10. **Multiplayer presence**, then **skin customization**, then the long
-    tail.
+9. **Multiplayer presence**, then **skin customization**, then the long
+   tail.
 
 The ordering rule has not changed: anything that makes the world worth
 visiting beats anything that makes it more elaborate. Engine polish has been
@@ -370,8 +430,10 @@ the easy, fun work; it is not the work that makes the site do its job.
 
 The numbered sections below are detail, not priority — read the sequencing
 above for order. Keep this file honest: when something ships it moves up to
-"Already built" and its section goes, and anything deferred lands in
-"Blocked" with the reason rather than being quietly dropped.
+"Already built" and its section goes, and anything deferred lands in "Deferred,
+with the reason already written down" with the reason rather than being quietly
+dropped. This pass moved three items up and out and added that section, which
+did not exist; the rule had been stated and never had a place to point at.
 
 ---
 
@@ -930,6 +992,110 @@ the lesson that produced the gap, and the parts of those two features
   once is cached forever, and the failure mode is a world that looks like air.
   `island.js` throws on that path deliberately. Nothing asserts that it does.
 
+### The suite has outgrown being run casually
+
+Three things are true at once and they interact badly.
+
+- **892 tests across 47 files was the last number written down, and it is
+  wrong.** `npx playwright test --list` at `3b8ef66` says **924 tests in 50
+  spec files**, and that is 462 tests run twice, once per browser project. 48
+  of those files are committed; two (`46-water-look`, `51-worlds`, 22 tests
+  between them) are uncommitted work from agents that were live while this was
+  written. **Do not quote a count you did not produce** — every number this
+  file has carried has been wrong within a week, and `--list` takes seconds.
+- **`workers: 1`, deliberately**, because the world is global mutable state and
+  two workers means two of them. At 60-second timeouts over 924 tests that is
+  roughly two hours. It is past the point where an agent can run the suite as a
+  routine check before claiming something works, which is precisely why the
+  counts above have been unreliable — the number gets restated rather than
+  measured.
+- **So the specs that break are found one at a time, by whoever next runs the
+  file they are in.** That is not hypothetical. The superflat moved the world
+  floor and raised it, and the casualties have been arriving in ones:
+  `test/10-gamemode.spec.js`'s spectator test assumed a world deep enough to be
+  inside of (`429bbf0`); `28-underwater`, `19-fluids` and `30-water-entry` went
+  hunting for an ocean and now dig their own pool (`07b9f50`); and
+  `06-mining.spec.js`'s `standOnBedrock` polled y=−64 for 45 seconds for a floor
+  four blocks under your feet. The last two are fixed in an uncommitted working
+  tree as this is written — `06-mining` via a `worldFloor` helper that asks
+  `window.game.terrain.yMin` instead of writing a number down, and
+  `01-world.spec.js`'s strata test rewritten a second time for Classic Flat.
+
+  **The pattern is worth naming, because the fix for it is not a fix to any of
+  those specs.** A spec that writes down a world constant is a spec that goes
+  stale silently the day the world changes, and the suite is too slow to find
+  out. The helper the last one landed on — ask `window.game.terrain.yMin`
+  rather than assert −64 — is the general answer, and nothing has swept the
+  other files for the same shape. That sweep is a genuinely cheap piece of work
+  with no decision in front of it.
+
+### Two smaller gaps, both found by reading rather than by a failure
+
+- **`test/39-animated-textures.spec.js` writes into `docs/water/`.** `DOCS` at
+  the top of that file points at the real committed figures directory, so every
+  run overwrites images that are checked in — `git status` shows six modified
+  PNGs in `docs/water/` after a run that asserted nothing about them. The
+  intent is good (the owner looks there), the mechanism is not: evidence a spec
+  regenerates should land somewhere a diff is meaningful, not on top of the
+  pictures a document is written around.
+- **Non-cube materials carry the same stale ambient** the face-shading fix
+  corrected for terrain. Slabs, stairs and item models go through
+  `createMaterialCache` rather than the terrain shader `56d40d2` fixed, and
+  nothing measures whether they drift from the ground at dusk. See
+  `docs/REPORTED.md` #6.
+
+### And one that no automation can close
+
+**The Escape-menu cursor report cannot be tested here, in either engine.**
+`docs/REPORTED.md` #4 has been driven headed, headless, with the pointer-lock
+cooldown faked at Chrome's documented 1.25 s, and in both Chromium and WebKit.
+It does not reproduce, and `docs/browsers.md` §5 explains why that proves
+nothing: **no headless browser grants pointer lock or real user activation**,
+so mouse-look, the cursor handover and the first sound after a click are on the
+far side of a line this suite structurally cannot cross. Adding WebKit proved
+the renderer; it could not prove the feel. The next step there is ten minutes
+in a real browser window, not another spec.
+
+## Deferred, with the reason already written down
+
+The convention this file states — deferred work lands with its reason rather
+than being quietly dropped — never had a place to land. It does now. Nothing
+below is an argument; each line is a pointer to where the argument already is,
+so that nobody re-derives it and nobody mistakes a decision for an oversight.
+
+- **Flowing-fluid geometry** — sloped surfaces, per-level heights,
+  `water_flow.png`. The spread shipped as full cubes and the reason is written
+  above `flowSet` in `src/blocks.js`: a `shape` takes a block off noa's terrain
+  mesher entirely, which costs it the `fluid` flag's buoyancy, makes it minable
+  and hands it to solid collision. Three regressions in the hard-won part of
+  `fluids.js` to buy a cosmetic slope. *The spread is the feature; the profile
+  is the follow-up.*
+- **Torches** — `docs/REPORTED.md` #3, triaged at length, waiting on item 2.
+  Four obstacles are enumerated there, cheapest first, and the reason to do
+  none of them yet is that a torch that lights nothing ships as a decoration
+  that reads as broken.
+- **The lit furnace texture** — `docs/REPORTED.md` #14 carries a two-line
+  spec: a block whose `front` is `furnace_front_on`, plus a `CE_SUBSTITUTES`
+  entry because the texture exists in the vanilla jar and not in CE.
+  `furnaceTick()` already returns true on the tick the state flips. It was
+  specified rather than half-built because it needed `src/blocks.js`, which
+  another change owned. **Verified still absent at `3b8ef66`.** Probably the
+  cheapest open item in the repo.
+- **Boats** — `docs/REPORTED.md` #8, and genuinely untouched. Nothing has been
+  written about what a boat costs here.
+- **The NPC guided tour** — section 2, and deliberately not built. `walk_to`
+  exists and moves a real body; `walk_to(plot)` is that tool plus a table of
+  named destinations, and there is nothing to walk to. A tour to nowhere is a
+  coordinate table pretending to be content.
+- **The code cleanup pass** — `docs/REPORTED.md` #11. Two phases, and it must
+  run alone: it touches every file, and the one time something else was live
+  concurrently a commit swallowed another agent's staged work. With two agents
+  live this week it has had no window.
+- **The end-session and request-time flows** — `docs/REPORTED.md` #12 and #13,
+  designed together because one is the other's escape hatch. **#12 still has a
+  mechanism and no behaviour**: what the agent actually says and what tone it
+  takes before it goes is unanswered, and it is the half that matters.
+
 ## Also worth building
 
 - **Importing real Minecraft builds.** Build in creative with WorldEdit,
@@ -944,9 +1110,12 @@ the lesson that produced the gap, and the parts of those two features
 - **Spawn signage or a guided path.** Folded upward rather than deleted: the
   signage half is item 1 and the guided path is section 2's tour, which are
   the two halves of one problem and are both on the critical path now. The
-  observation that produced this bullet still stands and is why — a visitor
-  drops into a dark forest under a canopy with no idea what to do, and one
-  sign at spawn is still the cheap half of item 6.
+  observation that produced this bullet has got WORSE rather than stale. It
+  used to be "a visitor drops into a dark forest under a canopy with no idea
+  what to do". A visitor now drops onto an empty superflat plain with no idea
+  what to do, which is less atmospheric and exactly as uninformative — and the
+  forest at least looked like something. One sign at spawn is the cheap half
+  and there is nothing else competing for the job.
 - **Mobile.** Explicitly dropped, and that's a real decision — but pointer lock
   does not exist on touch devices, so phone visitors currently get a world they
   cannot move in. A fixed camera flythrough would at least show them something.
@@ -968,8 +1137,12 @@ the lesson that produced the gap, and the parts of those two features
   anyone standing in a doorway, and a wrong lighting model is harder to spot
   and harder to remove later than an absent one. The real fix is a flood-fill
   light engine over the voxel data, which is a large piece of work that also
-  buys torches that light terrain, and is worth doing only once caves or
-  interiors are somewhere a visitor actually spends time.
+  buys torches that light terrain. **This is item 2 now**, and it is costed:
+  `docs/lighting.md`, two to four days, riding the per-vertex colour channel AO
+  already uses. It was written here as "worth doing only once caves or interiors
+  are somewhere a visitor actually spends time", and a superflat overworld has
+  neither — but the reports came in anyway, because a player who places
+  glowstone expects it to do something wherever he is standing.
 
 ## Someday
 
@@ -1019,8 +1192,10 @@ environment**, because it was not built to be one and it arrived there anyway:
 a fixed tick loop, real Minecraft physics with the constants checked against
 the wiki, fully resettable state, an observable position, a discrete action
 space that the input handling already enumerates, and an obvious reward in
-reaching a target block. The 313-test suite is a harness that can already
-stand the world up headlessly and measure it.
+reaching a target block. The suite — 924 tests, two engines — is a harness that
+can already stand the world up headlessly and measure it, and the fact that it
+now takes about two hours to run is a fact about the harness that matters more
+here than anywhere else in this file.
 
 And Evan starts at Patronus AI on RL environments and LLM evaluation. So
 "train him to navigate" may be the point rather than the means — a real
@@ -1048,15 +1223,24 @@ reason he cannot have both in that order.
 > 2. **The asset is 402,334 bytes raw, 147,549 gzipped** -- 41% and 36% of the
 >    overworld's. "Not simply double" was right by a wider margin than
 >    expected: 128 layers against 250, and netherrack runs long (11.8 runs per
->    column). It does not change the answer to item 8, and `public/terrain/`
->    is still gitignored and still excluded from `dist/` over decision 1.
+>    column). `public/terrain/` is still gitignored and still excluded from
+>    `dist/` over decision 1. The item this used to be measured against is
+>    gone: the overworld it was 41% of no longer exists as a file.
 > 3. **The sky's `running` flag exists and the `doDaylightCycle` hack is
 >    gone.** Built first and on its own merits, exactly as recommended.
 >
-> Still open: portals (accounting at the top of `src/dimensions.js`), and
-> `debugScreen.js:448` still hardcodes `minecraft:overworld` under a comment
-> saying there is one dimension and it can never change. That comment is now
-> false and the F3 screen is the last file that has not noticed.
+> **Portals are built too, since.** Obsidian frame, flint and steel, four
+> seconds, and through (`1ee5c53`; nine specs plus two sabotages in
+> `test/44-portals.spec.js`). The animated texture this entry expected to
+> fund arrived on water's account exactly as predicted below. The accounting
+> stays at the top of `src/dimensions.js`.
+>
+> Still open, and checked at `3b8ef66`: **`debugScreen.js:448` hardcodes
+> `minecraft:overworld`** under a comment at line 84 saying there is one
+> dimension and it can never change. That comment has been false since the
+> Nether landed and the F3 screen is still the last file that has not noticed.
+> It is a one-line fix in a file nobody has had a reason to open, which is
+> exactly how it survives.
 
 **Not on the critical path, and nothing here argues it onto one.** The path to
 a shippable site is the six items under "Sequencing", and the first world is
@@ -1117,7 +1301,8 @@ trims to `highest + 8` — against a Nether that is 0 to 127 with a bedrock roof
 on it. And both `pickSpawn` and `scan.mjs`'s scorer find the surface by
 scanning down from the sky, which in a world with a ceiling always returns the
 ceiling. Spawn selection in the Nether is a different algorithm rather than a
-retuned one, so item 6's occlusion fix does not cover it.
+retuned one, so the occlusion test built for the overworld scout
+(`8aa37eb`, `docs/seed-434533485056755.md`) does not cover it.
 
 **Fog is already paid for, by the water work.** `src/underwater.js` sets
 `scene.fogMode` to EXP2 once at boot and never changes it, because the `FOG`
@@ -1164,18 +1349,21 @@ all, every fluid voxel being a full still block. Recorded so nobody scopes it:
 an imported Nether patch contains no water and a visitor has no bucket, so
 there is nothing for the rule to apply to.
 
-**It makes two open questions worse.** A second patch is a second piece of
-Mojang generator output under the same unresolved licence as the first, which
-is decision 1 in `DECISIONS.md` and is not re-argued here. And it lands on the
-wrong side of item 8: `terrain.bin` is 981KB raw and 414KB gzipped against a
-bundle of 1.27MB raw and 333KB gzipped, so the world is already the largest
-single thing a visitor downloads, by a wider margin than that item currently
-states. A Nether patch is not simply a second copy of it — the format is
-per-column run-length encoding, the Nether's 128 layers are half this patch's
-250, and a world made mostly of netherrack encodes as very long runs — but
-nobody has measured it, so "it roughly doubles the download" is a guess. Item
-8's question about trimming the vertical range gets asked a second time if
-this is ever built.
+**It made two open questions worse, and one of them stopped existing.** A
+second patch is a second piece of Mojang generator output under the same
+unresolved licence as the first, which is decision 1 in `DECISIONS.md` and is
+not re-argued here — that half stands, and it is now the *only* place that
+question still bites, since the overworld stopped being an import.
+
+The download half is dead. It argued that the Nether would land on the wrong
+side of a numbered item about `terrain.bin` being the largest thing a visitor
+downloads. There is no `terrain.bin` on the boot path any more and no numbered
+item; a deployed build ships no terrain asset at all, Nether included, because
+`check-deploy-assets.mjs` refuses the directory. The measurement it asked for
+got taken anyway and is in point 2 above. Worth keeping the shape of the
+mistake: this paragraph was careful to say "nobody has measured it, so it is a
+guess", and the guess was fine — it was the thing being compared against that
+evaporated.
 
 ## Not worth building
 

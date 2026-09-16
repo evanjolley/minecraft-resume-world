@@ -1,13 +1,36 @@
 # Reported from play, not yet diagnosed
 
-Eleven things Evan hit in one session on 2026-09-15 and called out on the way
-out the door. **Nothing here has been investigated.** Where a cause is guessed
-it is marked as a guess — this file exists so the reports survive, not so
+Fifteen things Evan hit while playing on 2026-09-15, called out on the way out
+the door and added to over two more passes. It opened as a list nothing had
+been investigated on. **That is no longer true**: as of `3b8ef66` nine are
+closed, one is triaged-and-waiting, and five are open. Where a cause is still a
+guess it is marked as a guess — this file exists so the reports survive, not so
 anybody acts on a hunch written down at speed.
 
+Status at `3b8ef66`, which is where every claim below was checked:
+
+| | | |
+| --- | --- | --- |
+| 1 icon shows the wrong shape | FIXED | `blockIcon.js` draws the real boxes |
+| 2 hover should name the block | FIXED | a real tooltip, not `el.title` |
+| 3 torches | TRIAGED, WAITING ON 5 | |
+| 4 Escape leaves the cursor | **OPEN, and not testable here** | needs a human |
+| 5 glowstone emits no light | **OPEN — the big one** | `docs/lighting.md` |
+| 6 the east face is brighter | FIXED (`56d40d2`) | it was a frozen uniform |
+| 7 Evan should fall and walk | BUILT | and he falls when you mine under him |
+| 8 boats | OPEN, untouched | |
+| 9 buckets | FIXED | |
+| 10 Nether portals | BUILT | |
+| 11 a cleanup pass | OPEN, and still wants to run alone | |
+| 12 end-session flow | OPEN — mechanism, no behaviour | |
+| 13 request-time flow | OPEN | |
+| 14 furnaces | FIXED except the lit texture | |
+| 15 fluids do not flow | FIXED — geometry deferred | |
+
 `docs/FUTURE.md` is the curated roadmap and stays that way. Items here get
-triaged into it, or fixed, or dismissed with a reason. Several of these are
-probably one root cause wearing different clothes; see the note at the bottom.
+triaged into it, or fixed, or dismissed with a reason. Several of these were
+one root cause wearing different clothes; see the note at the bottom, which has
+been rewritten now that two of the four threads it named are cut.
 
 ---
 
@@ -29,6 +52,16 @@ picture is actively lying. Either the icon renders the real shape, or the
 variants collapse to one entry with orientation chosen on placement (vanilla's
 answer, and the thing the one-slot decision deliberately rejected).
 
+FIXED 2026-09-15, by the first of those two. `src/blockIcon.js` reads the same
+`shape` key `blocks.js` puts on every non-cube and draws the boxes
+`SHAPE_BOXES` gives back, so a top slab is a plate at eye level and a stair is
+a stair. It generalises to all ten shapes rather than the two that are reachable
+from a slot today, and it reads `SHAPE_BOXES` directly rather than
+`shapeBoxesFor()` — the table installed at world load answers for the world's
+state, which would let this bug come back wearing a timing bug's clothes.
+`el.dataset.shape` records which shape was drawn, which is what a spec asserts
+against.
+
 **2. Hovering a block in the inventory should name it.**
 > "When I hover over a block in inv i think it should say the name of it? I
 > believe this is true minecraft behavior."
@@ -36,6 +69,13 @@ answer, and the thing the one-slot decision deliberately rejected).
 It is. Vanilla shows a tooltip with the item name on hover in every container.
 The creative picker got tooltips; check whether the survival inventory and the
 hotbar did too, and match vanilla's styling rather than inventing one.
+
+FIXED 2026-09-15. What the survival inventory had was `el.title` — the
+BROWSER's tooltip, with the browser's delay, the browser's font and the
+browser's position. `src/inventory.js` draws a real one now, off the pixels in
+`tooltip/background.png` and `tooltip/frame.png` rather than off a colour
+somebody matched by eye, positioned in GUI pixels next to the cursor the way
+vanilla positions it.
 
 **3. Torches cannot be placed.**
 Probably never implemented rather than broken. A torch is a non-cube attached to
@@ -81,6 +121,12 @@ Rejected: a floor-only torch as a cheap first half. It is not cheap -- it needs
 three of the four items above -- and it is not useful, because floor-only is
 exactly the half that has nowhere to go in a cave.
 
+STILL WAITING, and the thing it waits on is costed now rather than estimated:
+`docs/lighting.md` scopes the light engine at two to four days and names the
+free per-vertex lane it would ride on. Nothing about this entry changed; what
+changed is that "build the light engine first" is now a plan rather than a
+deferral.
+
 **4. Returning from the Escape menu leaves the cursor on screen.**
 > "when I press esc or back to game on the esc menu, my cursor should not be
 > visible, should go back to the crosshair."
@@ -120,6 +166,34 @@ console says when the menu closes (a refused request logs). 37 pins the
 behaviour meanwhile and fails loudly if the budget is ever cut -- dropping it
 to two tries fails both cases with the cursor still on screen.
 
+**2026-09-16, and the news is worse rather than better.** Both open ends above
+have been worked and neither closed, and a third path opened.
+
+  - **"Not Chrome" is half answered.** The suite runs WebKit now as well as
+    Chromium (`docs/browsers.md`, `5634bde`) and Safari works. That does not
+    reach this. `docs/browsers.md` §5 is explicit that **no headless browser
+    grants pointer lock or real user activation in EITHER engine**, so
+    mouse-look, the cursor handover and the first sound after a click are
+    untested in both, structurally rather than for want of a spec. Adding a
+    second engine proved the renderer and could not prove the feel.
+  - **A third path, and it would reproduce the symptom exactly.** The pause
+    menu does not open on a keydown at all -- `main.js` opens it from
+    `lostPointerLock`, because Chrome eats the Escape that exits pointer lock.
+    `src/inventory.js` (the note above its capture-phase Escape handler)
+    records that **Firefox DOES deliver that keydown**, which means Firefox
+    runs the synchronous handler first and main.js's async lock guard
+    afterwards, against a flag the first one already cleared. That is unfixed;
+    the fix is a wider guard in `main.js`, which that file did not own. Read
+    from the source comment rather than reproduced -- nothing here has ever
+    been run in Firefox, and it is not in the suite's projects.
+
+So the honest status is **UNRESOLVED and NOT REPRODUCIBLE BY AN AGENT.** It
+needs ten minutes in a real browser window with this entry open, and the first
+question is still which browser Evan was in. Note the sibling report that DID
+land: Escape out of the *inventory* used to open the pause menu instead of
+giving the crosshair back, fixed in `98c3e86` with `test/50-inventory-escape.spec.js`.
+That is a different keypress on a different screen and it does not close this.
+
 **5. Glowstone emits no light.**
 Not a glowstone bug. **noa has no light engine at all** — ambient occlusion plus
 one directional vector, no per-voxel light value to read or write. This was
@@ -128,6 +202,15 @@ lines, and entity lighting can track daylight but not block light, so a player
 in a cave stays lit as if outdoors. Placing a light source and expecting
 darkness to retreat needs light propagation, which is a real engine feature and
 the largest single item on this page.
+
+COSTED 2026-09-15, NOT BUILT. `docs/lighting.md` is the whole diagnosis and a
+plan: noa 0.33's registry has no emission field, a chunk stores block ids and
+nothing else, and the mesher takes no callbacks -- all read out of
+`node_modules/noa-engine/src/lib/` rather than assumed. The good news it found
+is a **free per-vertex channel**: AO is premultiplied into vertex colour RGB,
+so a light term can ride the same lane without a second attribute. Estimate is
+two to four days. That document is now the entry point for this item, for 3,
+and for the entity half in `src/entityLight.js`.
 
 **6. The east face of every block is brighter, and the lighting does not move.**
 > "the east edge of blocks has weirdly more lighting than the rest, even at
@@ -140,6 +223,21 @@ worth checking against real Minecraft before changing. What is more likely wrong
 is the *magnitude*: vanilla dims faces by fixed per-direction multipliers
 (top brightest, north/south, east/west, bottom darkest) that scale with the
 light level, so at night everything gets darker together. Unverified.
+
+FIXED 2026-09-15 (`56d40d2`), and the guess above was pointed at the wrong
+half. The fixed `lightVector` is vanilla-correct and was not the bug. The bug
+was the second sentence: **everything did NOT get darker together**, because
+the ambient term had been baked into a frozen uniform buffer at boot and never
+written again. So the faces kept their daytime relationship to each other at
+midnight, which is what "even at night" in the report is describing.
+`test/36-face-shading.spec.js`. The full write-up is `docs/lighting.md` §6,
+which is also where it is recorded that the one hook that fix could not reach
+is the same hook item 5 needs.
+
+**Not fixed, and nothing measures it:** the same stale ambient is still carried
+by every NON-cube material -- slabs, stairs, the item models -- which go through
+`createMaterialCache` rather than through the terrain shader the fix corrected.
+Nobody has looked at whether they drift from the terrain at dusk.
 
 ---
 
@@ -195,6 +293,11 @@ table of named destinations, and there is nothing to walk to yet -- a tour to
 nowhere is a coordinate table pretending to be content. Evidence in
 `test/38-npc-body.spec.js` and `test/screenshots/npc-evan-walking-*.png`.
 
+And since: **mine the floor out from under him and he falls** (`f36116b`). The
+gravity above was a drop at boot into a column that was already solid; this is
+the same body reacting to the world changing under it afterwards, which is the
+case a static placement would have survived by accident.
+
 **8. Boats.**
 
 **9. Buckets — water, lava, and the mechanics.**
@@ -222,6 +325,15 @@ obsidian frame detection, a trigger volume, the four-second dwell, and a
 destination mapping. That last one is an open design question: vanilla's 8:1
 coordinate scale is meaningless across two patches that share one 128×128 frame.
 
+BUILT 2026-09-15. Build an obsidian frame, light it with flint and steel, walk
+through it (`1ee5c53`, nine specs in `test/44-portals.spec.js` plus two
+sabotages). The animated 32-frame texture arrived on its own account -- the
+layer-remap work `docs/water.md` §3 sized was funded by water and the portal
+came along free, as that document predicted -- and it landed with the discovery
+that **the animation uniform had never been declared in any shader, ever**
+(`ac4d5d3`). Who may light a portal is settled and written down in `5601711`:
+it is not the visitor.
+
 **11. A code cleanup pass, after all of the above.**
 A two-phase health sweep already ran once and is worth repeating the same way:
 dead code and export surface first, then duplication and efficiency. It must run
@@ -236,10 +348,16 @@ concurrently, a commit swallowed another agent's staged work.
 affordance.** Worth triaging together rather than one at a time:
 
 - No light engine means no glowstone (5), no torch light if torches land (3),
-  no cave darkness for entities, and no F3 light readout. That is one feature
-  behind four symptoms, and it is the biggest thing not on the roadmap.
+  no cave darkness for entities, and no F3 light readout. **One feature behind
+  four symptoms, and it is still true.** It is no longer "not on the roadmap":
+  `docs/lighting.md` costs it and `docs/FUTURE.md` carries it. It is now the
+  largest open item in this project that is not content.
 - An item needs to show what it *is* — its name on hover (2) and its real shape
-  as an icon (1). One answer covers both.
+  as an icon (1). One answer covers both. **CUT.** Both shipped, and it is
+  worth saying they shipped as two answers rather than one: `inventory.js` drew
+  the tooltip and `blockIcon.js` drew the shape. The prediction that one fix
+  would cover both was wrong, and harmlessly so — they turned out to be the
+  same *class* of bug rather than the same bug.
 
 ---
 
@@ -312,6 +430,13 @@ deriving it from `furnace_front`, the same way every post-1.16 block is
 handled. `furnaceTick()` already returns true on the tick the lit state flips,
 which is the hook to hang the `authority` block write on.
 
+STILL OPEN at `3b8ef66`, checked rather than assumed: `furnace_front_on`
+appears nowhere in `src/` or `scripts/`, and `blocks.js:521` still gives the
+furnace a plain `furnace_front`. The spec above is two lines of block table
+plus one `CE_SUBSTITUTES` entry and it has deliberately not been half-built --
+it is the cheapest item anywhere in this file and it is waiting on nothing but
+`blocks.js` being free.
+
 **15. Fluids do not flow. Neither water nor lava.**
 > "see a random block of lava in a cave, but it isnt flowing down. Do fluids
 > flow?" ... "water doesnt either"
@@ -335,3 +460,28 @@ meet.
 Not small, and not on the critical path, but it is the difference between water
 that exists and water that behaves. **Blocked on `src/blocks.js`**, which the
 torch work currently owns.
+
+FIXED 2026-09-15, and the costing above was right about the price and paid it.
+Water and lava both flow (`ddc9997`, `test/41-fluid-flow.spec.js`). The
+sixteen-ids-per-fluid estimate is what shipped: `flowSet` in `blocks.js` emits
+levels 1-7 plus a falling column per fluid, vanilla's 5-tick water and 30-tick
+lava scheduling is real, and `FLUID_FLOW` exports what a level MEANS so
+`fluids.js` can read the shape of one without importing the block table. Two
+things the estimate did not see coming: `fluids.ids` had meant the source block
+and eighteen new ids made it mean the last one (`f95fc3d`), and one regex in
+`items.js` had to learn that a flow level has no item either (`d7289a4`).
+
+**The geometry is deliberately deferred**, with the reason written into
+`blocks.js` above `flowSet`: every flow block is a FULL CUBE, because in this
+file a `shape` takes the block off noa's terrain mesher entirely -- which costs
+it the `fluid` flag's buoyancy, puts it back into `blockTargetIdCheck` as
+something minable, and hands it to `installNonCubeCollision` as something
+solid. Three regressions in the hard-won part of `fluids.js` to buy a cosmetic
+slope. *The spread is the feature; the profile is the follow-up.* Sloped
+surfaces, per-level heights and `water_flow.png` are carried in
+`docs/FUTURE.md` rather than here.
+
+IN FLIGHT as this was written: water renders opaque and spreads sideways over
+empty air instead of falling. An agent owns `src/fluids.js` and
+`test/46-water-look.spec.js` for both. Not a new report -- it is the first half
+of this one not being finished.
