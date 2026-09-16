@@ -163,9 +163,21 @@ because "shipped work moves up and loses its section" is this file's own rule.
 - **Safari works** (`5634bde`, `docs/browsers.md`). Before it, WebKit rendered
   no terrain at all; the whole world was one undeclared uniform away. The suite
   has a `projects` block now, so every spec is a statement about two engines.
-- **Face shading is fixed** (`56d40d2`). The ambient term had been baked into a
-  frozen uniform buffer at boot and never written again, which is why the faces
-  kept their daytime relationship to each other at midnight.
+- **Face shading is fixed** (`56d40d2`, then properly). The ambient term had
+  been baked into a frozen uniform buffer at boot and never written again, which
+  is why the faces kept their daytime relationship to each other at midnight.
+  The follow-up replaced the mechanism rather than the number: vanilla's face
+  shading is a five-value constant table and a single directional light can
+  express two of them, so the table moved into `blockLight.js`'s fragment
+  shader off `vNormalW` and terrain stopped reading any Babylon light. That
+  freed the light, which is what made the entity rig below possible.
+- **Entities are shaded by two fixed lights**, vanilla's
+  `Lighting.DIFFUSE_LIGHT_0/1`, instead of one pointing straight down. Reported
+  from play as "when I walk in circles around Evan, his face is the same level
+  of dimness" -- which it was, exactly, because a vertical light gives a
+  vertical face `dot(n, up) = 0` and his face was lit by the emissive floor
+  alone. GPU-measured, his face now reads 0.1450 facing along Z and 0.0967
+  facing along X, a 1.50x swing against the 1.488 the arithmetic predicts.
 - **Evan falls** when you mine the floor out from under him (`f36116b`), and
   **blocks cannot be placed inside bodies** (`6eea192`) — written as a general
   box query in `src/entityBox.js` rather than as a placement check, because the

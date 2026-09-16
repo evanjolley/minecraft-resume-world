@@ -23,7 +23,7 @@ Status at `3b8ef66`, which is where every claim below was checked:
 | 3 torches | **BUILT** 2026-09-16 | five ids, `test/66-torch.spec.js` |
 | 4 Escape leaves the cursor | **OPEN, and not testable here** | needs a human; three defects under it fixed |
 | 5 glowstone emits no light | **BUILT** (`src/blockLight.js`) | see the new report under it |
-| 6 the east face is brighter | FIXED (`56d40d2`) | it was a frozen uniform |
+| 6 the east face is brighter | FIXED (`56d40d2`, then the real table) | a frozen uniform, then one light doing a five-value job |
 | 7 Evan should fall and walk | BUILT | and he falls when you mine under him |
 | 8 boats | OPEN, untouched | |
 | 9 buckets | FIXED | |
@@ -537,10 +537,26 @@ midnight, which is what "even at night" in the report is describing.
 which is also where it is recorded that the one hook that fix could not reach
 is the same hook item 5 needs.
 
-**Not fixed, and nothing measures it:** the same stale ambient is still carried
-by every NON-cube material -- slabs, stairs, the item models -- which go through
-`createMaterialCache` rather than through the terrain shader the fix corrected.
-Nobody has looked at whether they drift from the terrain at dusk.
+FIXED AGAIN 2026-09-16, and this time it is the table rather than a workaround
+for not having one. The 2026-09-15 fix pointed the scene's one DirectionalLight
+straight down, because `max(0, dot(n, -L))` is antisymmetric and could not give
++X and -X the same number any other way. That killed the reported asymmetry and
+cost the other three entries: one light plus one ambient says two numbers and
+vanilla's table has five. `src/blockLight.js` now applies the real table in the
+terrain fragment shader off `vNormalW` -- UP 1.0, N/S 0.8, E/W 0.6, DOWN 0.5,
+re-read off `ClientLevel.getShade` in 1.21 rather than trusted from the 1.8.9
+decompile -- and terrain stops reading any Babylon light. Measured on the GPU:
+N/S over E/W reads 1.334 against vanilla's 1.333, and opposite faces still
+agree, so the original report stays fixed. Report #6's own spec is what
+enforces both.
+
+**Still not fixed, and now the only thing left on that light:** every NON-cube
+material -- slabs, stairs, fences, torches, the item models -- goes through
+`createMaterialCache` rather than the terrain shader, so it gets neither the
+face table nor the fix above, and it is the sole remaining reason
+`noa.rendering.light` exists. It is deliberately still `[0, -1, 0]` for exactly
+the reason this report gave. Photographed in `entity-rig-noncube.png`; nothing
+measures the dusk drift.
 
 ---
 

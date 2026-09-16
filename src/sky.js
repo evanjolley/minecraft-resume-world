@@ -4,7 +4,7 @@ import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { MC } from './physics.js'
-import { setEntityLight } from './entityLight.js'
+import { setEntityLight, setSunLight } from './entityLight.js'
 import { setTerrainLight, MC_FACE_SHADE } from './blockLight.js'
 
 /*
@@ -571,7 +571,22 @@ export function installSky(noa) {
   let flash = 0
 
   const scene_ = scene
+  /*
+   * noa's one DirectionalLight. Its job SHRANK this pass and it is worth
+   * saying what is left of it.
+   *
+   * Terrain no longer reads it -- blockLight.js applies vanilla's per-face
+   * table in the fragment shader and throws Babylon's lighting away. Entities
+   * no longer read it either -- entityLight.js owns a two-light rig of its own
+   * and takes every entity mesh off this one. What is left is
+   * blockMeshes.js's non-cube meshes: slabs, stairs, fences, torches. They are
+   * terrain in every way except that they are thin instances of a hand-built
+   * mesh with their own materials, so the terrain plugin's shader hook does
+   * not reach them, and they still want the vertical vector for exactly the
+   * reason report #6 gave. When they get the face table, this light can go.
+   */
   const light = noa.rendering.light
+  setSunLight(light)
 
   const place = (mesh, dx, dy, dz, px, py, pz) => {
     global[0] = px + dx * SKY_DIST

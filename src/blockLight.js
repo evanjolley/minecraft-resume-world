@@ -1668,8 +1668,17 @@ export function installBlockLight(noa, { ids = {} } = {}) {
     lastMeshMs: () => meshMs,
     /** ms spent flooding BOTH channels into the last chunk that arrived. */
     lastSeedMs: () => seedMs,
-    /** Number of chunks currently holding light data. */
-    chunkCount: () => store.size,
+    /*
+     * Number of chunks currently holding light data.
+     *
+     * THIS THREW. `store` stopped being one Map at module scope the day sky
+     * light split the engine into two channels, and this line kept naming it
+     * -- `ReferenceError: store is not defined` on every call, on a function
+     * the specs use. It counts the union of the two channels' keys rather
+     * than either one, because a chunk holds light data if EITHER channel has
+     * a buffer for it and the old single number meant exactly that.
+     */
+    chunkCount: () => new Set([...blockCh.store.keys(), ...skyCh.store.keys()]).size,
     /** Daylight the terrain shader is being handed this tick. Test seam --
      *  the only honest way to read it is from the module that binds it. */
     terrainLight: () => terrainLevel,

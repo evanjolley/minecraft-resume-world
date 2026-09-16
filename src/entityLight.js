@@ -1,4 +1,6 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color'
+import { Vector3 } from '@babylonjs/core/Maths/math.vector'
+import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight'
 
 import { MAX_LIGHT, LIGHT_FLOOR } from './blockLight.js'
 
@@ -73,6 +75,196 @@ export const ENTITY_FLOOR = 0.4
 export const ENTITY_DIFFUSE = 1 - ENTITY_FLOOR
 
 /*
+ * THE TWO LIGHTS, and why one was never going to be enough.
+ *
+ * `Lighting.java` in 1.21 (com.mojang.blaze3d.platform):
+ *
+ *     DIFFUSE_LIGHT_0 = new Vector3f( 0.2F, 1.0F, -0.7F).normalize();
+ *     DIFFUSE_LIGHT_1 = new Vector3f(-0.2F, 1.0F,  0.7F).normalize();
+ *
+ * unchanged from 1.8.9's RenderHelper.LIGHT0_POS/LIGHT1_POS, and they are
+ * FIXED IN WORLD SPACE -- setupLevel hands the same two vectors to the shader
+ * at every hour of the day. An entity's day/night response is the lightmap,
+ * which is `level` here; the two lights only decide which SIDE of him is lit.
+ *
+ * WHY IT TAKES TWO. The report that started this was "walking in circles
+ * around Evan, his face is the same level of dimness; fly above him and his
+ * face is bright". Both halves are one line: the scene had a single
+ * DirectionalLight pointing straight down, so a vertical face gets
+ * dot(normal, up) = 0 and NO diffuse at all, at any yaw. His face was lit by
+ * the emissive floor alone, which is a constant. Tilt his head up to track
+ * you and the normal swings to +y and catches the whole term -- hence bright
+ * from above.
+ *
+ * Two vectors that mirror each other about Y fix exactly that: a horizontal
+ * normal gets |0.2*nx - 0.7*nz| / |v|, which is never zero and sweeps roughly
+ * 0.16 to 0.57 as you walk around him. That variation IS the thing that was
+ * missing.
+ *
+ * THE COMPASS MIRROR, noted rather than corrected. This engine's X axis is
+ * mirrored against Minecraft's (debugScreen.js has the long version), so a
+ * faithful port would mirror these two vectors in X. It is not done, and the
+ * reason is that the pair is not symmetric under that mirror -- mirroring
+ * swaps which of them is which -- so the only visible difference is which
+ * cheek of a model is the brighter one. Written down because it is the kind of
+ * thing that looks like a bug to the next reader.
+ */
+const normalize3 = (v) => {
+  const n = Math.hypot(v[0], v[1], v[2])
+  return [v[0] / n, v[1] / n, v[2] / n]
+}
+
+/** Vanilla's level rig, pointing TOWARD the light, as Minecraft stores it. */
+export const ENTITY_LIGHT_VECTORS = [
+  normalize3([0.2, 1.0, -0.7]),
+  normalize3([-0.2, 1.0, 0.7]),
+]
+
+/*
+ * HOW TWO LIGHTS COME OUT OF A ONE-LIGHT SCENE, and what was rejected.
+ *
+ * noa creates exactly one DirectionalLight and main.js hands it a vector.
+ * That light still exists and still points straight down, because
+ * blockMeshes.js's non-cube meshes -- slabs, stairs, fences, the new torches
+ * -- are lit by it off the same normals as terrain, and pointing it anywhere
+ * else brings report #6 straight back for them. Terrain no longer reads it at
+ * all (blockLight.js owns the face table now), so its whole remaining job is
+ * those meshes.
+ *
+ * So the rig is TWO NEW lights, restricted to entity meshes with
+ * `includedOnlyMeshes`, and every entity mesh is excluded from noa's light in
+ * the same breath. The restriction is per-MESH and this file is handed
+ * MATERIALS, which is the awkward part; `adopt` below is the bridge.
+ *
+ * REJECTED -- computing the two-light accumulation here, in JavaScript, and
+ * writing the result into diffuseColor. It is the obvious move because this
+ * file already owns diffuseColor, and it cannot work: the accumulation is a
+ * function of the surface NORMAL, which exists per fragment and not per
+ * material. In JS it would collapse to one number for the whole model, which
+ * is precisely the "same level of dimness all the way round" that was
+ * reported.
+ *
+ * REJECTED -- a material plugin on entity materials computing it in GLSL, the
+ * way blockLight.js does for terrain. It would be exact and it would cost a
+ * second shader-injection path to maintain for a case Babylon's own light loop
+ * already sums correctly. Babylon adds `ndl * diffuse * intensity` per light,
+ * so two lights at intensity `level` give `level * (d0 + d1)`, and
+ * ENTITY_DIFFUSE multiplies it to `level * 0.6 * (d0 + d1)`. That IS
+ * light.glsl, arrived at by arithmetic that was already happening.
+ *
+ * REJECTED -- excluding terrain from the two new lights instead of including
+ * only entities. Chunk meshes are created and destroyed constantly; an
+ * exclusion list over them is a list that is wrong for one frame every time a
+ * chunk loads, and it is the objection sky.js already recorded against
+ * per-face lights.
+ */
+let rig = null
+let sun = null
+
+/** Meshes already handed to the rig, so `adopt` is idempotent and cheap. */
+const litMeshes = new Set()
+
+/**
+ * Tell this file which light noa made, so entity meshes can be taken off it.
+ *
+ * Called by sky.js, which is the one module that already holds
+ * `noa.rendering.light`. Rejected: reaching for `scene.lights[0]`, which is
+ * true right up until this file adds two more.
+ */
+export function setSunLight(light) {
+  sun = light
+}
+
+/** Test seam: the rig, or null if no entity mesh has ever been drawn. */
+export function entityRig() {
+  return rig
+}
+
+function ensureRig(scene) {
+  if (rig) return rig
+  rig = ENTITY_LIGHT_VECTORS.map((v, i) => {
+    // Babylon's `direction` is the way light TRAVELS; Minecraft's vector
+    // points at the source. Hence the negation, and it is the single easiest
+    // thing in this file to get backwards.
+    const l = new DirectionalLight(
+      `entity-rig-${i}`, new Vector3(-v[0], -v[1], -v[2]), scene)
+    l.intensity = level
+    // No specular on anything in this world; playerModel.js zeroes it on the
+    // material too and this is the other end of the same decision.
+    l.specular = new Color3(0, 0, 0)
+    return l
+  })
+  return rig
+}
+
+/*
+ * A new light with an EMPTY includedOnlyMeshes affects every mesh in the
+ * scene, which for one frame would be the whole world lit from two angles. So
+ * the rig is built lazily, here, in the same synchronous block that gives it
+ * its first mesh -- there is no render between the two.
+ *
+ * Assigned rather than pushed. `includedOnlyMeshes` is a plain array whose
+ * SETTER is what hooks it and marks every mesh's light list dirty; a push onto
+ * the existing array changes the contents and tells Babylon nothing.
+ */
+function adopt() {
+  for (const mat of tracked.keys()) {
+    const meshes = mat.getBindedMeshes ? mat.getBindedMeshes() : []
+    for (const mesh of meshes) {
+      if (litMeshes.has(mesh)) continue
+      litMeshes.add(mesh)
+      const [a, b] = ensureRig(mat.getScene())
+      a.includedOnlyMeshes = [...a.includedOnlyMeshes, mesh]
+      b.includedOnlyMeshes = [...b.includedOnlyMeshes, mesh]
+      if (sun) sun.excludedMeshes = [...sun.excludedMeshes, mesh]
+      mesh.onDisposeObservable?.addOnce(() => {
+        litMeshes.delete(mesh)
+        const drop = (arr) => arr.filter((m) => m !== mesh)
+        a.includedOnlyMeshes = drop(a.includedOnlyMeshes)
+        b.includedOnlyMeshes = drop(b.includedOnlyMeshes)
+        if (sun) sun.excludedMeshes = drop(sun.excludedMeshes)
+      })
+    }
+  }
+}
+
+/*
+ * THE LINE WITHOUT WHICH NONE OF THE NUMBERS BELOW REACH THE SCREEN.
+ *
+ * noa sets `scene.performancePriority = Intermediate`, Babylon turns that into
+ * `checkReadyOnlyOnce`, `isFrozen` IS `checkReadyOnlyOnce`, and
+ * StandardMaterial guards its entire material-UBO write behind
+ * `!this.isFrozen`. So `vEmissiveColor` and `vDiffuseColor` upload once, on
+ * the material's first frame, and never again. Measured: a held block in a
+ * dark room and the same block beside a glowstone were byte-identical on
+ * screen -- 11,412 green pixels at mean 43.79 in both -- while
+ * `emissiveColor.r` read 0.072 and 0.373 in JavaScript. 56d40d2 was the same
+ * bug in a different uniform.
+ *
+ * REJECTED -- `mat.unfreeze()`. It does not stick: `isReadyForSubMesh` ends
+ * with another `_checkScenePerformancePriority()`, so the next ready check
+ * re-freezes it. Measured -- unfreeze, three ticks, five frames, and
+ * `mat.isFrozen` reads TRUE again with the pixels never having moved.
+ *
+ * REJECTED -- `scene.performancePriority = BackwardCompatible`, which is one
+ * line and unfreezes several hundred chunk materials to fix six entity ones.
+ *
+ * So: shadow the getter. An own property on the instance wins over the
+ * prototype's, Babylon never assigns to `isFrozen` (there is no setter), and
+ * the material takes the live path forever.
+ *
+ * IT LIVES HERE NOW. It spent its first life in playerModel.js because this
+ * file was being rewritten the day it was written, and two separate agents
+ * said in comments that it belonged in `trackEntityLight`. Every tracked
+ * material gets it by construction below, so the three call sites that used
+ * to do it by hand cannot forget to.
+ */
+export function keepMaterialLive(mat) {
+  Object.defineProperty(mat, 'isFrozen', { get: () => false, configurable: true })
+  return mat
+}
+
+/*
  * THE MAX, AND BOTH HALVES OF IT ARE NOW REAL.
  *
  * Minecraft lights an entity from `max(skyLight * daylight, blockLight)` at
@@ -119,10 +311,12 @@ export const ENTITY_DIFFUSE = 1 - ENTITY_FLOOR
  * `StandardMaterial` guards its whole material-UBO write behind
  * `!this.isFrozen` -- so `vEmissiveColor` and `vDiffuseColor` upload ONCE and
  * never again. Every number this file writes can be correct in JavaScript and
- * absent from the screen. `src/playerModel.js`'s `keepMaterialLive` shadows
- * the getter to stop it; it belongs in `trackEntityLight` below and is not
- * there yet only because the two changes were in flight at once. Third time
- * `performancePriority` has done this here -- see 56d40d2.
+ * absent from the screen. `keepMaterialLive` below shadows the getter to stop
+ * it, and `trackEntityLight` now calls it on every material it is handed, so
+ * a tracked material cannot be a frozen one. Fourth time
+ * `performancePriority` has done this here -- see 56d40d2, and see
+ * blockLight.js, where the same trap is why terrain's daylight is a plugin
+ * uniform and not a material property.
  *
  * A material with NO PROBE gets the old behaviour exactly -- `level` alone,
  * sky treated as open. That is deliberate rather than an oversight: a
@@ -154,6 +348,7 @@ let level = 1
  * emissive driven from `level` from here on.
  */
 export function trackEntityLight(mat, probe = null) {
+  keepMaterialLive(mat)
   mat.ambientColor = new Color3(0, 0, 0)
   mat.diffuseColor = new Color3(ENTITY_DIFFUSE, ENTITY_DIFFUSE, ENTITY_DIFFUSE)
   mat.emissiveColor = new Color3(0, 0, 0)
@@ -191,6 +386,21 @@ export function bindEntityLight(mat, probe) {
 /** Called by sky.js, once a tick, with the same `level` the sun light gets. */
 export function setEntityLight(value) {
   level = value
+  /*
+   * Both rig lights carry the FULL level, not half of it each. Babylon sums
+   * `ndl * diffuse * intensity` over lights, so `level * (d0 + d1)` is what
+   * reaches diffuseBase, ENTITY_DIFFUSE scales it to `0.6 * (d0 + d1)` and
+   * the emissive adds the 0.4. Halving them here would halve vanilla's
+   * MINECRAFT_LIGHT_POWER along with it.
+   */
+  if (rig) for (const l of rig) l.intensity = value
+  /*
+   * Once a tick, not once per mesh creation, because this file is handed
+   * materials and Babylon is the only thing that knows which meshes wear
+   * them. `getBindedMeshes` reads scene.useMaterialMeshMap's map rather than
+   * scanning, and the Set makes every tick after the first a no-op.
+   */
+  adopt()
   for (const [mat, probe] of tracked) apply(mat, probe)
 }
 

@@ -222,32 +222,84 @@ measured difference between opposite faces of the same stone column was
 renders as two identical 0.6 faces. That is the bright edge in the report, and
 "even at night" is right: it is a ratio, so it survives the dimming.
 
-The fix is to take the horizontal component out. `LIGHT_VECTOR` is now
-`[0, -1, 0]`, exported from `src/sky.js` so `main.js` and the per-tick update
-cannot disagree, and the scene ambient moved from `level * 0.5` to
-`level * SIDE_SHADE`, where `SIDE_SHADE` is the mean of vanilla's 0.8 and 0.6.
+**First fix (`56d40d2`), and it was right as far as it went.** Take the
+horizontal component out: `LIGHT_VECTOR` became `[0, -1, 0]`, exported from
+`src/sky.js` so `main.js` and the per-tick update could not disagree, and the
+scene ambient moved to `level * SIDE_SHADE`, the mean of vanilla's 0.8 and 0.6.
 The Nether's `[0, -1, -0.15]` had the same bug more quietly and went the same
-way.
+way. Opposite faces agreed after it, and that is what was reported.
 
-**What this does not buy, and why it is here rather than in a commit message:**
-one directional light plus one scene-wide ambient term can express exactly two
-values, "faces the light" and "does not". So the four sides collapse to a
-single 0.7 and the bottom collapses into it too. Getting the real five-value
-table needs per-face shading in the terrain fragment shader, reading the face
-normal -- **the same plugin hook §2 wants for block light**, four lines of GLSL
-next to it. Which is why it is worth doing the two together rather than either
-alone.
+What it could not buy was the rest of the table. One directional light plus one
+scene-wide ambient term expresses exactly two values -- "faces the light" and
+"does not" -- so the four sides collapsed onto a single 0.7 and the bottom
+collapsed into it too.
+
+**Second fix (2026-09-16), which is the table itself.** It lives in
+`src/blockLight.js`'s material plugin, off `vNormalW`, because that plugin was
+already in the fragment shader for block light and this is the four lines §2
+said it would be:
+
+```glsl
+vec3 noaN = normalize(vNormalW);
+vec3 noaAxis = noaN * noaN;              // sums to 1 for a unit normal
+float noaFace = noaAxis.x * 0.600        // east / west
+              + noaAxis.z * 0.800        // north / south
+              + noaAxis.y * (noaN.y >= 0.0 ? 1.000 : 0.500);
+```
+
+Weighting each axis's constant by the SQUARED component is an exact lookup on
+an axis-aligned face and a smooth blend on anything else, which is what a stair
+or a torch wants. It multiplies the light LAST, after the sky term, the block
+term and the floor, which is vanilla's `texture * lightmap * shade` order and
+is also what finally face-shades block light -- the underside of a
+glowstone-lit ceiling is now dimmer than the floor under it.
+
+The numbers were re-read against 1.21 rather than trusted from 1.8.9:
+`ClientLevel.getShade(Direction, boolean)` in
+[MCP-1.21](https://raw.githubusercontent.com/Yeet-Masta/MCP-1.21/main/src/main/java/net/minecraft/client/multiplayer/ClientLevel.java)
+gives DOWN 0.5, UP 1.0, NORTH/SOUTH 0.8, WEST/EAST 0.6, unchanged since 1.8.9.
+Its `constantAmbientLight()` branch -- the Nether and End flag -- replaces UP
+and DOWN with 0.9 and leaves the sides alone; not implemented here.
+
+**Terrain now reads no Babylon light at all.** The plugin overwrites `color.rgb`
+outright rather than correcting it, and terrain's daylight arrives as a plugin
+uniform, `uDaylight`, pushed by `sky.js` through `setTerrainLight`. It could
+not be a material property: `scene.performancePriority` freezes the material
+UBO after the first frame, so `scene.ambientColor` had not reached a terrain
+shader since boot. Two traps in one line of setup, both measured rather than
+reasoned about:
+
+- `MaterialPluginBase.registerForExtraEvents` must be **true** or
+  `hardBindForSubMesh` is never called, and
+- it must be set **before** `_enable(true)`, because `_activatePlugin` reads it
+  once, there and then.
+
+With either wrong the shader compiles, the JavaScript is correct, and a GPU
+readback of `uDaylight` in the red channel comes back **R = 0** -- which is
+exactly what the first two runs measured.
+
+Freeing the light is what lets `src/entityLight.js` give entities vanilla's
+two-light rig; see §8.
 
 Rejected: five directional lights, one per face direction, which does express
 the table exactly. Babylon lights are scene-wide, so all five would also land
-on every entity, and entity shading is a tuned model that `src/entityLight.js`
-exists specifically to stop people retuning by accident. Per-mesh exclusion
-lists over dynamically created chunk meshes is a worse problem than the one
-being solved.
+on every entity. Rejected: a per-face vertex attribute written by the mesher --
+the normal already is that attribute, and a second lane carrying a function of
+the first is a lane that can disagree with it. Rejected: `DISABLELIGHTING`,
+which says the same thing as a define and also clears Babylon's `_needNormals`,
+taking `vNormalW` with it.
 
-Measured in `test/36-face-shading.spec.js`, which samples the rendered pixels
-of all four sides of a free-standing stone column at noon and at midnight, and
-fails on the old light vector.
+Measured in `test/36-face-shading.spec.js`, which reads the rendered pixels of
+all four sides of a free-standing stone column off the GPU with `gl.readPixels`
+at noon and at midnight. N/S over E/W comes back **1.334** against vanilla's
+1.333. The mutation that proves it discriminates is north/south 0.8 -> 0.6,
+which takes the ratio to 1.000 and fails the spec.
+
+**Not covered:** the UP and DOWN entries. Both were attempted with a
+straight-down and a straight-up camera and gave top 0.2346 against underside
+0.2745 -- the underside brighter, which the shader cannot be doing -- so the
+views were not seeing what they were named for and the assertions were cut
+rather than tuned until they passed.
 
 ---
 
@@ -257,9 +309,117 @@ fails on the old light vector.
 2. **Cheap and worth it next:** §4, the fullbright emitter faces, with the
    limitation written into the README. Roughly an hour, and it needs the
    `src/blocks.js` edit in §5.
-3. **Cheap and worth it next:** the per-face shading plugin from §6, since it
-   shares the hook with §3 and pays off immediately.
+3. **Done:** the per-face shading plugin from §6, which landed with block light
+   in the same shader hook, as predicted.
 4. **Only with a decision behind it:** §3. It is a fork of noa, not a feature on
    top of it, and the honest number is days. The invalidation cost in step 4 is
    the thing to prototype first, because it is the one that could make the game
    stutter every time a torch is placed.
+
+---
+
+## 8. The other shading system: entities
+
+Minecraft has **two** of these and this document only ever described one.
+Terrain gets the constant table in §6. Entities get a **two-light diffuse rig**,
+and the two systems share no code in vanilla and none here either.
+
+Reported from play:
+
+> "I notice when I walk in circles around Evan, his face is the same level of
+> dimness. Then when I fly above him, his face is bright. It is day time in the
+> world."
+
+Both halves are one line. The scene had a single `DirectionalLight` pointing
+straight down (§6, first fix), so **any vertical face gets `dot(n, up) = 0` and
+no diffuse at all, at any yaw**. His face was lit by `entityLight.js`'s emissive
+floor alone, which is a constant. Tilt his head up to track you and the normal
+swings toward +y and catches the whole term — hence bright from above.
+
+Vanilla's rig, from `com.mojang.blaze3d.platform.Lighting` in
+[1.21](https://raw.githubusercontent.com/Yeet-Masta/MCP-1.21/main/src/main/java/com/mojang/blaze3d/platform/Lighting.java),
+unchanged from 1.8.9's `RenderHelper.LIGHT0_POS/LIGHT1_POS`:
+
+```java
+DIFFUSE_LIGHT_0 = new Vector3f( 0.2F, 1.0F, -0.7F).normalize();
+DIFFUSE_LIGHT_1 = new Vector3f(-0.2F, 1.0F,  0.7F).normalize();
+```
+
+consumed by `assets/minecraft/shaders/include/light.glsl`:
+
+```glsl
+#define MINECRAFT_LIGHT_POWER   (0.6)
+#define MINECRAFT_AMBIENT_LIGHT (0.4)
+
+float light0 = max(0.0, dot(lightDir0, normal));
+float light1 = max(0.0, dot(lightDir1, normal));
+float lightAccum = min(1.0, (light0 + light1) * MINECRAFT_LIGHT_POWER + MINECRAFT_AMBIENT_LIGHT);
+```
+
+They are **fixed in world space** — `setupLevel` hands the shader the same two
+vectors at every hour. The day/night response is the lightmap, which is
+`entityLight.js`'s `level`; the lights only decide which side of a model is lit.
+Because the pair mirrors about Y, a horizontal normal gets
+`|0.2·nx − 0.7·nz| / |v|`, which is **never zero**: 0.568 along Z and 0.162
+along X. That variation is the thing the report says is missing.
+
+### Two lights out of a one-light scene
+
+noa creates exactly one `DirectionalLight`. After §6, terrain no longer reads
+it, so its whole remaining job is `blockMeshes.js`'s non-cube meshes — slabs,
+stairs, fences, torches — which have their own materials, never reach the
+terrain plugin's shader hook, and still want the vertical vector for exactly
+the reason report #6 gave. **It stays where it is and stays vertical.**
+
+The rig is therefore two NEW `DirectionalLight`s owned by `entityLight.js`,
+restricted with `includedOnlyMeshes`, and every entity mesh is taken off noa's
+light in the same breath. Both carry the full `level`: Babylon sums
+`ndl · diffuse · intensity` over lights, so two of them give `level · (d0 + d1)`,
+`ENTITY_DIFFUSE` scales it to `0.6 · (d0 + d1)`, and the emissive adds the 0.4.
+That **is** `light.glsl`, arrived at by arithmetic that was already happening.
+
+`entityLight.js` is handed materials and Babylon restricts lights by mesh, so
+`adopt()` bridges the two once a tick through `getBindedMeshes()`, with a Set
+making every tick after the first a no-op.
+
+Rejected: computing the accumulation in JavaScript and writing it into
+`diffuseColor`. It is the obvious move because that file already owns
+`diffuseColor`, and it cannot work — the accumulation is a function of the
+surface **normal**, which exists per fragment. In JS it collapses to one number
+for the whole model, which is precisely the "same level of dimness all the way
+round" that was reported. Rejected: a second material plugin doing it in GLSL,
+exact but a second shader path to maintain for a sum Babylon already performs.
+Rejected: excluding terrain from the two new lights instead of including only
+entities — chunk meshes come and go constantly, and an exclusion list over them
+is wrong for one frame every time a chunk loads.
+
+### keepMaterialLive moved
+
+`trackEntityLight` now calls it on every material it is handed, so a tracked
+entity material cannot be a frozen one. It spent its first life in
+`playerModel.js` because `entityLight.js` was being rewritten the day it was
+written; `playerModel.js` re-exports it so `heldItem.js` and `itemEntity.js`
+keep their imports.
+
+### Measured
+
+`test/68-entity-shading.spec.js`, off the GPU with `gl.readPixels` over a crop
+on Evan's face, at noon:
+
+| Standing | Face brightness |
+| --- | --- |
+| +X | 0.0967 |
+| −X | 0.0967 |
+| +Z | 0.1450 |
+| −Z | 0.1450 |
+
+A ratio of **1.50** against the 1.488 the arithmetic predicts, and the opposite
+pairs are identical to four decimals — the rig is mirror-symmetric, so report #6
+cannot come back on people either. The mutation that proves it discriminates is
+pointing both rig vectors straight up, which is the old single light: all four
+readings collapse to 0.0795, the ratio to 1.000, and the spec fails.
+
+The first version of that spec sampled the frame CENTRE, which at 2.2 blocks is
+his shirt, and this skin's shirt is very nearly black — it read 0.0417 to 0.0488
+across all four views, because 1.49 times almost nothing is almost nothing. The
+crop moved to his face. Worth knowing before writing the next one.
