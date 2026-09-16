@@ -18,9 +18,11 @@ import { grantOp, look, teleport, waitFrames, waitTicks } from './helpers/world.
  * HOW IT DISCRIMINATES. The control is not "some other texture" -- it is the
  * same pixels with the animation frozen. `game.terrainAnim.setPaused(true)`
  * holds the remap table still without touching anything else in the frame, so
- * "these crops differ" and "these crops are identical" are the same
- * measurement run twice with one bit changed. Freeze it and the moving test
- * fails; that is the proof the test is measuring motion and not noise.
+ * "these crops differ" and "these crops sit at the capture noise floor" are
+ * the same measurement run twice with one bit changed. Freeze it and the
+ * moving test fails; that is the proof the test is measuring motion and not
+ * noise. The floor is measured in place rather than assumed to be zero --
+ * see the note on it below, and the numbers.
  *
  * NO COORDINATES ARE WRITTEN DOWN, for the reason 28-underwater.spec.js gives:
  * the world's X axis moved once already. The ocean is found by scanning the
@@ -47,6 +49,31 @@ async function pixelDiff(a, b) {
   let n = 0
   for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) n++
   return n / ra.length
+}
+
+/*
+ * A crop that is not a REPHOTOGRAPH of the frame we already have.
+ *
+ * `page.screenshot` reads the compositor, which can hand back the frame that
+ * was already presented rather than the one the last `advance` produced --
+ * so a capture comes back byte-identical to the previous one while the
+ * animation has in fact moved on. It showed up as a hard 0.0 on webkit at
+ * two waited frames and again on chromium at four, roughly one run in ten,
+ * in a test whose passing diffs are 0.60 to 0.97 of all bytes. Nothing
+ * animates 90% of a frame and then exactly 0% of it; that gap is the tell.
+ *
+ * BOUNDED, and the bound is what keeps this a capture fix rather than a way
+ * of asking until the answer is yes. A genuinely frozen animation returns
+ * the same bytes on all six attempts and the caller's assertion still fails
+ * -- verified by pausing terrainAnim and watching this test go red anyway.
+ */
+async function freshCrop(page, prev) {
+  let shot = await crop(page)
+  for (let i = 0; prev && i < 5 && (await pixelDiff(prev, shot)) === 0; i++) {
+    await waitFrames(page, 2)
+    shot = await crop(page)
+  }
+  return shot
 }
 
 /*
@@ -83,6 +110,61 @@ async function fluidRoom(page, terrain, kind) {
   await waitFrames(page, 20)
   await grantOp(page)
   await terrain.keep([-R, Y0, -R], [R, Y1, R])
+  /*
+   * STOP THE FLOW ENGINE, and this was the whole of the long-standing failure
+   * in the frozen-water control below.
+   *
+   * src/fluids.js says where this line belongs, in as many words: "the seam is
+   * here rather than a flag in their file: `flow.setEnabled` is one line at
+   * the top of that fixture". The line was never written. So the walls of the
+   * air pocket carved a moment from now flowed into it -- correctly, at four
+   * blocks a second -- and the control, which asserts that frozen water holds
+   * still, was photographing water pouring into the room. It failed at 31% of
+   * pixels changed and had nothing to do with the animation it was
+   * controlling for. With the engine stopped it reads 0.5%, which is the
+   * renderer's own capture noise; see the floor note in that test.
+   *
+   * Put back in the teardown below, because the suite shares one page and
+   * 45-buckets and 46-water-look both need the engine running.
+   */
+  await page.evaluate(() => {
+    const flow = window.game.fluids.flow
+    flow.setEnabled(false)
+    flow.reset()
+  })
+  /*
+   * AND STOP THE SUN -- through the GAME RULE, and it is worth being exact
+   * about how much this bought, because the obvious story is wrong.
+   *
+   * The story was: water is translucent, sky.js shades it from the sun's
+   * elevation every frame, the captures below are a second of wall clock
+   * apart, so the daylight cycle is the leftover. It is a good story and the
+   * measurement does not support it. With the flow stopped and the clock
+   * still running the control read 0.004158 of bytes changed; with the clock
+   * stopped it read 0.004128. That is not a fix, it is the same number. The
+   * leftover is capture noise, and the test below now says so and measures it.
+   *
+   * KEPT anyway, deliberately: a control that has to sit at a noise floor
+   * should not have a clock running under it at all. It costs one call, it
+   * pins `sky.getTime()` at 6022 across all four captures (verified), and it
+   * means a slower machine with seconds between crops cannot start drifting
+   * the sun into the band. Removing a variable that currently measures zero
+   * is cheaper than re-deriving it the next time this file goes red.
+   *
+   * It has to be the RULE, not `sky.setRunning(false)` -- that survives
+   * exactly one tick, because main.js drives the same flag from the rule on
+   * every tick ("noa.on('tick', () => sky.setRunning(!!authority.gamerule(...)))"),
+   * deliberately, so that the rule can change from anywhere. The flag is
+   * sky.js's to own; the rule is the only handle a test has on it. Set inside
+   * the op window above, since requestGamerule denies a non-operator.
+   *
+   * Not restored here: resetWorld puts every game rule back to true before
+   * each test. The flow engine is the one that does need a teardown, and it
+   * has one below.
+   */
+  await page.evaluate(async () => {
+    await window.game.authority.requestGamerule('doDaylightCycle', 'false')
+  })
   await page.evaluate(async ([k, lo, hi, r]) => {
     const id = window.game.fluids.ids[k]
     await window.game.authority.requestFill({ from: [-r, lo, -r], to: [r, hi, r], id })
@@ -111,6 +193,19 @@ test.afterEach(async ({ page }) => {
     if (window.__animPin) { window.noa.off('tick', window.__animPin); window.__animPin = null }
     window.game.terrainAnim.setPaused(false)
   })
+})
+
+/*
+ * Put the flow engine back. fluidRoom switches it off (see the note there)
+ * and nothing else will: the suite shares one booted world, 45-buckets and
+ * 46-water-look run after this file and need water that moves, and resetWorld
+ * clears the fluid QUEUE between tests but never re-enables the engine.
+ *
+ * The daylight clock needs no teardown here -- it was stopped through the
+ * game rule, and resetWorld sets every rule back to true before each test.
+ */
+test.afterAll(async ({ world }) => {
+  await world.page.evaluate(() => { window.game.fluids.flow.setEnabled(true) })
 })
 
 test('the atlas carries every frame the animation table claims', async ({ page }) => {
@@ -221,12 +316,49 @@ test('water animates, and freezing it is the control that proves the measurement
    */
   await page.evaluate(() => window.game.terrainAnim.setPaused(true))
   await waitFrames(page, 3)
+
+  /*
+   * THE FLOOR IS NOT ZERO, and `toBe(0)` was asking the renderer for
+   * something it does not offer.
+   *
+   * Measured rather than assumed: `floor` is two crops with NOTHING between
+   * them -- no advance, no waited frames, no tick -- so whatever it comes back
+   * as is pure capture-to-capture noise on this exact scene. It is not small
+   * because the scene is still; it is 0.5% of bytes on chromium and ~0.1% on
+   * webkit, at magnitudes of 1 to 7 out of 255, scattered over the water
+   * surface. Translucent geometry is depth-sorted per frame and ties resolve
+   * differently, which is a real property of drawing water and not a bug the
+   * animation put there.
+   *
+   * So the control's claim is now the one it was always making in spirit: the
+   * frozen crops are at the FLOOR, and the moving crops are nowhere near it.
+   * Both halves matter -- a cap alone would pass if the animation stopped
+   * working and the moving numbers collapsed too, so the ratio is asserted
+   * against this run's own `deltas` rather than against a remembered constant.
+   *
+   * Real numbers behind the two thresholds, one run of each engine:
+   *
+   *            floor     frozen pairs           moving pairs        ratio
+   *   chromium 0.0050    0.0070 0.0065 0.0063   0.677 0.639 0.684    ~91x
+   *   webkit   0.0000    0.0009 0.0011 0.0012   0.467 0.325 0.389   ~271x
+   *
+   * 0.02 sits ~2.5x above the worst floor seen and ~16x under the weakest
+   * moving pair. Nothing has to be re-tuned to keep that gap; if it ever
+   * closes, the measurement really has stopped discriminating.
+   */
+  const floor = await pixelDiff(await crop(page), await crop(page))
   const frozen = [await crop(page)]
   for (let i = 0; i < 3; i++) { await step(8 * 50); frozen.push(await crop(page)) }
-  for (let i = 1; i < frozen.length; i++) {
-    expect(await pixelDiff(frozen[i - 1], frozen[i]),
-      `frozen water changed between ${i - 1} and ${i}`).toBe(0)
-  }
+  const held = []
+  for (let i = 1; i < frozen.length; i++) held.push(await pixelDiff(frozen[i - 1], frozen[i]))
+
+  const worst = Math.max(...held)
+  expect(worst, `frozen water moved (floor ${floor}, pairs ${held.join(', ')})`)
+    .toBeLessThan(0.02)
+  expect(Math.min(...deltas) / worst,
+    `frozen and moving are the same size, so this measures nothing ` +
+    `(moving ${deltas.join(', ')}, frozen ${held.join(', ')})`)
+    .toBeGreaterThan(20)
 })
 
 test('lava animates too, from the same one uniform', async ({ page, terrain }) => {
@@ -234,11 +366,27 @@ test('lava animates too, from the same one uniform', async ({ page, terrain }) =
   await look(page, { heading: 0, pitch: 0 })
   await waitFrames(page, 20)
 
+  /*
+   * FOUR frames waited, not two, and this is a capture fix rather than a
+   * weakened assertion.
+   *
+   * At two, webkit intermittently returned a crop identical to the previous
+   * one -- pixelDiff of exactly 0.0, while `layerOf('lava_still')` had moved
+   * on -- which is a screenshot taken before the new frame was presented, not
+   * an animation that failed to advance. It reproduced twice in a row and
+   * then not at all in isolation.
+   *
+   * Worth saying plainly: this test only started being able to flake when the
+   * flow engine was switched off in fluidRoom. Until then lava was POURING
+   * into the camera pocket, so consecutive crops differed whatever the
+   * animation did, and "lava animates" was passing partly for the wrong
+   * reason. The stricter fixture is what exposed the capture race.
+   */
   const shots = []
   for (let i = 0; i < 3; i++) {
-    shots.push(await crop(page))
+    shots.push(await freshCrop(page, shots[i - 1]))
     await page.evaluate(() => window.game.terrainAnim.advance(6 * 50))
-    await waitFrames(page, 2)
+    await waitFrames(page, 4)
   }
   await sharp({
     create: {
