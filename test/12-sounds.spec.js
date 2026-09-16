@@ -241,10 +241,12 @@ test.describe('sounds', () => {
      * Standing pocket at the world floor, same trick 06-mining.spec.js uses.
      */
     await useGamemode(page, 'survival')
-    await standOnBedrock(page, terrain)
+    const floor = await standOnBedrock(page, terrain)
     await aim(page, { pitch: DOWN })
 
-    expect(await page.evaluate(() => window.noa.getBlock(0, -64, 0))).toBe(ID.bedrock)
+    /* `floor`, not -64: the world's bottom layer is a property of the world
+     * and there are three of them now. See worldFloor in the helper. */
+    expect(await page.evaluate(f => window.noa.getBlock(0, f, 0), floor)).toBe(ID.bedrock)
 
     await audio.clear()
     await page.mouse.down({ button: 'left' })
@@ -262,7 +264,7 @@ test.describe('sounds', () => {
     // walking on the same block.
     expect(hits.every(h => h.name.startsWith('step/stone'))).toBe(true)
     expect(hits[0].gain).toBeCloseTo(HIT_GAIN, 5)
-    expect(await page.evaluate(() => window.noa.getBlock(0, -64, 0))).toBe(ID.bedrock)
+    expect(await page.evaluate(f => window.noa.getBlock(0, f, 0), floor)).toBe(ID.bedrock)
   })
 
   /* ---- which block sounds like what ---- */

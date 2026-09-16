@@ -61,14 +61,14 @@ test.describe('mining', () => {
 
   test('bedrock never breaks, however long you hold', async ({ page, terrain }) => {
     // Carve a standing pocket at the world floor. Faster and far more precise
-    // than mining 200 blocks down, and restored afterwards. The floor moved
-    // from y=0 to y=-64 with the imported world, and getting there is now a
-    // trip rather than a reach -- see standOnBedrock.
-    await standOnBedrock(page, terrain)
+    // than mining down to it, and restored afterwards. WHICH y THAT IS is
+    // asked of the game, not written here: it was 0, then -64, and it is 132
+    // in the superflat -- see worldFloor in the helper.
+    const floor = await standOnBedrock(page, terrain)
     await aim(page, { pitch: DOWN })
 
-    expect(await getBlock(page, 0, -64, 0)).toBe(ID.bedrock)
-    expect(await targetedBlock(page)).toMatchObject({ position: [0, -64, 0] })
+    expect(await getBlock(page, 0, floor, 0)).toBe(ID.bedrock)
+    expect(await targetedBlock(page)).toMatchObject({ position: [0, floor, 0] })
 
     /*
      * Progress is recorded while the button is held, because "unbreakable"
@@ -88,7 +88,7 @@ test.describe('mining', () => {
     await page.mouse.up({ button: 'left' })
     await waitTicks(page, 2)
 
-    expect(await getBlock(page, 0, -64, 0)).toBe(ID.bedrock)
+    expect(await getBlock(page, 0, floor, 0)).toBe(ID.bedrock)
     expect(await invCount(page, ID.bedrock)).toBe(0)
     expect(hits.length, 'punching bedrock published no progress at all')
       .toBeGreaterThan(10)

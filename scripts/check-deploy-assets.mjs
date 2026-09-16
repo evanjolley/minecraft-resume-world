@@ -47,11 +47,27 @@ const REQUIRED = [
  *   NETHER -- UNCHANGED. public/terrain/nether.bin is still an extraction
  *     from a locally generated world, and this rule is still the thing
  *     keeping it off a public site.
+ *   MOUNTAINS -- NEW, AND REFUSED BY THE RULE THAT WAS ALREADY HERE.
+ *     public/terrain/mountains.bin is a 256-block cut of seed
+ *     434533485056755 and is the same open question as the Nether, twice
+ *     over by volume.
  *
- * So `dist/terrain/` today means the Nether and only the Nether. The rule
- * stays as a DIRECTORY rule rather than narrowing to nether.bin on purpose:
- * the next imported asset should be refused by default, not permitted by an
- * omission.
+ * THE PARAGRAPH BELOW USED TO SAY "the next imported asset should be refused
+ * by default, not permitted by an omission", and that was written before
+ * there was a next one. It was the right call: a rule narrowed to nether.bin
+ * would have let mountains.bin through in silence. The rule needed no edit
+ * and this comment is the only thing that changed.
+ *
+ * SO WHAT DOES A DEPLOYED BUILD CONTAIN? One world: the generated superflat
+ * overworld. `npm run build:deploy` deletes dist/terrain wholesale, so
+ * neither imported world's asset ships, and BOTH `/world mountains` and
+ * `/dimension nether` fail there with a 404 that src/dimensions.js reports
+ * to the player -- the same behaviour the Nether has had since b5e2255, now
+ * applying to two rows instead of one. Adding a second import did not make a
+ * deployable build dirtier; it made the generated world stop being the only
+ * world, which is a different sentence and is why this note exists.
+ *
+ * The rule stays as a DIRECTORY rule rather than naming files.
  *
  * KNOWN CONSEQUENCE, not a bug in this file: `npm run build:deploy` deletes
  * dist/terrain wholesale, so a deployed build has no Nether asset and
@@ -63,8 +79,8 @@ const REQUIRED = [
  * only one of them fails loudly.
  */
 const FORBIDDEN = [
-  ['terrain', 'imported Minecraft terrain (the Nether), licence unresolved'
-    + ' -- see docs/DEPLOYMENT.md'],
+  ['terrain', 'imported Minecraft terrain (the Nether and the mountain patch),'
+    + ' licence unresolved -- see docs/DEPLOYMENT.md'],
 ]
 
 /*

@@ -257,12 +257,37 @@ export function installCommands(chat, authority, { noa, playerName }) {
    * /tp is the honest precedent anyway: it also only moves you, it also
    * destroys nothing, and it is op-gated.
    */
+  /*
+   * TWO NAMES, ONE IMPLEMENTATION, and the second name is the point.
+   *
+   * `mountains` is not a dimension. It is an overworld -- a 256-block cut of
+   * seed 434533485056755 -- and asking someone to type `/dimension mountains`
+   * to reach it teaches them a wrong word about their own world. But
+   * `/dimension nether` is the spelling that already exists, is already
+   * documented, and is what anyone who has played would guess for the Nether.
+   *
+   * So `/world` is the general switcher and `/dimension` stays as an alias.
+   * Rejected: renaming /dimension outright (it is in the docs and in
+   * test/34-nether.spec.js, and breaking a working command to fix a noun is a
+   * bad trade), and adding `mountains` only to /dimension (cheapest, and it
+   * leaves the vocabulary wrong permanently).
+   *
+   * BOTH ARE opOnly, unchanged. test/11-commands.spec.js asserts the command
+   * list a guest sees is EXACTLY help, op and kill -- see the long note this
+   * replaced for why that list is a designed property of the front door and
+   * not something to grow in passing. Two op-gated commands add zero entries
+   * to it.
+   */
   if (authority.requestDimension) {
-    chat.command('dimension', `Moves you to another dimension: ${authority.dimensionNames.join(', ')}`,
-      async ([name]) => {
-        if (name === undefined) return chat.parseError('/dimension')
-        report(await authority.requestDimension(name))
-      }, opOnly)
+    const go = async ([name], typed) => {
+      if (name === undefined) return chat.parseError(typed)
+      report(await authority.requestDimension(name))
+    }
+    const list = authority.dimensionNames.join(', ')
+    chat.command('world', `Moves you to another world: ${list}`,
+      async (args) => go(args, '/world'), opOnly)
+    chat.command('dimension', `Moves you to another dimension: ${list}`,
+      async (args) => go(args, '/dimension'), opOnly)
   }
 
   return {

@@ -843,47 +843,69 @@ export async function usePad(page, { length = 44 } = {}) {
   }
 }
 
+/**
+ * The bottom layer of the world you are standing in, asked of the game.
+ *
+ * NOT A CONSTANT, and this is the third time that lesson has cost a spec. It
+ * was y=0 on the old noise island, y=-64 on the imported patch, and it is
+ * y=132 in the superflat -- four blocks under your feet -- which is how
+ * `bedrock never breaks` turned into a 45-second timeout at b5e2255. There
+ * are now THREE worlds with two different floors, switchable at runtime, so
+ * any number written here is a number that is wrong in at least one of them.
+ *
+ * island.js publishes it on `game.terrain` (terrainInfo().yMin), which is per
+ * world by construction because it is read off the loaded patch.
+ */
+export const worldFloor = (page) => page.evaluate(() => window.game.terrain.yMin)
+
 /*
  * Stand the player in a carved pocket on the world floor, on bedrock.
  *
- * Two specs want to punch bedrock, and until now both did it at y=0 -- the old
- * island's floor, which sat comfortably inside the chunks around spawn. The
- * imported world's floor is at y=-64, two hundred blocks down and permanently
- * outside noa's vertical chunkAddDistance of 96, so BOTH halves of the old
- * trick break: getBlock answers 0 (which the terrain fixture would then
- * faithfully "restore") and setBlock is a silent no-op. The player has to
- * actually go there first.
+ * Two specs want to punch bedrock, and doing it by mining down is 200 blocks
+ * of holding a button. The trick is to carve a four-block pocket at the floor
+ * and stand in it -- but the floor's depth is a property of the world (see
+ * worldFloor), and reaching it is only a TRIP in some of them.
  *
- * Bedrock at the spawn column runs y=-64..-61, so carving -63..-60 leaves a
- * four-block pocket with bedrock directly underfoot.
+ * WHY THE TELEPORT IS STILL HERE when the superflat's floor is four blocks
+ * under spawn and needs no travel at all: an imported world's floor is 200
+ * blocks down, permanently outside noa's vertical chunkAddDistance of 96, and
+ * down there BOTH halves of the trick fail silently -- getBlock answers 0
+ * (which the terrain fixture would then faithfully "restore" as air) and
+ * setBlock is a no-op. Teleporting to a floor that is already loaded is
+ * harmless; not teleporting to one that is not is a 45-second timeout. The
+ * cheap half of the asymmetry is the one to keep.
  *
  * @param terrain the fixture, so the pocket is filled back in afterwards.
+ * @returns the floor y, because every caller wants to assert about it.
  */
 export async function standOnBedrock(page, terrain) {
-  await page.evaluate(() => {
+  const floor = await worldFloor(page)
+
+  await page.evaluate((f) => {
     const noa = window.noa
-    noa.ents.setPosition(noa.playerEntity, [0.5, -55, 0.5])
+    noa.ents.setPosition(noa.playerEntity, [0.5, f + 9, 0.5])
     const body = noa.ents.getPhysics(noa.playerEntity).body
     body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
-    // Embedded in solid rock for a moment. Gravity off so the body is not
-    // fighting its way out of the stone while the chunks stream in.
+    // Possibly embedded in solid rock for a moment. Gravity off so the body is
+    // not fighting its way out of the stone while the chunks stream in.
     body.gravityMultiplier = 0
     window.game.survival.clearFallTracking()
-  })
+  }, floor)
 
-  await page.waitForFunction(() => window.noa.getBlock(0, -64, 0) !== 0,
-    null, { timeout: 45_000, polling: 100 })
+  await page.waitForFunction((f) => window.noa.getBlock(0, f, 0) !== 0,
+    floor, { timeout: 45_000, polling: 100 })
 
-  await terrain.keep([0, -63, 0], [0, -60, 0])
-  for (let y = -63; y <= -60; y++) await setBlock(page, ID.air, 0, y, 0)
+  await terrain.keep([0, floor + 1, 0], [0, floor + 4, 0])
+  for (let y = floor + 1; y <= floor + 4; y++) await setBlock(page, ID.air, 0, y, 0)
 
-  await page.evaluate(() => {
+  await page.evaluate((f) => {
     const noa = window.noa
-    noa.ents.setPosition(noa.playerEntity, [0.5, -63, 0.5])
+    noa.ents.setPosition(noa.playerEntity, [0.5, f + 1, 0.5])
     const body = noa.ents.getPhysics(noa.playerEntity).body
     body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
     body.gravityMultiplier = 1
     window.game.survival.clearFallTracking()
-  })
+  }, floor)
   await settleOnGround(page)
+  return floor
 }

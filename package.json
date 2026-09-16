@@ -23,7 +23,7 @@
     "terrain:nether": "node scripts/terrain/nether.mjs",
     "terrain:nether:verify": "node scripts/terrain/verify.mjs nether",
     "terrain:mountains:gen": "node -e \"import('./scripts/terrain/generate.mjs').then(m=>m.generateSeed('434533485056755',256))\"",
-    "terrain:mountains": "SEED=434533485056755 PATCH_X=-112 PATCH_Z=0 PATCH_SIZE=256 PATCH_NAME=mountains SPAWN_AT=-48,48 node scripts/build-terrain.mjs",
+    "terrain:mountains": "SEED=434533485056755 PATCH_X=-112 PATCH_Z=0 PATCH_SIZE=256 PATCH_NAME=mountains SPAWN_AT=-32,116 node scripts/build-terrain.mjs",
     "terrain:mountains:verify": "node scripts/terrain/verify.mjs mountains",
     "postinstall": "node scripts/build-textures.mjs --ensure && node scripts/build-sounds.mjs --ensure",
     "test": "playwright test -c test/playwright.config.js",

@@ -160,7 +160,7 @@
  */
 import {
   loadTerrain, generateTerrain, setDimension as setIslandDimension, isLoaded,
-  currentDimension, SPAWN, NETHER_SPAWN, SURFACE_Y, PATCH_SIZE,
+  currentDimension, spawnFor, SURFACE_Y, PATCH_SIZE,
 } from './island.js'
 import { flatPatch, FLAT_PRESETS } from './flatworld.js'
 import { BLOCK_TYPES } from './blocks.js'
@@ -185,14 +185,36 @@ import { installPortals } from './portals.js'
 const CEILING_Y = SURFACE_Y + 64
 
 /**
- * What a dimension is, in this build: an asset, a spawn, a sky and a fog.
+ * What a world is, in this build: a source, a spawn, a sky and a fog.
  *
  * Deliberately data rather than a class hierarchy. Everything that differs
- * between the overworld and the Nether is a value in this table, which is
- * the test of whether the seam was cut in the right place -- and the reason
- * FUTURE.md argues this is worth building for the SEAM rather than for the
- * red rock. A third entry here is an interior, a hub, or a room per resume
- * point, with no new code.
+ * between the worlds is a value in this table, which is the test of whether
+ * the seam was cut in the right place. The old comment ended "a third entry
+ * here is an interior, a hub, or a room per resume point, with no new code",
+ * and `mountains` is the first cash of that cheque -- it is a row, an npm
+ * script, and a WORLDS row in island.js, and nothing in the switch itself
+ * knows it exists.
+ *
+ * WHAT A ROW CARRIES, and what deliberately moved OUT of it:
+ *
+ *   name, id          identity. `id` is the Minecraft dimension it is a cut
+ *                     of, which is not the same thing as the world's name --
+ *                     `mountains` is an overworld.
+ *   generate | asset  EXACTLY ONE. A `generate` thunk is compiled on the
+ *                     spot; an `asset` URL is fetched on first entry. This is
+ *                     the only distinction anything downstream branches on.
+ *   sky, fog          presentation. null sky means the normal one.
+ *
+ * The SPAWN is no longer a value in this table -- it is `spawnFor(name)`, read
+ * out of island.js's WORLDS. Geometry (how wide the patch is, which asset
+ * column is world origin, where the ground is) belongs with the lookup that
+ * uses it, and the verifier has to be able to read it in node without
+ * dragging Babylon in behind it. A row that carried a spawn AND a WORLDS row
+ * that carried an origin would be two places to state one fact.
+ *
+ * WHAT A THIRD WORLD COSTS, now that there is one: this row, an island.js
+ * WORLDS row, an npm script to build the asset, and a verify.mjs row. No
+ * branch anywhere.
  */
 export const DIMENSIONS = {
   overworld: {
@@ -218,8 +240,38 @@ export const DIMENSIONS = {
       width: PATCH_SIZE, depth: PATCH_SIZE,
       surfaceY: SURFACE_Y, ceilingY: CEILING_Y,
     }),
-    spawn: SPAWN,
     /* null means "the normal sky": sun, moon, clouds, day cycle. */
+    sky: null,
+    fog: { density: 0 },
+  },
+  /*
+   * The mountain patch. A 256-block square of Java seed 434533485056755 --
+   * see docs/seed-434533485056755.md for the survey and the commit that cut
+   * it for the size table that chose 256 over 320 and 512.
+   *
+   * IMPORTED, so it 404s if nobody ran `npm run terrain:mountains`, and
+   * FETCHED ON FIRST ENTRY rather than at boot. That is the whole reason the
+   * generated superflat is still the world you land in: the asset is 1.4MB
+   * gzipped, and a visitor who only wants to look at the resume should not
+   * pay for a world they did not ask for. `enter` already lazy-loads -- see
+   * the `isLoaded` check there -- so this needed no new machinery, only the
+   * decision not to add `mountains` to the boot path in main.js.
+   *
+   * REJECTED -- making this the default world and generating the superflat on
+   * demand. It is what the owner is most likely to want to look at, and it
+   * puts a 1.4MB blocking fetch in front of a blank page again, which is the
+   * exact gate src/main.js spent forty lines arguing its way out of at
+   * b5e2255. One command is a cheaper price than that.
+   *
+   * Same sky and fog as the overworld because it IS an overworld; the row
+   * says so explicitly rather than inheriting, because "inherits from
+   * overworld" is a second concept in a table whose whole virtue is that it
+   * has none.
+   */
+  mountains: {
+    name: 'mountains',
+    id: 'minecraft:overworld',
+    asset: '/terrain/mountains.bin',
     sky: null,
     fog: { density: 0 },
   },
@@ -227,7 +279,6 @@ export const DIMENSIONS = {
     name: 'nether',
     id: 'minecraft:the_nether',
     asset: '/terrain/nether.bin',
-    spawn: NETHER_SPAWN,
     sky: {
       /*
        * The Nether's sky colour and its fog colour are the same number in
@@ -379,7 +430,12 @@ export function installDimensions(noa, { sky, underwater, teleport, authority = 
 
     active = name
     present(dim)
-    teleport(...dim.spawn)
+    /* spawnFor, not dim.spawn: see the note on the table. The one thing that
+     * must stay true is that this happens AFTER the two lines above, because
+     * the mountain world's spawn is y=112 and the overworld's floor is at
+     * 132 -- teleporting first would drop the player through terrain that is
+     * still the old world's. */
+    teleport(...spawnFor(name))
     return { ok: true, dimension: name, id: dim.id }
   }
 
@@ -418,6 +474,10 @@ export function installDimensions(noa, { sky, underwater, teleport, authority = 
     get islandDimension() { return currentDimension() },
     get worldName() { return noa.worldName },
     names: Object.keys(DIMENSIONS),
+    /* Which worlds have actually been built or fetched, as opposed to which
+     * ones exist as rows. The difference IS the lazy load: a spec that wants
+     * to prove booting costs no network has no other way to ask. */
+    get loaded() { return Object.keys(DIMENSIONS).filter(isLoaded) },
   }
 
   /*

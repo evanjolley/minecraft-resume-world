@@ -1,4 +1,4 @@
-import { SPAWN, VOID_Y } from './island.js'
+import { spawnFor, currentDimension, VOID_Y } from './island.js'
 import { deathMessage } from './deathMessages.js'
 import { cancelPersistentLock } from './menu.js'
 
@@ -167,7 +167,22 @@ export function installRespawn(noa, survival, inputLock, { playerName = () => ''
   survival.onDeath((detail) => { label.textContent = deathMessage(playerName(), detail) })
 
   const respawn = () => {
-    noa.ents.setPosition(player, SPAWN)
+    /*
+     * THE WORLD YOU DIED IN, not the overworld.
+     *
+     * This read `SPAWN` -- island.js's overworld constant -- back when there
+     * was one place to be. With three worlds it is a bug you only meet by
+     * dying somewhere else: the overworld's spawn is (0.5, 138, 0.5) and the
+     * mountain world's ground at (0, 0) is at y=110, so respawning from the
+     * mountains would drop you 28 blocks and, in the Nether, embed you in
+     * rock 60 blocks above the floor.
+     *
+     * currentDimension() rather than a handle on src/dimensions.js: this
+     * module is installed before dimensions.js and needs exactly one fact
+     * from it, which island.js already holds because it is the thing that
+     * has to agree with noa.worldName.
+     */
+    noa.ents.setPosition(player, spawnFor(currentDimension()))
 
     // SUBTLE, and the bug you'd hit without it: teleporting moves you but
     // does nothing to your momentum. After an 80-block drop you're falling

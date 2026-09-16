@@ -112,18 +112,39 @@ export const WORLDS = {
   /*
    * Seed 434533485056755, patch corner (-112, 0), 256 blocks square.
    *
-   * The origin is the spawn column from public/terrain/mountains.json, and
-   * that spawn was chosen by RAY TEST (scripts/terrain/seed-view.mjs), not by
-   * the window scorer -- docs/seed-434533485056755.md shows the scorer's
-   * favourite column on this seed sitting under a closed canopy with 37 of 81
-   * columns roofed. From here: open sky, eight biomes reachable by an
-   * unobstructed ray, 143 blocks of visible relief.
+   * The origin is the spawn column from public/terrain/mountains.json: a snow
+   * block on a jagged peak at Minecraft (-32, 116), y=198.
    *
-   * surfaceY 111 is the grass block at world (-48, 48) plus one. Checked by
+   * HOW IT WAS CHOSEN, and the third instrument it took.
+   *
+   *   1. NOT the window scorer. docs/seed-434533485056755.md shows scan.mjs's
+   *      favourite column on this seed sitting under a closed canopy, 37 of 81
+   *      columns roofed -- the same failure that put seed 12345's spawn under
+   *      dark oak, and therefore structural rather than a 12345 accident.
+   *   2. NOT the ray test alone either, which is the part that was learned
+   *      here. seed-view.mjs scored (-48, 48) a perfect 100 -- open sky, eight
+   *      biomes in line of sight, 143 blocks of relief -- and the screenshot
+   *      from it is a wall of dirt two blocks from your face. Its `longView`
+   *      term rewards the MEAN of 180 sight lines, so half a compass of
+   *      near-wall is bought back by the other half being 200 blocks clear.
+   *   3. AND THE RENDER DISTANCE IS THE MISSING TERM. noa's chunkAddDistance
+   *      is [4, 3] -- four chunks of 32, so 128 blocks. The vista the scout
+   *      loved at (16, -56) looks at mountains 180 blocks away, and this
+   *      engine does not draw them. A viewpoint metric with no range limit is
+   *      measuring a world nobody is rendering.
+   *
+   * So the search that produced this column asked for: no log within 24
+   * blocks, nothing more than 3 blocks higher within 10, nothing more than 25
+   * higher between 12 and 45, and the tallest possible rise between 50 and 110
+   * -- INSIDE what gets drawn. It answers +56 at 95 blocks, with 83% of the
+   * ring at eye level or below. Then it was screenshotted, because that is
+   * the only instrument that is not a model.
+   *
+   * surfaceY 199 is that snow block plus one. Checked by
    * scripts/terrain/verify.mjs check 4 rather than trusted, for the same
    * reason the Nether's 75 is.
    */
-  mountains: { size: 256, originX: 191, originZ: 48, surfaceY: 111, drop: 1 },
+  mountains: { size: 256, originX: 175, originZ: 116, surfaceY: 199, drop: 1 },
 }
 
 /** The overworld's width. Kept as an export because src/dimensions.js sizes
