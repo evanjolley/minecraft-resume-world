@@ -596,11 +596,39 @@ async function decodeAll(dir, allowSubstitutes) {
    * decoded by name and their absence is survivable: CE ships no portal
    * texture, and a flat purple tile is a better failure than a crash in a
    * build whose whole point is that both sources produce the same world.
+   *
+   * A run with `pairedWith` is artwork for a material that already exists --
+   * `water_flow` is `water_still` seen sideways -- so it takes that material's
+   * recipe (biome tint, forced alpha) and, when the pack has no such file, its
+   * FRAMES. That fallback is what CE gets: Pixel Perfection ships no fluid
+   * artwork at all, `water_still` is already standing in as tinted ice, and
+   * water_flow falls back to those same substituted frames. Directional water
+   * under CE therefore looks exactly like today's water rather than like a
+   * purple hole, which is the only behaviour worth having in a build nobody
+   * can test by eye before it deploys.
+   *
+   * Reusing the ALREADY-PROCESSED buffers from `frames` rather than re-reading
+   * the substitute from disk is deliberate: those have been multiplied and
+   * alpha-forced, and a second pass over a raw decode would silently ship flow
+   * water at a different colour from still water beside it.
    */
   for (const [name, anim] of Object.entries(STANDALONE)) {
+    const recipe = (anim.pairedWith && MATERIAL_RECIPES[anim.pairedWith]) || {}
     if (existsSync(file(name))) {
-      frames.set(name, await decodeFrames(file(name), anim.frames))
+      const bufs = await decodeFrames(file(name), anim.frames)
       verifyMcmeta(dir, name, anim)
+      // Same order and same greyscale test as the ANIMATIONS loop above, and
+      // for the same reason: the test has to see the untouched frame.
+      const tint = recipe.tint && chroma(bufs[0]) < GREY_ENOUGH_TO_TINT
+      for (const buf of bufs) {
+        if (tint) multiply(buf, recipe.tint)
+        if (recipe.alpha !== undefined) setAlpha(buf, recipe.alpha)
+      }
+      frames.set(name, bufs)
+    } else if (anim.pairedWith && frames.has(anim.pairedWith)) {
+      const src = frames.get(anim.pairedWith)
+      frames.set(name, Array.from({ length: anim.frames },
+        (_, i) => Buffer.from(src[i % src.length])))
     } else {
       const flat = Buffer.alloc(TILE * TILE * 4)
       for (let i = 0; i < flat.length; i += 4) {

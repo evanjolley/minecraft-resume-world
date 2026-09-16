@@ -864,9 +864,30 @@ const BARRIER = [
  *     texture. terrainAnimation.js keys its layer-remap uniform on MATERIAL
  *     NAME, so a flow level registered against the still material is animated
  *     by the table that already exists, with no new atlas frames, no second
- *     animation entry and no change to that module at all. Vanilla's
- *     directional `water_flow` would need a per-level rotated UV and a
- *     material per direction -- four more ids again. Rejected.
+ *     animation entry and no change to that module at all.
+ *
+ *     THE DIRECTIONAL HALF WAS REJECTED HERE AND HAS NOW SHIPPED, AND THE
+ *     COST THIS COMMENT QUOTED WAS WRONG. It said vanilla's `water_flow`
+ *     "would need a per-level rotated UV and a material per direction -- four
+ *     more ids again". The second half does not follow from the first, and
+ *     the reason is one fact about the mesher: the atlas layer a quad samples
+ *     is `texAtlasIndices`, a per-VERTEX attribute in the chunk's vertex
+ *     buffer. It is not a property of the block id. An id picks the layer only
+ *     because noa's mesher happens to copy it from the id's material at mesh
+ *     time -- and src/fluidGeometry.js is already reading that buffer back and
+ *     rewriting it, to split merged fluid quads into per-cell ones.
+ *
+ *     So the direction is decided per CELL, in that same pass, from the flow
+ *     vector that already slopes the surface and shoves the player: one more
+ *     number written into an array that was being written anyway, plus four
+ *     rotated UVs. `water_flow` and `lava_flow` live in the atlas as
+ *     STANDALONE frame runs (terrainAnimation.js), which are blocks of layers
+ *     with no owning material -- exactly what a per-quad choice needs.
+ *
+ *     ZERO new block ids. These sixteen are still the whole of it, they are
+ *     still all registered against the still material, and nothing in this
+ *     file changed to make the water directional. What was actually true is
+ *     that "a material per direction" was never the only way to name a layer.
  *   - `fluid: true` is what items.js filters on (`!b.fluid`), so none of
  *     these sixteen becomes an item, appears in /give, or lands in the
  *     creative picker. That is the same exclusion water and lava already had;

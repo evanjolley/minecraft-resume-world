@@ -104,17 +104,45 @@ export const ANIMATIONS = {
 }
 
 /**
- * The nether portal's frames, which are NOT in ANIMATIONS.
+ * Animations with NO block in blocks.js pointing at them.
  *
- * `nether_portal` is not a material in blocks.js -- there is no portal block
- * there and that file belongs to another agent this pass -- so its frames
- * cannot be appended to "the page its material is on". They are instead given
- * a home on the alpha page (the portal texture's alpha runs 155-232) as a
- * standalone frame run with no owning material, and src/dimensions.js
- * registers a material pointing straight at frame 0 of it.
+ * A run in ANIMATIONS is found by walking a page's material names, so it only
+ * exists if some block face asks for that texture. These three do not:
+ *
+ *   - `nether_portal` has no portal block in blocks.js at all, so its frames
+ *     cannot be appended to "the page its material is on". It is given a home
+ *     on the alpha page (the portal texture's alpha runs 155-232) and
+ *     src/dimensions.js registers a material pointing straight at frame 0.
+ *
+ *   - `water_flow` / `lava_flow` are vanilla's DIRECTIONAL fluid textures, and
+ *     no block wants them because no block id knows which way it is flowing.
+ *     Direction is a property of a CELL, not of an id -- see the long note in
+ *     blocks.js -- so src/fluidGeometry.js picks the texture per quad, in the
+ *     mesher readback, by writing this run's layer into `texAtlasIndices`.
+ *     That is the whole reason they are standalone: a standalone run is a
+ *     block of atlas layers with no owning material, which is exactly what a
+ *     per-quad decision needs.
+ *
+ * `pairedWith` names the material this run has to share an atlas PAGE with,
+ * and it is load-bearing rather than tidy: a terrain sub-mesh samples ONE
+ * page, so a quad drawn on the water page can only be redirected to a layer
+ * that is also on the water page. It also tells the build script which
+ * material's recipe (biome tint, forced alpha) to apply to these frames, and
+ * which frames to fall back to when the pack has no flow artwork -- a CE build
+ * has no `water_flow.png`, and degrading to the still texture is the whole
+ * difference between "not directional" and "missing texture".
+ *
+ * The numbers are measured from 1.21.8 and verified against the jar's own
+ * `.mcmeta` on every vanilla build, same as ANIMATIONS: `water_flow.png` is
+ * 32x1024 (32 frames of 32px, frametime 1, no frame list) and `lava_flow.png`
+ * is 32x512 (16 frames, frametime 3). Both are wider than 16 and the build's
+ * `decodeFrames` resizes to the atlas tile, which is why a 32px source needs
+ * no special case here.
  */
 export const STANDALONE = {
   nether_portal: { page: 'alpha', frames: 32, frametime: 1, order: null, interpolate: false },
+  water_flow: { pairedWith: 'water_still', frames: 32, frametime: 1, order: null, interpolate: false },
+  lava_flow: { pairedWith: 'lava_still', frames: 16, frametime: 3, order: null, interpolate: false },
 }
 
 /** One Minecraft tick, in milliseconds. */
@@ -156,7 +184,13 @@ export function atlasLayout(pages = ATLAS_PAGES) {
       next += anim.frames
     }
     for (const [name, anim] of Object.entries(STANDALONE)) {
-      if (anim.page === 'alpha' ? pageIndex !== alphaPage : anim.page !== page.file) continue
+      // Where a standalone run lives: beside a named material if it has to
+      // share that material's page (`pairedWith`), else the alpha page, else
+      // a page named outright.
+      const home = anim.pairedWith
+        ? pages.findIndex(p => p.names.includes(anim.pairedWith))
+        : anim.page === 'alpha' ? alphaPage : pages.findIndex(p => p.file === anim.page)
+      if (home !== pageIndex) continue
       // index === base: a standalone run has no regular material to remap
       // FROM, so its first frame layer is also the layer the material samples.
       anims.push({ name, index: next, base: next, standalone: true, ...anim })
@@ -168,6 +202,28 @@ export function atlasLayout(pages = ATLAS_PAGES) {
     }
     return { ...page, pageIndex, extra, anims, layers: next }
   })
+}
+
+/**
+ * The first atlas layer of a standalone run, or -1 if there is none.
+ *
+ * A PURE function of the tables above, deliberately: src/fluidGeometry.js
+ * needs this number at mesh time and is installed from src/fluids.js, which
+ * knows nothing about the animation API. Rather than thread an argument
+ * through another module's install call, it derives the layer the same way
+ * the build script derives where to WRITE that layer -- so the two agree by
+ * construction, which is the bargain the whole atlasLayout/build-script split
+ * already makes.
+ *
+ * (A standalone run has `index === base`, so its first frame layer is also the
+ * layer anything sampling it points at.)
+ */
+export function standaloneLayer(name, pages = ATLAS_PAGES) {
+  for (const page of atlasLayout(pages)) {
+    const anim = page.anims.find(a => a.name === name && a.standalone)
+    if (anim) return anim.index
+  }
+  return -1
 }
 
 /** Which layer an animation is showing at tick `t`. */

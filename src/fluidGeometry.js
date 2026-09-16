@@ -1,4 +1,5 @@
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer.js'
+import { standaloneLayer } from './terrainAnimation.js'
 
 /*
  * THE SHAPE OF FLOWING WATER.
@@ -198,6 +199,53 @@ export function flowVector(world, x, y, z) {
   return [vx / n, vy / n, vz / n]
 }
 
+/**
+ * The four corner UVs of one cell's top face, rotated to face the flow.
+ *
+ * WHAT VANILLA DOES. LiquidBlockRenderer, for a cell whose flow vector has any
+ * horizontal component:
+ *
+ *     float f10 = atan2(vec3.z, vec3.x) - PI/2;
+ *     float f11 = sin(f10) * 0.25F;  float f12 = cos(f10) * 0.25F;
+ *     u = sprite.getU(0.5F + (-f12 - f11)) ...   (four corners, NW/SW/SE/NE)
+ *
+ * Two facts are buried in those constants and both matter here. The 0.25 is a
+ * HALF-SCALE sample: the quad takes the middle 8x8 of the 16x16 sprite, so the
+ * rotated square never runs off the tile no matter which way it points. And
+ * the four corner expressions are a rotation matrix written out longhand --
+ * solving them for the offset (dx, dz) of a corner from the cell centre gives
+ *
+ *     u = 0.5 + 0.5 * (d . perp)      v = 0.5 + 0.5 * (d . flow)
+ *
+ * with `flow` the unit horizontal flow. v increases ALONG the flow, which is
+ * the whole point: `water_flow.png`'s streaks run down the image, so pointing
+ * +v downhill points the streaks downhill.
+ *
+ * WHY `perp` IS `(-fz, fx)` AND NOT VANILLA'S SIGN, which looks like a bug and
+ * is not. Solving vanilla's four expressions the same way gives the opposite
+ * perpendicular -- because Minecraft's still-water UV frame has v increasing
+ * with +z, and noa's has v DECREASING with +z (terrainMesher.addUVs, axis 1:
+ * `uvArr[offset+1] = uvArr[offset+7] = w`, so v = w at the low-z corners).
+ * Copying vanilla's sign into a mirrored base frame would mirror the flow
+ * texture relative to the still texture it sits next to. Matching the frame we
+ * are actually in is what keeps them the same handedness.
+ *
+ * (v = 0 is the TOP of the tile, checked rather than assumed: for a SIDE face
+ * the same table puts v = h at the low-y corners and v = 0 at the high-y ones,
+ * and every side texture in the world is right-side-up, so v = 0 is the top of
+ * the image. That is the fact the paragraph above turns on.)
+ *
+ * @param fx,fz  the unit horizontal flow direction
+ * @param dx,dz  the corner's offset from the cell centre, each -0.5 or +0.5
+ * @returns {[number, number]} u, v
+ */
+export function flowUV(fx, fz, dx, dz) {
+  return [
+    0.5 + 0.5 * (dx * -fz + dz * fx),
+    0.5 + 0.5 * (dx * fx + dz * fz),
+  ]
+}
+
 /* ------------------------------------------------------------------ *
  * The mesh half
  * ------------------------------------------------------------------ */
@@ -219,6 +267,46 @@ export function installFluidGeometry(noa, world) {
   const origMeshChunk = mesher.meshChunk.bind(mesher)
   let meshMs = 0
   let splitFaces = 0
+  let flowFaces = 0
+
+  /*
+   * WHICH ATLAS LAYER IS THE FLOW TEXTURE, per fluid.
+   *
+   * `texAtlasIndices` is a per-VERTEX attribute, which is the fact this whole
+   * feature rests on: the layer a quad samples is a number in the vertex
+   * buffer, not a property of the block id that produced it. This pass is
+   * already rewriting that buffer to split merged quads, so pointing one quad
+   * at a different layer costs a different number in an array that was being
+   * written anyway -- no new block id, no new material, no second mesh.
+   *
+   * -1 means the run is not in the atlas (an older build of public/textures/,
+   * or someone removing the entry from terrainAnimation.js). Everything below
+   * then falls through to the still texture, which is exactly today's picture.
+   *
+   * REJECTED -- A MATERIAL PER DIRECTION, which is what blocks.js said this
+   * would cost ("four more ids again"). It is wrong on its own terms: a
+   * direction is continuous, and four ids buy four of them, so a flow running
+   * diagonally still points the wrong way. It is also sixteen more ids and
+   * sixteen duplicate copies of a 32-frame animated texture in the atlas, to
+   * express something the vertex buffer can already say per quad.
+   *
+   * REJECTED -- ROTATING THE UVs IN A MATERIAL PLUGIN, in the shader, which
+   * was the obvious place to look given terrainAnimation.js and blockLight.js
+   * both stack plugins on these materials. The shader has no idea which VOXEL
+   * a fragment belongs to: the terrain vertex format carries position, normal,
+   * colour, uv and one atlas index, and the only way to get a per-cell angle
+   * down there is to add a vertex attribute -- which means writing a number
+   * per vertex in the mesher readback anyway. Having come that far, writing
+   * the finished UVs is the same work minus a shader.
+   *
+   * REJECTED -- the flow texture on SIDE faces of still water, which vanilla
+   * does unconditionally. See the note in emit(); it repaints every ocean edge
+   * in the world to buy nothing the report asked for.
+   */
+  const FLOW_LAYER = {
+    water: standaloneLayer('water_flow'),
+    lava: standaloneLayer('lava_flow'),
+  }
 
   mesher.meshChunk = function (chunk, ignoreMaterials) {
     origMeshChunk(chunk, ignoreMaterials)
@@ -299,24 +387,86 @@ export function installFluidGeometry(noa, world) {
         // is on the fluid's surface and is the only kind that moves: the foot
         // of a side face stays on the floor, an underside stays put.
         const topY = vox[1] + oy + 1
+        /*
+         * WHICH TEXTURE THIS CELL DRAWS, decided once per cell, before its
+         * corners are placed -- because the answer is a property of the cell
+         * and both the layer and the UVs have to agree about it.
+         *
+         * `dir` non-null means "rotate the flow texture to face this way".
+         * `layer` >= 0 means "sample the flow run instead of the still one".
+         *
+         * THE FLOW VECTOR IS READ, NOT RE-DERIVED. flowVector() above is the
+         * one that already shapes the sloped surface and shoves the player
+         * (fluids.js exports it as `flowVectorAt`). Its own docblock says
+         * computing the direction twice is how the picture and the shove stop
+         * agreeing; this is the third consumer it was written for.
+         *
+         * TOP faces: vanilla uses the still sprite when the flow vector has no
+         * horizontal component and the rotated flow sprite otherwise, so an
+         * ocean surface is untouched and only water that is going somewhere
+         * looks like it. SIDE faces: vanilla uses the flow sprite
+         * unconditionally, even on a still source. We narrow that to cells
+         * that are actually flowing -- a level above 0, or falling -- because
+         * the unconditional version repaints every ocean edge in the world to
+         * buy nothing the report asked for. Noted as a deliberate divergence,
+         * not an oversight.
+         */
+        let dir = null
+        let layer = -1
+        // Hoisted because the corner loop below needs the same lookup for the
+        // HEIGHT, and asking the world four more times per cell for an answer
+        // that cannot have changed is the kind of thing a mesher does 40,000
+        // times a chunk.
+        let cell = null
+        if (owner[f]) {
+          cell = world.fluidAt(vox[0] + ox, vox[1] + oy, vox[2] + oz)
+          const run = cell ? FLOW_LAYER[cell.fluid] : -1
+          if (cell && run >= 0) {
+            if (ny > 0.5) {
+              const [fx, , fz] = flowVector(world, vox[0] + ox, vox[1] + oy, vox[2] + oz)
+              // Re-normalised in the horizontal plane alone: flowVector's unit
+              // length includes the -6 downward term a falling column beside a
+              // wall gets, and a texture on a flat top face has no use for it.
+              const len = Math.hypot(fx, fz)
+              if (len > 1e-6) { dir = [fx / len, fz / len]; layer = run }
+            } else if (Math.abs(ny) < 0.5 && (cell.level > 0 || cell.falling)) {
+              /*
+               * A side face keeps the UVs the split already interpolated. The
+               * flow sprite's streaks run vertically down the tile, which on a
+               * vertical face is already the direction the water is going --
+               * that is what makes a waterfall read as falling. Vanilla also
+               * squeezes u into the tile's left half (getU(0)..getU(8)); that
+               * is a detail of a 32px-wide sprite drawn at 16, and skipping it
+               * costs a slightly wider streak and nothing else.
+               */
+              layer = run
+            }
+          }
+          if (layer >= 0) flowFaces++
+        }
         const corners = [[s0, t0], [s1, t0], [s1, t1], [s0, t1]]
         for (const [s, t] of corners) {
           const vx = p0[0] + du[0] * s + dv[0] * t
           let vy = p0[1] + du[1] * s + dv[1] * t
           const vz = p0[2] + du[2] * s + dv[2] * t
-          if (owner[f] && Math.round(vy + oy) === topY) {
-            const me = world.fluidAt(vox[0] + ox, vox[1] + oy, vox[2] + oz)
-            if (me) {
-              const hgt = cornerHeight(
-                world, me.fluid, Math.round(vx + ox), vox[1] + oy, Math.round(vz + oz))
-              vy = vox[1] + hgt
-            }
+          if (cell && Math.round(vy + oy) === topY) {
+            const hgt = cornerHeight(
+              world, cell.fluid, Math.round(vx + ox), vox[1] + oy, Math.round(vz + oz))
+            vy = vox[1] + hgt
           }
           outPos.push(vx, vy, vz)
           outNorm.push(nx, ny, nz)
-          bilinear(uv, f, 2, s, t, outUV)
+          if (dir) {
+            // Offset of this corner from the cell's centre, in world units.
+            // The split guarantees one output quad per voxel, so these are
+            // exactly +/-0.5 and the sample stays inside the tile.
+            const [u, v] = flowUV(dir[0], dir[1], vx - vox[0] - 0.5, vz - vox[2] - 0.5)
+            outUV.push(u, v)
+          } else {
+            bilinear(uv, f, 2, s, t, outUV)
+          }
           bilinear(col, f, 4, s, t, outCol)
-          if (outAtlas) outAtlas.push(atlas[f * 4])
+          if (outAtlas) outAtlas.push(layer >= 0 ? layer : atlas[f * 4])
         }
         for (const i of pattern) outIdx.push(vcount + i)
         vcount += 4
@@ -369,6 +519,13 @@ export function installFluidGeometry(noa, world) {
     lastMeshMs: () => meshMs,
     /** merged quads split since install. Proof the pass ran at all. */
     splitFaces: () => splitFaces,
+    /** cells redirected to a flow texture since install. Same job, for the
+     *  directional half: a zero here means every fluid quad drew as still. */
+    flowFaces: () => flowFaces,
+    /** Which atlas layer a fluid's flow run lives on, or -1 if it has none.
+     *  Specs read this to tell "the texture is missing" from "the texture is
+     *  there and the quad did not pick it". */
+    flowLayer: (fluid) => (fluid in FLOW_LAYER ? FLOW_LAYER[fluid] : -1),
     cornerHeightAt: (x, y, z) => {
       const m = world.fluidAt(x, y, z)
       return m ? cornerHeight(world, m.fluid, x, y, z) : 0
