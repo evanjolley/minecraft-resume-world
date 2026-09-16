@@ -8,6 +8,7 @@ import { MC } from './physics.js'
  * business to hand over.
  */
 import { FLUID_FLOW } from './blocks.js'
+import { installFluidGeometry, cornerHeight, flowVector, ownHeight } from './fluidGeometry.js'
 import { currentDimension } from './island.js'
 
 /*
@@ -1224,6 +1225,32 @@ function installFluidFlow(noa, { blockIds, authority }) {
     isNether: () => currentDimension() === 'nether',
     setBlock: apply,
   })
+
+  /*
+   * THE WORLD, as the geometry and the push need to see it: two questions and
+   * nothing else. Both modules take this object rather than `noa`, which is
+   * what lets the height and flow-vector maths be unit-tested against a plain
+   * object with no engine under it.
+   */
+  const solidity = noa.registry.getBlockSolidity
+  const world = {
+    fluidAt: (x, y, z) => flow.metaOf(noa.getBlock(x, y, z)) || null,
+    isSolid: (x, y, z) => !!solidity(noa.getBlock(x, y, z)),
+  }
+  flow.world = world
+  /** A cell's own surface height, 0..1: vanilla's (8 - level)/9. */
+  flow.heightAt = (x, y, z) => {
+    const m = world.fluidAt(x, y, z)
+    return m ? ownHeight(m) : 0
+  }
+  /** The surface height of a fluid corner, 0..1. Exposed for the specs. */
+  flow.cornerHeightAt = (x, y, z) => {
+    const m = world.fluidAt(x, y, z)
+    return m ? cornerHeight(world, m.fluid, x, y, z) : 0
+  }
+  /** The ONE flow vector -- shape, texture and push all read this. */
+  flow.flowVectorAt = (x, y, z) => flowVector(world, x, y, z)
+  flow.geometry = installFluidGeometry(noa, world)
 
   /*
    * NOT SUBSCRIBED TO chunkAdded, deliberately, and the measurement that

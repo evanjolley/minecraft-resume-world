@@ -1,0 +1,377 @@
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer.js'
+
+/*
+ * THE SHAPE OF FLOWING WATER.
+ *
+ * Reported from play: "there is no FLOWING water... all of the water blocks
+ * are WHOLE blocks. So on the flat ground there is nothing flowing... Like
+ * full block of water, flow outward that gets more and more short, eventually
+ * is very short at the end of the run and it stops."
+ *
+ * The flow SIMULATION was already right -- sixteen ids, correct propagation,
+ * water falls before it spreads. Every one of those ids rendered as a full
+ * cube, which is the whole of the complaint.
+ *
+ * ------------------------------------------------------------------
+ * MINECRAFT'S HEIGHTS, and they are not sixteenths.
+ *
+ *   BlockLiquid.getLiquidHeightPercent(meta):
+ *       if (meta >= 8) meta = 0;
+ *       return (float)(meta + 1) / 9.0F;
+ *
+ *   -- MCP-919, net/minecraft/block/BlockLiquid.java. That figure is the GAP
+ *   above the fluid, not the fluid: World.handleMaterialAcceleration reads the
+ *   surface as `(l1 + 1) - getLiquidHeightPercent(level)`. So a cell at level
+ *   L stands (8 - L)/9 blocks tall -- a source is 8/9 = 0.889 and a level-7
+ *   cell is 1/9 = 0.111. NINTHS, not sixteenths, and the source is not a full
+ *   block either.
+ *
+ * ------------------------------------------------------------------
+ * WHY THIS IS A MESH POST-PASS AND NOT A `shape`.
+ *
+ * blocks.js says at length why a `shape` was refused: it takes the block off
+ * noa's terrain mesher, which costs the `fluid` flag's buoyancy, puts the id
+ * back into blockTargetIdCheck as something minable, and hands it to
+ * installNonCubeCollision as something SOLID. Three regressions in the
+ * hard-won part of fluids.js to buy a cosmetic slope. That judgement stands.
+ *
+ * So the block table is untouched -- every fluid id is still a full cube to
+ * noa, to physics and to the raycast -- and only the finished VERTICES are
+ * moved. That is exactly the seam blockLight.js opened: `meshChunk` is
+ * replaced on the noa INSTANCE, the original runs untouched, and the mesh it
+ * produced is rewritten before anyone sees it. noa is not forked and
+ * `npm update` still works.
+ *
+ * REJECTED, and each for a reason that was checked rather than assumed:
+ *
+ *   - A custom block mesh that keeps `fluid: true`. noa's greedy mesher never
+ *     consults the object-block lookup (blocks.js says so where it registers
+ *     slabs): it draws a terrain face for any block that HAS a face material.
+ *     So the flow ids would have to lose their material, which takes water out
+ *     of the terrain material entirely -- and underwater.js's camera effect,
+ *     the alpha page and 46-water-look all hang off that material. A much
+ *     bigger blast radius than moving vertices.
+ *
+ *   - Pure vertex displacement in a MaterialPlugin, no retessellation. It
+ *     cannot work and the reason is the greedy mesher: a seven-block run of
+ *     water is ONE merged quad with four corner vertices, because every flow
+ *     level resolves to the same `water_still` material and
+ *     constructMeshMask's `if (m0 === m1) continue` culls every face between
+ *     them. Four vertices cannot describe seven different heights. A shader
+ *     has nothing to displace.
+ *
+ *   - Giving each flow level its own material so the merge breaks. Sixteen
+ *     duplicate atlas layers of a 32-frame animated texture, sixteen entries
+ *     in terrainAnimation's remap table -- and it still would not draw the
+ *     step faces between levels, because noa's mesher ends with "two different
+ *     non-opaque blocks facing each other... for now we draw neither".
+ *
+ * So the merged quads are SPLIT back into unit cells here and each corner is
+ * placed at its own height. Which is not a workaround -- it is what vanilla
+ * does. Corner averaging (below) is why a run reads as one continuous sheet
+ * instead of a staircase, and a continuous sheet is exactly why the step faces
+ * the mesher refuses to draw are not needed.
+ */
+
+/** Vanilla's own height for one cell, before the corners are averaged. */
+export function ownHeight(meta) {
+  // A falling column is drawn full-height. In vanilla that falls out of the
+  // corner rule below rather than being a special case -- a falling cell
+  // always has fluid above it -- but the flow engine hands us the flag
+  // directly and agreeing with it is cheaper than re-deriving it.
+  if (meta.falling) return 1
+  return (8 - meta.level) / 9
+}
+
+/**
+ * The height of ONE CORNER of the fluid surface, averaged over the four
+ * columns that touch it. This is `LiquidBlockRenderer.getHeight` /
+ * BlockFluidRenderer's `getFluidHeight`, and the x10 weighting is vanilla's:
+ *
+ *   if (f1 >= 0.8F) { f += f1 * 10.0F; i += 10; } else { f += f1; ++i; }
+ *
+ * A source (8/9 = 0.889) therefore outvotes ten shallow neighbours, which is
+ * what keeps the water touching a source visually AT the source's height and
+ * makes the drop happen a block out rather than immediately.
+ *
+ * Air counts as a column of height zero (`++i` with nothing added), so the
+ * sheet tapers down to meet the ground at the end of a run instead of ending
+ * in a cliff. A SOLID neighbour is skipped entirely -- water against a wall
+ * keeps its height rather than being dragged to zero by the wall.
+ *
+ * @param world  { fluidAt(x,y,z), isSolid(x,y,z) }
+ * @param fluid  'water' | 'lava' -- only the same fluid contributes
+ * @param x,z    the CORNER, an integer world coordinate. The four columns
+ *               that share it are x-1..x by z-1..z.
+ * @param y      the voxel row the surface is in.
+ */
+export function cornerHeight(world, fluid, x, y, z) {
+  let sum = 0
+  let count = 0
+  for (let j = 0; j < 4; j++) {
+    const bx = x - (j & 1)
+    const bz = z - ((j >> 1) & 1)
+    // Fluid directly above any of the four columns means this corner is at
+    // the very top of a full cell -- the interior of an ocean, or a falling
+    // column. Vanilla returns 1.0 immediately and so does this.
+    const above = world.fluidAt(bx, y + 1, bz)
+    if (above && above.fluid === fluid) return 1
+    const here = world.fluidAt(bx, y, bz)
+    if (here && here.fluid === fluid) {
+      const h = ownHeight(here)
+      if (h >= 0.8) { sum += h * 10; count += 10 } else { sum += h; count++ }
+    } else if (!world.isSolid(bx, y, bz)) {
+      count++
+    }
+  }
+  return count ? sum / count : 0
+}
+
+/**
+ * THE FLOW VECTOR. One function, three jobs.
+ *
+ * BlockLiquid.getFlowVector, MCP-919, verbatim in shape:
+ *
+ *     for (EnumFacing f : HORIZONTAL) {
+ *         int j = getEffectiveFlowDecay(world, pos.offset(f));
+ *         if (j < 0) { if (!blocksMovement(pos.offset(f))) {
+ *             j = getEffectiveFlowDecay(world, pos.offset(f).down());
+ *             if (j >= 0) { int k = j - (i - 8);  vec = vec.add(offset * k); }
+ *         } }
+ *         else { int l = j - i;  vec = vec.add(offset * l); }
+ *     }
+ *
+ * `getEffectiveFlowDecay` is the level, with a falling cell counted as 0.
+ * A THINNER neighbour (higher level) gives a positive weight, so the vector
+ * points downhill. A neighbour that is air but has fluid BELOW it -- the lip
+ * of a ledge -- is weighted `j - (i - 8)`, a large positive number, which is
+ * why water visibly accelerates toward an edge instead of drifting over it.
+ *
+ * The `-6.0D` term: a falling column with a solid block beside it gets a
+ * strong downward component, so a waterfall pins you against the wall and
+ * drags you down rather than spitting you sideways.
+ *
+ * This one vector rotates the flow TEXTURE (vanilla: `atan2(z, x) - PI/2`)
+ * and pushes ENTITIES (World.handleMaterialAcceleration). Computing the
+ * direction twice is how the picture and the shove stop agreeing.
+ *
+ * @returns {[number, number, number]} a unit vector, or [0,0,0] if still.
+ */
+export function flowVector(world, x, y, z) {
+  const me = world.fluidAt(x, y, z)
+  if (!me) return [0, 0, 0]
+  const fluid = me.fluid
+  const decay = (bx, by, bz) => {
+    const m = world.fluidAt(bx, by, bz)
+    if (!m || m.fluid !== fluid) return -1
+    return m.falling ? 0 : m.level
+  }
+  const i = decay(x, y, z)
+  let vx = 0, vy = 0, vz = 0
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const j = decay(x + dx, y, z + dz)
+    if (j >= 0) {
+      const l = j - i
+      vx += dx * l
+      vz += dz * l
+    } else if (!world.isSolid(x + dx, y, z + dz)) {
+      const below = decay(x + dx, y - 1, z + dz)
+      if (below >= 0) {
+        const k = below - (i - 8)
+        vx += dx * k
+        vz += dz * k
+      }
+    }
+  }
+  if (me.falling) {
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (world.isSolid(x + dx, y, z + dz) || world.isSolid(x + dx, y + 1, z + dz)) {
+        const n = Math.hypot(vx, vy, vz)
+        if (n > 0) { vx /= n; vy /= n; vz /= n }
+        vy -= 6
+        break
+      }
+    }
+  }
+  const n = Math.hypot(vx, vy, vz)
+  if (n === 0) return [0, 0, 0]
+  return [vx / n, vy / n, vz / n]
+}
+
+/* ------------------------------------------------------------------ *
+ * The mesh half
+ * ------------------------------------------------------------------ */
+
+/**
+ * Split every merged fluid quad back into unit cells and drop each corner to
+ * its own height.
+ *
+ * Installed from fluids.js rather than main.js, and therefore AFTER
+ * installBlockLight. That ordering is deliberate and load-bearing: this
+ * wrapper is the outer one, so block light has already written the vertex
+ * alpha lane on the un-split mesh by the time the split runs, and the split
+ * INTERPOLATES the colour buffer along with everything else. Light and ambient
+ * occlusion survive at exactly the values noa and blockLight computed. The
+ * other order would leave the new vertices unlit until the next remesh.
+ */
+export function installFluidGeometry(noa, world) {
+  const mesher = noa._terrainMesher
+  const origMeshChunk = mesher.meshChunk.bind(mesher)
+  let meshMs = 0
+  let splitFaces = 0
+
+  mesher.meshChunk = function (chunk, ignoreMaterials) {
+    origMeshChunk(chunk, ignoreMaterials)
+    const t0 = performance.now()
+    for (const mesh of chunk._terrainMeshes) reshape(mesh, chunk)
+    meshMs = performance.now() - t0
+  }
+
+  /**
+   * Which voxel does a face belong to?
+   *
+   * A face sits on the PLANE between two voxels and its normal says which of
+   * the two it is drawing. Step half a block backwards along the normal from
+   * any point on the face and you are inside the owner -- the same trick
+   * blockLight.js uses to find the voxel a vertex's light comes from, run in
+   * the opposite direction.
+   */
+  function reshape(mesh, chunk) {
+    const pos = mesh.getVerticesData(VertexBuffer.PositionKind)
+    const norm = mesh.getVerticesData(VertexBuffer.NormalKind)
+    const col = mesh.getVerticesData(VertexBuffer.ColorKind)
+    const uv = mesh.getVerticesData(VertexBuffer.UVKind)
+    const atlas = mesh.getVerticesData('texAtlasIndices')
+    const idx = mesh.getIndices()
+    if (!pos || !norm || !col || !uv || !idx) return
+    const ox = chunk.x, oy = chunk.y, oz = chunk.z
+    const nf = pos.length / 12
+
+    // Pass one: is there anything here to do at all? An ordinary terrain
+    // chunk has no fluid in it and must not pay for this.
+    let any = false
+    const owner = new Int8Array(nf)   // 0 no, 1 yes
+    for (let f = 0; f < nf; f++) {
+      if (!faceIsFluid(pos, norm, f, ox, oy, oz)) continue
+      owner[f] = 1
+      any = true
+    }
+    if (!any) return
+
+    const outPos = [], outNorm = [], outCol = [], outUV = [], outIdx = []
+    const outAtlas = atlas ? [] : null
+    let vcount = 0
+
+    for (let f = 0; f < nf; f++) {
+      const o = f * 12
+      const p0 = [pos[o], pos[o + 1], pos[o + 2]]
+      const p1 = [pos[o + 3], pos[o + 4], pos[o + 5]]
+      const p3 = [pos[o + 9], pos[o + 10], pos[o + 11]]
+      const du = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]]
+      const dv = [p3[0] - p0[0], p3[1] - p0[1], p3[2] - p0[2]]
+      const w = Math.round(Math.abs(du[0]) + Math.abs(du[1]) + Math.abs(du[2])) || 1
+      const h = Math.round(Math.abs(dv[0]) + Math.abs(dv[1]) + Math.abs(dv[2])) || 1
+      // The winding noa chose for this face (it varies: see decideTriDir).
+      // Copied rather than recomputed, so the split cells triangulate the
+      // same way the merged quad did.
+      const pattern = [0, 1, 2, 3, 4, 5].map(i => idx[f * 6 + i] - f * 4)
+      const nx = norm[o], ny = norm[o + 1], nz = norm[o + 2]
+
+      /** One output quad covering [s0,s1] x [t0,t1] of the parent's span. */
+      const emit = (s0, t0, s1, t1) => {
+        /*
+         * WHICH VOXEL IS THIS CELL DRAWING, and it has to be asked per CELL
+         * rather than per face -- a merged quad spans many voxels and after
+         * the split each output quad covers exactly one.
+         *
+         * A face sits on the PLANE between two voxels; its normal says which
+         * of the two it belongs to. Step half a block BACK along the normal
+         * from the cell's centre and you land inside the owner. (blockLight.js
+         * steps half a block FORWARD along the same normal to find the voxel a
+         * face looks into; this is that trick reversed.)
+         */
+        const mx = (s0 + s1) / 2, mt = (t0 + t1) / 2
+        const vox = [0, 0, 0]
+        for (let c = 0; c < 3; c++) {
+          vox[c] = Math.floor(p0[c] + du[c] * mx + dv[c] * mt - norm[o + c] * 0.5)
+        }
+        // World-space top plane of that voxel. A vertex sitting exactly there
+        // is on the fluid's surface and is the only kind that moves: the foot
+        // of a side face stays on the floor, an underside stays put.
+        const topY = vox[1] + oy + 1
+        const corners = [[s0, t0], [s1, t0], [s1, t1], [s0, t1]]
+        for (const [s, t] of corners) {
+          const vx = p0[0] + du[0] * s + dv[0] * t
+          let vy = p0[1] + du[1] * s + dv[1] * t
+          const vz = p0[2] + du[2] * s + dv[2] * t
+          if (owner[f] && Math.round(vy + oy) === topY) {
+            const me = world.fluidAt(vox[0] + ox, vox[1] + oy, vox[2] + oz)
+            if (me) {
+              const hgt = cornerHeight(
+                world, me.fluid, Math.round(vx + ox), vox[1] + oy, Math.round(vz + oz))
+              vy = vox[1] + hgt
+            }
+          }
+          outPos.push(vx, vy, vz)
+          outNorm.push(nx, ny, nz)
+          bilinear(uv, f, 2, s, t, outUV)
+          bilinear(col, f, 4, s, t, outCol)
+          if (outAtlas) outAtlas.push(atlas[f * 4])
+        }
+        for (const i of pattern) outIdx.push(vcount + i)
+        vcount += 4
+      }
+
+      if (!owner[f]) {
+        // Copy the quad through untouched.
+        emit(0, 0, 1, 1)
+        continue
+      }
+      splitFaces++
+      for (let a = 0; a < w; a++) {
+        for (let b = 0; b < h; b++) emit(a / w, b / h, (a + 1) / w, (b + 1) / h)
+      }
+    }
+
+    mesh.setVerticesData(VertexBuffer.PositionKind, new Float32Array(outPos), false, 3)
+    mesh.setVerticesData(VertexBuffer.NormalKind, new Float32Array(outNorm), false, 3)
+    mesh.setVerticesData(VertexBuffer.ColorKind, new Float32Array(outCol), false, 4)
+    mesh.setVerticesData(VertexBuffer.UVKind, new Float32Array(outUV), false, 2)
+    if (outAtlas) mesh.setVerticesData('texAtlasIndices', new Float32Array(outAtlas), false, 1)
+    mesh.setIndices(outIdx)
+  }
+
+  /** Bilinear interpolation of a per-corner attribute, stride floats wide. */
+  function bilinear(src, f, stride, s, t, out) {
+    const base = f * 4 * stride
+    for (let c = 0; c < stride; c++) {
+      const a = src[base + c]
+      const b = src[base + stride + c]
+      const d = src[base + 2 * stride + c]
+      const e = src[base + 3 * stride + c]
+      // corners in noa's order: p0, p1 (=+du), p2 (=+du+dv), p3 (=+dv)
+      out.push(a * (1 - s) * (1 - t) + b * s * (1 - t) + d * s * t + e * (1 - s) * t)
+    }
+  }
+
+  function faceIsFluid(pos, norm, f, ox, oy, oz) {
+    const o = f * 12
+    // Centre of the quad, stepped half a block back along the normal.
+    const cx = (pos[o] + pos[o + 6]) / 2 - norm[o] * 0.5
+    const cy = (pos[o + 1] + pos[o + 7]) / 2 - norm[o + 1] * 0.5
+    const cz = (pos[o + 2] + pos[o + 8]) / 2 - norm[o + 2] * 0.5
+    return !!world.fluidAt(
+      Math.floor(cx + ox), Math.floor(cy + oy), Math.floor(cz + oz))
+  }
+
+  return {
+    /** ms spent splitting fluid quads on the last chunk meshed. */
+    lastMeshMs: () => meshMs,
+    /** merged quads split since install. Proof the pass ran at all. */
+    splitFaces: () => splitFaces,
+    cornerHeightAt: (x, y, z) => {
+      const m = world.fluidAt(x, y, z)
+      return m ? cornerHeight(world, m.fluid, x, y, z) : 0
+    },
+  }
+}
