@@ -48,7 +48,13 @@ const ESC_COOLDOWN_MS = 1250
  * cursor gets taken. */
 const PAST_COOLDOWN_MS = ESC_COOLDOWN_MS + 450
 
-const installFakePointerLock = (page) => page.evaluate((cooldown) => {
+/*
+ * `deliverEscape` is the Firefox half and is the ONLY thing in this file that
+ * is not modelled on a browser somebody here has actually run. See the third
+ * test for what that costs the claim it supports.
+ */
+const installFakePointerLock = (page, { deliverEscape = false } = {}) =>
+  page.evaluate(([cooldown, deliverEscape]) => {
   const el = window.noa.container.element
   let held = null
   let lastEscape = -Infinity
@@ -80,9 +86,17 @@ const installFakePointerLock = (page) => page.evaluate((cooldown) => {
     lastEscape = performance.now()
     if (held !== el) return
     held = null
-    change()
-    e.stopImmediatePropagation()
-    e.preventDefault()
+    if (!deliverEscape) {
+      // Chrome and WebKit: the lock goes, the page never sees the key.
+      change()
+      e.stopImmediatePropagation()
+      e.preventDefault()
+      return
+    }
+    // Firefox, as recorded in inventory.js: the key IS delivered, so the
+    // page's own handlers run first and the pointer-lock change lands after
+    // them as its own task. That ordering is the whole bug.
+    setTimeout(change, 0)
   }
   window.addEventListener('keydown', onEsc, true)
 
@@ -93,9 +107,17 @@ const installFakePointerLock = (page) => page.evaluate((cooldown) => {
     document.exitPointerLock = realExit
     delete window.__fakePL
   }
-}, ESC_COOLDOWN_MS)
+}, [ESC_COOLDOWN_MS, deliverEscape])
 
 const asks = (page) => page.evaluate(() => window.__fakePL.asks)
+
+/*
+ * Past main.js's SCREEN_CLOSE_GRACE_MS. A lost lock within 250 ms of a screen
+ * closing is treated as belonging to that close and does NOT open the pause
+ * menu -- see the third test. Any test that closes a screen and then wants the
+ * menu to open has to clear that window first, and a player always has.
+ */
+const pastCloseGrace = (page) => page.waitForTimeout(350)
 
 /** Did anything take the lock in the next `ms`? Fails fast when it does. */
 const lockGetsTaken = (page, ms) =>
@@ -196,12 +218,82 @@ test.describe('one screen closing, the next one opening', () => {
 
         /* ---- and it is not passing because nothing ever opens ---- */
         await page.evaluate(() => window.game.inputLock.unlock('signs'))
+        await pastCloseGrace(page)
         await relock()
         await release()
         await expect(page.locator('#pause')).toBeVisible()
       } finally {
         await page.evaluate(() => {
           window.game.inputLock.unlock('signs')
+          window.game.menu.close()
+          window.__fakePL.restore()
+        })
+      }
+    })
+  /*
+   * THE FIREFOX DOUBLE-HANDLE, AND THIS TEST IS NOT EVIDENCE THAT IT IS FIXED.
+   *
+   * Read that first. The ordering below is taken from a source comment in
+   * inventory.js -- "Firefox DOES deliver that keydown" -- and from nowhere
+   * else. Firefox is not in test/playwright.config.js's projects, nothing in
+   * this repo has ever run in it, and docs/browsers.md §5 is explicit that no
+   * headless engine grants real pointer lock in either engine that IS here.
+   * So the fake in this test is a hypothesis wearing a spec's clothes: green
+   * means main.js behaves correctly IF the hypothesis is right, and says
+   * nothing whatsoever about what Firefox actually does. docs/REPORTED.md #4
+   * stays open, and a human in a real Firefox window is still what closes it.
+   *
+   * WHAT THE HYPOTHESIS IS. The pause menu does not open on a keydown at all;
+   * main.js opens it off lostPointerLock, because Chrome exits pointer lock on
+   * Escape and swallows the key. A browser that delivers the key as well runs
+   * both paths, in this order:
+   *
+   *   1. the screen's own synchronous keydown handler closes it
+   *   2. the pointer-lock change lands as its own task, finds nothing open,
+   *      and opens the pause menu on top of the world you just got back
+   *
+   * Which is REPORTED #4's symptom exactly, reached without any browser
+   * cooldown being involved. The guard cannot be "is a screen open" -- step 1
+   * already made that false. It has to be "did one close just now".
+   *
+   * The precondition is a screen that is open while the lock is held. That is
+   * not the normal state (screens release it) and it is reachable: any
+   * re-lock that lands late wins it back underneath an open screen, which is
+   * the first test in this file before its fix.
+   */
+  test('a delivered Escape does not land the pause menu on top of the close '
+    + '[UNVERIFIED: models Firefox, which is not in the projects]',
+    async ({ page }) => {
+      await installFakePointerLock(page, { deliverEscape: true })
+      try {
+        await page.evaluate(() => window.noa.container.setPointerLock(true))
+        await page.waitForFunction(() => window.__fakePL.locked, null, { timeout: 5000 })
+
+        await page.keyboard.press('KeyE')
+        await expect(page.locator('#inventory')).toBeVisible()
+
+        // The precondition: the lock comes back while the screen is still up.
+        await page.evaluate(() => window.noa.container.setPointerLock(true))
+        await page.waitForFunction(() => window.__fakePL.locked, null, { timeout: 5000 })
+
+        /* ---- one Escape, handled twice ---- */
+        await page.keyboard.press('Escape')
+        await expect(page.locator('#inventory')).toBeHidden()
+        // The second handling arrives as a task, so give it one.
+        await page.waitForTimeout(100)
+        expect(await page.evaluate(() => window.game.menu.isOpen),
+          'the delivered keydown closed the inventory and the lock change then '
+          + 'opened the pause menu behind it')
+          .toBe(false)
+
+        /* ---- and the grace window is a window, not an off switch ---- */
+        await pastCloseGrace(page)
+        await page.evaluate(() => window.noa.container.setPointerLock(true))
+        await page.waitForFunction(() => window.__fakePL.locked, null, { timeout: 5000 })
+        await page.keyboard.press('Escape')
+        await expect(page.locator('#pause')).toBeVisible()
+      } finally {
+        await page.evaluate(() => {
           window.game.menu.close()
           window.__fakePL.restore()
         })

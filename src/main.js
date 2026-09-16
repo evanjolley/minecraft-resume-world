@@ -746,6 +746,9 @@ gameEl.focus()
  * lock deliberately, and without them each would immediately stack the pause
  * menu on top of itself.
  */
+/* How long after a screen closes a lost lock still belongs to that close. */
+const SCREEN_CLOSE_GRACE_MS = 250
+
 let wasLocked = false
 noa.container.on('gainedPointerLock', () => { wasLocked = true })
 
@@ -767,6 +770,26 @@ noa.container.on('lostPointerLock', () => {
    * inputLock.js has the full argument.
    */
   if (inputLock.anyScreenOpen()) return
+  /*
+   * ...and the same question about a moment ago, which is the half a boolean
+   * cannot answer. UNVERIFIED, and deliberately so: on a browser that DELIVERS
+   * the Escape keydown as well as exiting pointer lock, the screen's own
+   * synchronous handler closes it first and this event arrives afterwards to
+   * find nothing open -- so the pause menu opens on top of the world the
+   * player just got back. inventory.js's Escape comment records Firefox doing
+   * exactly that. Firefox is not in the suite's projects and nothing here has
+   * ever run in it, so this is read from a source comment and NOT confirmed
+   * fixed; see docs/REPORTED.md #4, which stays open.
+   *
+   * Nothing legitimate is swallowed by the grace window. A screen closing asks
+   * for the lock straight back; if that request is granted the event here is
+   * gainedPointerLock, and if it is refused `wasLocked` is already false above.
+   * The one path this cancels is the Firefox double-handle. 250 ms is many
+   * times the gap between a keydown handler and the task after it, and a small
+   * fraction of the ~1.25 s the browser then refuses to re-lock for, so the
+   * deliberate second Escape that DOES open the menu is nowhere near it.
+   */
+  if (inputLock.screenClosedWithin(SCREEN_CLOSE_GRACE_MS)) return
   menu.open()
 })
 

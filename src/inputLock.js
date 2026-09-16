@@ -47,6 +47,32 @@ export function createInputLock(noa) {
    * would still have to remember to edit it.
    */
   const screens = new Set()
+
+  /*
+   * WHEN THE LAST SCREEN CLOSED, which is a different question from whether
+   * one is open, and main.js needs both.
+   *
+   * UNVERIFIED -- this models a browser nothing in this repo has ever run in.
+   * The pause menu does not open on a keydown at all: main.js opens it off
+   * lostPointerLock, because Chrome exits pointer lock on Escape and does NOT
+   * deliver the key to the page. inventory.js's Escape comment records that
+   * FIREFOX DOES deliver it. If that is right, Firefox runs both: the
+   * synchronous keydown handler closes the open screen, and the pointer-lock
+   * change arrives afterwards as its own task -- by which time "is a screen
+   * open" is false and the guard waves through a pause menu that opens on top
+   * of the world you just got back.
+   *
+   * A boolean cannot express that. The guard has to be able to ask "did a
+   * screen close JUST NOW", so the answer is a timestamp.
+   *
+   * Read from a source comment, not from a browser: Firefox is not in the
+   * suite's projects (test/playwright.config.js runs chromium and webkit) and
+   * docs/browsers.md §5 is explicit that no headless engine grants real
+   * pointer lock anyway. Do not record this as fixed until somebody presses
+   * Escape in a real Firefox window.
+   */
+  let lastScreenClosedAt = -Infinity
+
   const player = noa.playerEntity
   const baseSensitivity = noa.camera.sensitivityMult
   let applied = false
@@ -164,7 +190,13 @@ export function createInputLock(noa) {
       if (screen) screens.add(reason)
       apply()
     },
-    unlock(reason) { reasons.delete(reason); screens.delete(reason); apply() },
+    unlock(reason) {
+      reasons.delete(reason)
+      // Only a SCREEN closing stamps the clock, and only if it was really
+      // open -- unlock() is called unconditionally in a couple of places.
+      if (screens.delete(reason)) lastScreenClosedAt = performance.now()
+      apply()
+    },
     has(reason) { return reasons.has(reason) },
     get locked() { return reasons.size > 0 },
 
@@ -183,5 +215,12 @@ export function createInputLock(noa) {
       for (const reason of screens) if (reason !== mine) return true
       return false
     },
+
+    /**
+     * Did a screen close inside the last `ms`? See lastScreenClosedAt above
+     * for the Firefox ordering this exists for, and for the fact that the
+     * ordering is read rather than observed.
+     */
+    screenClosedWithin(ms) { return performance.now() - lastScreenClosedAt < ms },
   }
 }
