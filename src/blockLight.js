@@ -1112,6 +1112,14 @@ export function installBlockLight(noa, { ids = {} } = {}) {
    * -------------------------------------------------------------- */
 
   const mesher = noa._terrainMesher
+  /*
+   * THE MESHCHUNK CONTRACT -- read docs/lighting.md section 9 before changing
+   * anything here. Three wraps of this one function stack (noa's own, this
+   * one, fluidGeometry.js's, plus the deferred guard below), the order is set
+   * by the install order in main.js, and all of them decode noa's
+   * 4-vertices/6-indices-per-quad layout with the same two lines. Vertex
+   * sharing was given up on purpose to keep that true.
+   */
   const origMeshChunk = mesher.meshChunk.bind(mesher)
   let meshMs = 0
   mesher.meshChunk = function (chunk, ignoreMaterials) {

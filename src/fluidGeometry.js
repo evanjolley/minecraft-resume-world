@@ -291,6 +291,14 @@ const SKY_ATTRIB = 'noaSkyLight'
  */
 export function installFluidGeometry(noa, world) {
   const mesher = noa._terrainMesher
+  /*
+   * THE MESHCHUNK CONTRACT -- read docs/lighting.md section 9 before changing
+   * anything here. This is the OUTERMOST of the three stacked wraps of
+   * meshChunk, so it sees blockLight.js's vertex alpha and noaSkyLight
+   * already applied and must keep every per-vertex attribute the same length
+   * as `position` -- a stale-length attribute makes getVerticesData throw and
+   * the chunk simply does not appear.
+   */
   const origMeshChunk = mesher.meshChunk.bind(mesher)
   let meshMs = 0
   let splitFaces = 0

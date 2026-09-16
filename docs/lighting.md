@@ -423,3 +423,82 @@ The first version of that spec sampled the frame CENTRE, which at 2.2 blocks is
 his shirt, and this skin's shirt is very nearly black — it read 0.0417 to 0.0488
 across all four views, because 1.49 times almost nothing is almost nothing. The
 crop moved to his face. Worth knowing before writing the next one.
+
+---
+
+## 9. The `meshChunk` contract
+
+**Three wraps of one function now stack, and the order matters.** This was true
+before it was written down, which is how it nearly broke: an earlier version of
+the quad splitter would have silently fed `fluidGeometry` garbage. If you are
+about to touch terrain geometry, this section is the thing to read first.
+
+### Who wraps what, innermost first
+
+noa exposes its mesher as `noa._terrainMesher`, and `meshChunk(chunk,
+ignoreMaterials)` fills `chunk._terrainMeshes`. Each wrap below calls the one
+inside it and then *mutates the meshes it produced*.
+
+| order | file | installed at | what it adds |
+|---|---|---|---|
+| 1 (innermost) | noa's own mesher | — | positions, indices, uvs, `color`, `texAtlasIndices` |
+| 2 | `src/blockLight.js:1117` | `main.js:191` | block light in vertex **alpha**, sky light in a **`noaSkyLight`** attribute |
+| 3 | `src/fluidGeometry.js:338` | `fluids.js:1347` | per-cell fluid quads, flow UVs, rewritten `texAtlasIndices` |
+| 4 (outermost) | `src/blockLight.js:1158` — *deferred* | `main.js:191`, applied later | a guard: drops any `noaSkyLight` whose length disagrees with the position buffer |
+
+Install order in `main.js` is deliberate and is what produces that nesting:
+`installTerrainAnimation` (183) → `installBlockLight` (191) → fluids, which
+installs `installFluidGeometry` from `fluids.js:1347`. Because each wrap
+captures the *current* `mesher.meshChunk` at install time, **moving an install
+line moves a layer of this stack.**
+
+Layer 4 exists because layer 3 runs after layer 2 and can change the vertex
+count. `fluidGeometry` is expected to keep `noaSkyLight` in step itself
+(`69-fluid-sky` asserts the lengths agree), so the guard should now be a
+no-op — but it has not been proven redundant and is cheap. See
+`docs/HEALTH.md` §9.
+
+### The layout invariant every layer depends on
+
+**Four vertices and six indices per quad. No vertex sharing. Ever.**
+
+That is noa's own layout, and all three wraps decode it with the same two
+lines:
+
+```js
+const nf = pos.length / 12                            // 3 floats x 4 verts
+const pattern = [0,1,2,3,4,5].map(i => idx[f*6 + i] - f*4)
+```
+
+(`src/fluidGeometry.js:382,412` and `src/blockLight.js:1387,1586` — the same
+arithmetic, independently written, twice.)
+
+**The quad splitter gave up vertex sharing to preserve this.** Sharing
+vertices between adjacent quads is roughly a third cheaper in buffer size, and
+it was deliberately rejected: the moment one vertex belongs to two quads,
+`pos.length / 12` stops being a quad count, `idx[f*6+i] - f*4` stops landing
+inside the quad, and *both* downstream layers silently decode the wrong
+geometry. Not crash — decode wrongly. That is the expensive kind.
+
+### Rules for anyone adding a layer
+
+1. **Call the wrap you captured, first.** Then mutate. Never re-implement.
+2. **Keep every per-vertex attribute the same length as `position`.** A
+   stale-length attribute is not a soft failure: `getVerticesData` throws
+   `RangeError: Invalid typed array length` and no mesh is produced, so the
+   chunk is simply absent from the world.
+3. **Preserve 4-verts/6-indices per quad.** If you must change it, you are
+   changing a contract shared by three files and you must update all of them
+   and this section together.
+4. **If you add a vertex attribute, register it with the material plugin too.**
+   Babylon only binds an attribute a plugin asked for in `getAttributes`; an
+   unregistered one compiles fine, binds to nothing, and reads a constant 0 —
+   which for `noaSkyLight` (stored inverted) looks exactly like a normal fully
+   lit world. See `blockLight.js:363`.
+5. **Declare your own GLSL.** Never let Babylon write a uniform declaration
+   for you via `getUniforms().ubo` size/type or `getUniforms().fragment`. Both
+   routes inject at tokens that Babylon 6's shaders do not contain, both fail
+   silently, and both have now cost this repo a day —
+   `terrainAnimation.js:377` and the invisible-world regression in
+   `docs/HEALTH.md` §0. Declare at a `CUSTOM_*` injection point you have
+   grepped for in the actual shader.

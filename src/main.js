@@ -187,6 +187,12 @@ const terrainAnim = installTerrainAnimation(noa)
  * material plugin to the same terrain materials, and before any chunk is
  * meshed because it wraps the mesher. Block light only -- see blockLight.js
  * for what sky light would still add.
+ *
+ * THIS LINE'S POSITION IS LOAD-BEARING. Each meshChunk wrap captures whatever
+ * `mesher.meshChunk` is at the moment it installs, so this ordering IS the
+ * nesting order of the three stacked wraps -- noa's, this one's, and
+ * fluidGeometry's (installed later, from fluids.js). Moving it moves a layer
+ * of that stack. docs/lighting.md section 9 is the contract.
  */
 const blockLight = installBlockLight(noa, { ids })
 
