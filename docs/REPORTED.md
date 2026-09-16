@@ -20,7 +20,7 @@ Status at `3b8ef66`, which is where every claim below was checked:
 | --- | --- | --- |
 | 1 icon shows the wrong shape | FIXED | `blockIcon.js` draws the real boxes |
 | 2 hover should name the block | FIXED | a real tooltip, not `el.title` |
-| 3 torches | TRIAGED, and 5 no longer blocks it | waits on `blockMesh` |
+| 3 torches | **BUILT** 2026-09-16 | five ids, `test/66-torch.spec.js` |
 | 4 Escape leaves the cursor | **OPEN, and not testable here** | needs a human; three defects under it fixed |
 | 5 glowstone emits no light | **BUILT** (`src/blockLight.js`) | see the new report under it |
 | 6 the east face is brighter | FIXED (`56d40d2`) | it was a frozen uniform |
@@ -148,6 +148,59 @@ build importer waits on and the same class of problem flowing water hit, where
 giving a block a `shape` costs it the category it was registered under. Nothing
 about the cutout material, the collision opt-out, the 22.5-degree tilt or the
 pop-on-neighbour-break got cheaper; they just stopped being blocked.
+
+**BUILT 2026-09-16.** Five block ids, 655 through 659: `torch` plus
+`wall_torch_north/south/east/west`. It crafts, it places, it lights, you walk
+through it, and it falls off a wall you mine and lands as a torch. Evidence in
+`test/66-torch.spec.js`, green on chromium and webkit.
+
+The four obstacles, against what was predicted for them:
+
+  - **No alpha — WRONG, and instructively.** The prediction was written about
+    the torch everybody remembers, two crossed full-cell planes that really
+    are 252 transparent pixels each. `block/template_torch.json` in 1.21.8 is
+    ONE element, `from [7,0,7] to [9,10,9]`, and its faces sample columns 7-9
+    and rows 6-16 of the sprite — exactly the part with paint on it. A torch
+    never draws a transparent texel. Measured rather than assumed: the cutout
+    flag was forced off and the picture retaken, and the torch came back a
+    torch. The cutout material was built anyway and is kept, because signs
+    (`docs/FUTURE.md` item 1) are the consumer that does need the pixels, and
+    because it is opt-in per call so the 280 slab and stair variants sharing
+    that cache are provably unaffected — which is its own assertion in the
+    spec.
+  - **Collision — REAL, and general.** `PASS_THROUGH_SHAPES` in
+    `blockMeshes.js`. The opt-out is all-or-nothing on purpose: a shape either
+    collides as exactly what it looks like or it does not collide, because the
+    third option (boxes that differ from the mesh) is the drift that whole
+    file exists to prevent. Signs will be in the same set.
+  - **The tilt — REAL, and it is 22.5 degrees** out of
+    `block/template_torch_wall.json`, with the pivot at the wall plane at the
+    bottom of the post and the box starting a pixel INSIDE the wall. Asserted
+    off the mesh normals, not eyeballed. The first version of that measurement
+    read 11.19 degrees because it took the post's extreme vertices, and once
+    a box is rotated its corners no longer share a face — that vector is the
+    diagonal, not the axis.
+  - **Attachment — REAL, and the first neighbour-dependent BEHAVIOUR here.**
+    Distinct from the fence problem, which is neighbour-dependent GEOMETRY:
+    nothing about a torch's mesh changes when its wall goes, it simply stops
+    existing. It pops through the authority's own break path, so it drops as
+    an item, honours creative's no-drops rule, and is announced. The same
+    sweep runs after a PLACE, which is what makes an unsupported torch take
+    itself back off instead of needing a refusal the `setBlock` seam cannot
+    express.
+
+**One unrelated bug fell out of it.** `createMaterialCache` built its textures
+with Babylon's `invertY` argument set to FALSE, which turned every non-cube
+texture in the world upside down. It survived 280 slabs and stairs because
+their textures are cobblestone and planks — flip one and you get a different
+arrangement of the same noise, and the only symptom was a bottom slab showing
+the TOP half of its texture where Minecraft shows the bottom. On a torch it is
+the whole picture: the flame rendered at the foot of the post. One character.
+
+**Light came for free and was checked rather than assumed.** A torch is the
+first non-cube emitter this engine has had, and the radial fix (`0530c18`)
+works by splitting the quads light reaches down to one block. It does for a
+2x2 post too: 110 lit quads over the floor, widest lit quad 1 block.
 
 **4. Returning from the Escape menu leaves the cursor on screen.**
 > "when I press esc or back to game on the esc menu, my cursor should not be

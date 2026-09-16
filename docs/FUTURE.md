@@ -239,9 +239,8 @@ on effort.
    (`src/debugScreen.js`) and a player in a cave lit as if outdoors
    (`src/entityLight.js`) are both still open, but they are now a wiring job
    against `window.blockLight.getBlockLight` rather than a feature. A torch
-   lighting nothing (#3) is moot for a different reason — torches still cannot
-   be placed at all, and that is `blockMesh`, not lighting. See "Also worth
-   building".
+   lighting nothing (#3) is closed: the torch is a block now (2026-09-16) and
+   it lights, off the `EMISSION.torch` this engine already carried.
 
    **Two claims here were wrong, and the correction is the useful part.** The
    old entry said noa's terrain mesher "is a closed module that takes no
@@ -1090,10 +1089,12 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
   and hands it to solid collision. Three regressions in the hard-won part of
   `fluids.js` to buy a cosmetic slope. *The spread is the feature; the profile
   is the follow-up.*
-- **Torches** — `docs/REPORTED.md` #3, triaged at length, waiting on item 2.
-  Four obstacles are enumerated there, cheapest first, and the reason to do
-  none of them yet is that a torch that lights nothing ships as a decoration
-  that reads as broken.
+- ~~**Torches**~~ — **BUILT 2026-09-16**, `docs/REPORTED.md` #3. Of the four
+  obstacles enumerated there, three were real and the cheapest one dissolved:
+  the modern torch model is a single 2x2 post whose faces sample only the
+  painted columns of the sprite, so it never draws a transparent texel and
+  looks identical with the cutout material turned off. The mechanism stays
+  because signs need it.
 - **The lit furnace texture** — `docs/REPORTED.md` #14 carries a two-line
   spec: a block whose `front` is `furnace_front_on`, plus a `CE_SUBSTITUTES`
   entry because the texture exists in the vanilla jar and not in CE.
@@ -1301,19 +1302,16 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
   with a "can this entity see the sky" raycast — that darkens anyone standing
   in a doorway, and a wrong lighting model is harder to spot and harder to
   remove later than an absent one.
-- **Torches cannot be placed.** Reported by Evan. Not a regression and not a
-  light-engine bug — **the torch has never been a block.** `src/items.js` keeps
-  it in `UNPLACEABLE` alongside the ladder, with `itemPlaces` answering 0, so it
-  crafts (4 from a coal and a stick), stacks, and sits in the creative
-  `functional_blocks` group while placing nothing. The reason written there is
-  still the true one: a torch is non-cube geometry and this world is 355 full
-  cubes. So the fix is not in the torch, it is `blockMesh` — the same missing
-  piece the importer bullet above is waiting on, and the same class of problem
-  flowing water ran into, where giving a block a `shape` costs it the category
-  it was registered under. Worth knowing that everything downstream is already
-  in place for the day it lands: `EMISSION.torch` is 14 and has been since the
-  light engine shipped, so a placed torch would light its surroundings the
-  moment it could exist at all.
+- ~~**Torches cannot be placed.**~~ **BUILT 2026-09-16**, `docs/REPORTED.md` #3.
+  Five block ids — floor plus four walls — on the `blockMesh` path this bullet
+  was waiting for. `EMISSION.torch` was already 14, so it lit the moment it
+  existed and no lighting work was needed. Two of the four obstacles came out
+  as general capabilities of `blockMeshes.js` rather than as a torch's special
+  case, because signs (item 1) are blocked on exactly those two: a cutout
+  material the cache hands out only when asked, and a collision opt-out that
+  is all-or-nothing by design. Attachment — break the support, the block pops
+  and DROPS — is the first neighbour-dependent behaviour in this world, and a
+  sign on a wall will reuse it verbatim.
 - **Glowstone lights directionally instead of radially.** Reported by Evan —
   light does not diffuse out evenly the way it should. **The BFS is almost
   certainly not the culprit**, since it is a symmetric flood over all six
