@@ -232,9 +232,9 @@ test.describe('the current carries every body at the same speed', () => {
      * identical -- Evan is 1.85 blocks to the player's 1.8 (54-npc-height) --
      * and in a channel one block deep that is a different fraction of the box
      * under the surface, which noa turns into a different effective drag via
-     * `1 - (1 - ratio)^2`. About 3% of speed. 15% leaves room for that and for
-     * the tick the measurement happens to start on, and is nowhere near the
-     * order of magnitude the missing drag was worth.
+     * `1 - (1 - ratio)^2`. Measured at 2% of speed, in his favour. 15% leaves
+     * room for that and for the tick the measurement happens to start on, and
+     * is nowhere near the order of magnitude the missing drag was worth.
      */
     const ratio = e.peak / p.peak
     const how = `Evan peaked at ${e.peak.toFixed(3)} b/s against the player's `
