@@ -14,6 +14,7 @@ import { MC } from './physics.js'
 import { shapeBoxesFor } from './blockMeshes.js'
 import { createHeldBlockMesh, blockTextureUrl } from './heldItem.js'
 import { trackEntityLight } from './entityLight.js'
+import { keepMaterialLive } from './playerModel.js'
 import { item, isBlockItem, stackMax, dropFor, rollDrops } from './items.js'
 
 /*
@@ -235,6 +236,8 @@ export function installItemEntities(noa, deps = {}) {
      */
     if (!isBlockItem(id)) {
       trackEntityLight(mesh.material, () => noa.ents.getPosition(noa.playerEntity))
+      // Without this the two lines above are dead. playerModel.js says why.
+      keepMaterialLive(mesh.material)
     }
     /*
      * The instance matrices carry world coordinates, so the base mesh's own

@@ -197,6 +197,66 @@ export function attachCape(noa, model, url, name = 'cape') {
 }
 
 /**
+ * Stop Babylon from baking this material's colours into the GPU forever.
+ *
+ * THE BUG THIS EXISTS FOR, AND IT IS THE REASON entityLight.js HAS NEVER
+ * REACHED THE SCREEN. Measured: a held grass block in a sealed dark room, and
+ * the same block with a glowstone at the player's feet, are the SAME PIXELS
+ * -- 11412 green pixels at mean brightness 43.79 in both frames, byte for
+ * byte -- while `mat.emissiveColor.r` read 0.072 and 0.373 at those two
+ * moments. The JavaScript was right and the shader never heard about it.
+ *
+ * WHY. noa sets `scene.performancePriority = Intermediate` (its
+ * rendering.js:129). Babylon answers that in `_checkScenePerformancePriority`
+ * by setting `checkReadyOnlyOnce = true` (material.js:1179-1181), and
+ * `isFrozen` IS `checkReadyOnlyOnce` (material.js:558). StandardMaterial then
+ * guards its entire material-UBO write with
+ *
+ *     if (!ubo.useUbo || !this.isFrozen || !ubo.isSync || forceRebind)
+ *
+ * and `vEmissiveColor` and `vDiffuseColor` are both written inside it. Real
+ * UBO, frozen material, synced buffer: those two colours are uploaded once,
+ * on the first frame the material is drawn, and never again.
+ *
+ * What still worked, which is exactly why this hid: the LIGHT's uniforms bind
+ * on a different path and keep updating. So an entity still dimmed at night
+ * -- on the directional light's back, at `0.4 + 0.6 * NdotL * level` with the
+ * 0.4 stuck at noon's value -- and measured 0.485 of its daytime brightness
+ * at midnight where the model says 0.18. Dim enough to look plausible, and
+ * totally deaf to block light, which lives entirely in the two frozen
+ * numbers. src/terrainAnimation.js hit the same trap on the terrain material
+ * and documents it at length; this is the entity half of it.
+ *
+ * REJECTED -- `mat.unfreeze()`. It is the obvious call and it does not stick:
+ * `isReadyForSubMesh` ends with another `_checkScenePerformancePriority()`
+ * (standardMaterial.js:1030), so the next ready check re-freezes it. Measured
+ * -- `unfreeze()`, three ticks, five frames, then `mat.isFrozen` reads TRUE
+ * again and the pixels never moved.
+ *
+ * REJECTED -- writing the UBO from outside the bind, which terrainAnimation.js
+ * tried on the terrain material and which rendered a lava room as empty sky.
+ *
+ * REJECTED -- `scene.performancePriority = BackwardCompatible`. One line, and
+ * it unfreezes several hundred chunk materials to fix six entity ones.
+ *
+ * So: shadow the getter. An own property on the instance wins over the
+ * prototype's, Babylon never assigns to `isFrozen` (there is no setter), and
+ * the material takes the live path forever. The cost is that these few
+ * materials re-run `isReadyForSubMesh` per frame, which is what
+ * performancePriority was avoiding for the CHUNKS -- of which there are
+ * hundreds and of these there are six.
+ *
+ * WHERE THIS BELONGS: inside `trackEntityLight`, so no entity material can be
+ * tracked and frozen at the same time. It is here because entityLight.js is
+ * being rewritten by another agent this pass and was hands-off. Move it when
+ * that lands.
+ */
+export function keepMaterialLive(mat) {
+  Object.defineProperty(mat, 'isFrozen', { get: () => false, configurable: true })
+  return mat
+}
+
+/**
  * @param {function} [onError] called if the image never loads. A 404 here is
  *   NOT exceptional -- it is how a capeless build, and later a multiplayer
  *   player with no cape, announces itself -- so the caller gets to decide
@@ -234,6 +294,8 @@ export function createSkinMaterial(noa, url, name = 'skin', onError = null) {
    * entity the moment there is one (entityLight.js's bindEntityLight).
    */
   trackEntityLight(mat, () => noa.ents.getPosition(noa.playerEntity))
+  // ...and the line that makes the one above visible. See keepMaterialLive.
+  keepMaterialLive(mat)
   return mat
 }
 

@@ -8,7 +8,7 @@ import { BLOCK_BY_ID } from './blocks.js'
 import { item } from './items.js'
 import { MC } from './physics.js'
 import { cachedItemGeometry, displayFor, itemTexture, itemTextureUrl, loadItemGeometry } from './itemModel.js'
-import { createFirstPersonArm } from './playerModel.js'
+import { createFirstPersonArm, keepMaterialLive } from './playerModel.js'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { trackEntityLight } from './entityLight.js'
 
@@ -135,8 +135,10 @@ export function createHeldBlockMesh(noa, name) {
   ]
   const mesh = CreateBox(name, { size: 1, faceUV, wrap: true }, scene)
   mesh.material = noa.rendering.makeStandardMaterial(`${name}-mat`)
-  // See atPlayer above. This is the line whose absence was the bug.
+  // See atPlayer above. This is the line whose absence was the bug, and
+  // keepMaterialLive is the line without which it changes nothing on screen.
   trackEntityLight(mesh.material, atPlayer(noa))
+  keepMaterialLive(mesh.material)
   mesh.isPickable = false
   noa.rendering.addMeshToScene(mesh)
   return mesh
@@ -198,6 +200,7 @@ export function createItemMesh(noa, name) {
    * 0.45 the skin had, and had the same bug; entityLight.js owns it now.
    */
   trackEntityLight(mat, atPlayer(noa))
+  keepMaterialLive(mat)
   mesh.material = mat
   mesh.isPickable = false
   mesh.rotationQuaternion = new Quaternion()
