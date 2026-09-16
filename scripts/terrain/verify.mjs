@@ -83,7 +83,7 @@ import { WORK } from './generate.mjs'
 import { worldFor } from './scan.mjs'
 import { classify } from './mapping.mjs'
 import { decode } from '../../src/terrainFormat.js'
-import { MIN_X, MIN_Z } from '../../src/island.js'
+import { bounds, WORLDS } from '../../src/island.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const OUT = join(ROOT, 'public', 'terrain')
@@ -125,6 +125,25 @@ if (import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]
      */
     overworld: { generated: 'src/flatworld.js' },
     nether: { asset: 'nether', dir: seed => `seed-${seed}-nether` },
+    /*
+     * The mountain patch: 256 blocks square, cut from seed 434533485056755.
+     *
+     * A ROW AND NOTHING ELSE, which was the claim the comment above made and
+     * this is the first time it has been tested. Checks 1, 2 and 3 are
+     * unchanged byte for byte -- the width, the corner, the vertical range
+     * and the spawn all come out of the manifest, and check 3's origin now
+     * comes from island.js's WORLDS table by NAME, so it asks the same
+     * question of a 256-wide world pinned at (191, 48) that it asked of a
+     * 128-wide one pinned at (87, 56).
+     */
+    mountains: {
+      asset: 'mountains', dir: seed => `seed-${seed}`,
+      /* The world's NAME in this game is not the Minecraft dimension its
+       * region files live in. 'mountains' is an overworld cut; scan.mjs's
+       * worldFor needs the second word, not the first, or it looks for a
+       * DIM-1 that is not there and reads every block as air. */
+      mcDim: 'overworld',
+    },
   }
   const dimension = process.argv[2] ?? 'overworld'
   const dim = DIMENSIONS[dimension]
@@ -144,7 +163,7 @@ if (import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]
 
   const manifest = JSON.parse(readFileSync(join(OUT, `${dim.asset}.json`), 'utf8'))
   const d = decode(readFileSync(join(OUT, `${dim.asset}.bin`)))
-  const world = worldFor(join(WORK, dim.dir(manifest.seed)), dimension)
+  const world = worldFor(join(WORK, dim.dir(manifest.seed)), dim.mcDim ?? dimension)
   const { x: x0, z: z0 } = manifest.world
 
   // The asset says which way its X runs. This file does not take that as
@@ -220,9 +239,22 @@ if (import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]
     anchor.push(`spawn column: asset (${sp.x},${sp.y - 1},${sp.z}) is ${anchorGot}, ` +
                 `but world (${sp.worldX},${sp.y - 1},${sp.worldZ}) is ${anchorWant}`)
   }
-  if (-MIN_X !== sp.x || -MIN_Z !== sp.z) {
-    anchor.push(`src/island.js puts the origin at asset column (${-MIN_X}, ${-MIN_Z}), ` +
-                `but the manifest's spawn is (${sp.x}, ${sp.z})`)
+  /*
+   * PER WORLD now. This used to read island.js's MIN_X/MIN_Z, which were the
+   * overworld's and were the only origin there was. With three worlds at two
+   * different corners, reading one world's constant while checking another's
+   * asset is a check that passes for the wrong reason -- so it asks
+   * `bounds(dimension)` for the origin of the world whose asset is on the
+   * table.
+   */
+  const b = bounds(dimension)
+  if (-b.minX !== sp.x || -b.minZ !== sp.z) {
+    anchor.push(`src/island.js puts the ${dimension} origin at asset column ` +
+                `(${-b.minX}, ${-b.minZ}), but the manifest's spawn is (${sp.x}, ${sp.z})`)
+  }
+  if (d.width !== b.maxX - b.minX + 1 || d.depth !== b.maxZ - b.minZ + 1) {
+    anchor.push(`the asset is ${d.width}x${d.depth}, but src/island.js's WORLDS row for ` +
+                `${dimension} describes ${b.maxX - b.minX + 1}x${b.maxZ - b.minZ + 1}`)
   }
 
   /*
@@ -241,6 +273,46 @@ if (import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]
    *     a layer would put air at yTop in most columns; shifted up, netherrack.
    */
   const spawnIssues = []
+  /*
+   * The mountain world's spawn rule, restated from the ASSET.
+   *
+   * Its rule is not "scan down from the sky" -- the column was picked by ray
+   * test in scripts/terrain/seed-view.mjs, which is a claim about what you can
+   * SEE and says nothing about whether you can stand there. So the standable
+   * half gets a check, and so does the one integer src/island.js hardcodes
+   * about this world: WORLDS.mountains.surfaceY. That constant going stale is
+   * the exact failure the Nether's check 4 exists to catch, and there is now a
+   * second world with the same exposure.
+   */
+  if (dimension === 'mountains') {
+    const at = (ax, y, az) => d.palette[d.cols[az * d.width + ax][y - d.yMin]]
+    const under = at(sp.x, sp.y - 1, sp.z)
+    if (under === 'air' || under === 'lava' || under === 'water') {
+      spawnIssues.push(`spawn stands on ${under}; a floor is required`)
+    }
+    for (let dy = 0; dy < 3; dy++) {
+      const b2 = at(sp.x, sp.y + dy, sp.z)
+      if (b2 !== 'air') spawnIssues.push(`spawn headroom blocked at +${dy} by ${b2}`)
+    }
+    if (sp.y !== WORLDS[dimension].surfaceY) {
+      spawnIssues.push(`the manifest spawns at y=${sp.y} but src/island.js's WORLDS row ` +
+                       `says surfaceY ${WORLDS[dimension].surfaceY}`)
+    }
+    /*
+     * And the floor is bedrock, which is the same one-line proof of the
+     * vertical range the Nether gets from its roof. A patch shifted a layer
+     * would put deepslate at yMin in most columns.
+     */
+    let floor = 0
+    for (let i = 0; i < d.width * d.depth; i++) {
+      if (d.palette[d.cols[i][0]] === 'bedrock') floor++
+    }
+    if (floor !== d.width * d.depth) {
+      spawnIssues.push(`the bottom layer y=${d.yMin} is bedrock in ${floor} of ` +
+                       `${d.width * d.depth} columns, not all of them -- the range is wrong`)
+    }
+    console.log(`bedrock floor: ${floor}/${d.width * d.depth} columns at y=${d.yMin}`)
+  }
   if (dimension === 'nether') {
     const at = (ax, y, az) => d.palette[d.cols[az * d.width + ax][y - d.yMin]]
     const under = at(sp.x, sp.y - 1, sp.z)

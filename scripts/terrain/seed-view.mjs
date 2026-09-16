@@ -117,9 +117,25 @@ let candidates = []
 if (explicit.length) {
   for (let i = 0; i < explicit.length; i += 2) candidates.push([explicit[i], explicit[i + 1]])
 } else {
-  // Coarse grid over the survey; the full ray test is too slow per-column.
-  console.log('searching viewpoints on a 24-block grid...')
-  for (let z = -R + 32; z < R - 32; z += 24) for (let x = -R + 32; x < R - 32; x += 24) candidates.push([x, z])
+  /*
+   * Coarse grid over the survey; the full ray test is too slow per-column.
+   *
+   * BOX=x0,z0,size,margin narrows the search to one candidate patch. Added
+   * because picking a viewpoint for a patch that has ALREADY been chosen is a
+   * different question from scouting a seed: a column 200 blocks outside the
+   * border is not a spawn candidate however good the view is, and the whole
+   * point of the margin is that a spawn should not open onto a barrier wall.
+   */
+  const box = (process.env.BOX ?? '').split(',').map(Number)
+  if (box.length >= 3 && box.every(n => Number.isFinite(n))) {
+    const [bx, bz, bs] = box
+    const m = box[3] ?? 48
+    console.log(`searching viewpoints inside (${bx},${bz})+${bs} with a ${m}-block margin...`)
+    for (let z = bz + m; z < bz + bs - m; z += 8) for (let x = bx + m; x < bx + bs - m; x += 8) candidates.push([x, z])
+  } else {
+    console.log('searching viewpoints on a 24-block grid...')
+    for (let z = -R + 32; z < R - 32; z += 24) for (let x = -R + 32; x < R - 32; x += 24) candidates.push([x, z])
+  }
 }
 const results = []
 for (const [x, z] of candidates) {

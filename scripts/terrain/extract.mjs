@@ -26,7 +26,7 @@
  * X IS MIRRORED ON THE WAY OUT, and that is the one thing in this file that is
  * not a pure copy. See MIRROR_X below for why.
  */
-import { writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from 'node:fs'
+import { writeFileSync, readFileSync, mkdirSync, existsSync, renameSync, rmSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { join, dirname } from 'node:path'
 import { classify } from './mapping.mjs'
@@ -232,22 +232,50 @@ export function emit(outDir, data, manifest, name = 'terrain') {
    * island.js, mirroring public/textures/.source. A deploy check can read it
    * without parsing the manifest.
    *
-   * ONE .source FOR THE WHOLE DIRECTORY, not one per asset, and rewritten
-   * identically by every dimension's build. It answers "where did the data in
-   * public/terrain/ come from", and the answer -- vanilla 1.21.8, seed 12345
-   * -- is a property of the generated world rather than of which dimension of
-   * it was sliced. Per-asset .source files would have said the same sentence
-   * twice and given a deploy check two places to look and two chances to
-   * check the wrong one. Every asset in here is from one seed by
-   * construction; the day that stops being true this line has to change, and
-   * that is the right place for it to become visible.
+   * THE DAY THE OLD COMMENT WARNED ABOUT ARRIVED. It used to be ONE line for
+   * the whole directory -- "vanilla-1.21.8-seed-12345" -- on the argument
+   * that every asset in here comes from one seed by construction, and it
+   * ended by saying that when that stopped being true this line had to
+   * change. It stopped being true when the mountain patch landed:
+   * nether.bin is seed 12345 and mountains.bin is seed 434533485056755, so a
+   * single line is a sentence that is false about one of them, and which one
+   * depends on which build ran last.
+   *
+   * So it is now ONE LINE PER ASSET, merged rather than overwritten:
+   *
+   *     mountains  vanilla-1.21.8-seed-434533485056755
+   *     nether     vanilla-1.21.8-seed-12345
+   *
+   * Still one file, because the question a deploy check asks is about the
+   * DIRECTORY -- see scripts/check-deploy-assets.mjs, which refuses on the
+   * directory existing at all and never reads this. This is for a human
+   * working out what is on their disk.
+   *
+   * Merged and not appended: a rebuild of one asset must replace its own line
+   * and leave the others alone, or the file grows a history instead of
+   * holding a state.
+   *
+   * REJECTED -- a .source per asset (nether.source, mountains.source). It
+   * gives a checker two places to look and two chances to look at the wrong
+   * one, which is the objection the original comment raised and which is
+   * still correct. What was wrong was not the one-file part.
    */
-  writeFileSync(join(stage, '.source'), `vanilla-${manifest.minecraftVersion}-seed-${manifest.seed}\n`)
+  const live = join(outDir, '.source')
+  const lines = new Map()
+  if (existsSync(live)) {
+    for (const l of readFileSync(live, 'utf8').split('\n')) {
+      const m = /^(\S+)\s+(\S+)$/.exec(l.trim())
+      if (m) lines.set(m[1], m[2])
+    }
+  }
+  lines.set(name, `vanilla-${manifest.minecraftVersion}-seed-${manifest.seed}`)
+  writeFileSync(join(stage, '.source'),
+    [...lines.entries()].sort().map(([k, v]) => `${k.padEnd(10)} ${v}`).join('\n') + '\n')
 
   for (const f of [`${name}.bin`, `${name}.json`, '.source']) {
-    const live = join(outDir, f)
-    if (existsSync(live)) rmSync(live, { force: true })
-    renameSync(join(stage, f), live)
+    const target = join(outDir, f)
+    if (existsSync(target)) rmSync(target, { force: true })
+    renameSync(join(stage, f), target)
   }
   rmSync(stage, { recursive: true, force: true })
   return { raw: data.length, gzipped: gzipSync(data, { level: 9 }).length }

@@ -61,10 +61,75 @@
  */
 import { decode } from './terrainFormat.js'
 
-/** The patch is square and this is its side, in blocks. Both dimensions use
- *  it: the Nether asset is 128 wide too, and the barrier maths below assumes
- *  one number rather than one per world. */
-export const PATCH_SIZE = 128
+/*
+ * WHERE EVERY WORLD SITS, in one table.
+ *
+ * This used to be four module constants -- PATCH_SIZE, PATCH_ORIGIN_X,
+ * PATCH_ORIGIN_Z, SURFACE_Y -- and the comment above PATCH_SIZE said "the
+ * barrier maths below assumes one number rather than one per world". That
+ * assumption held exactly as long as both worlds were 128-block cuts of the
+ * same seed pinned to the same corner. The mountain patch is 256 wide, cut
+ * from a different seed, and its ground is at y=111; every one of those four
+ * numbers had to become three numbers.
+ *
+ * A TABLE HERE rather than in src/dimensions.js, even though dimensions.js is
+ * the registry the switch reads. Two reasons, and the second is the real one:
+ *
+ *   - This is geometry -- where the patch is, how wide, how high the floor.
+ *     dimensions.js's rows are about PRESENTATION and SOURCE: sky, fog, an
+ *     asset URL, a generate thunk. Those are different questions and they
+ *     have different readers.
+ *   - scripts/terrain/verify.mjs imports this file, in node, to check that
+ *     an asset's spawn column is the column the game builds its origin from.
+ *     dimensions.js pulls in blocks.js, flatworld.js and portals.js, which
+ *     pull in Babylon. A verifier that cannot run without a WebGL context is
+ *     a verifier that stops being run.
+ *
+ * `size`             the patch is square; this is its side, in blocks.
+ * `originX/originZ`  the ASSET COLUMN that world coordinate 0 sits on, so
+ *                    world x = assetX - originX. Every world puts its spawn
+ *                    at (0, 0) horizontally, which is what makes "look at the
+ *                    block under your feet" mean the same thing in all three.
+ * `surfaceY`         the y a player's feet are at when they arrive.
+ * `drop`             how far above that they are released. The overworld's 2
+ *                    is inherited from the old SPAWN constant and is asserted
+ *                    by specs that watch the landing; 1 everywhere else, which
+ *                    is what the Nether has always used. Data rather than a
+ *                    branch in spawnFor, because "why is one world different"
+ *                    is a question you should be able to answer by reading the
+ *                    row.
+ *
+ * THE NETHER'S ROW IS THE OLD CONSTANTS, UNCHANGED, and deliberately still
+ * shares the overworld's origin. src/dimensions.js argues at length for the
+ * 1:1 portal mapping that pinning buys, and the mountain world is outside
+ * that argument -- it is a different seed with a different shape, it has no
+ * portal relationship with anything, and pinning it to 87/56 would only mean
+ * its spawn landed somewhere arbitrary.
+ */
+export const WORLDS = {
+  overworld: { size: 128, originX: 87, originZ: 56, surfaceY: 136, drop: 2 },
+  nether: { size: 128, originX: 87, originZ: 56, surfaceY: 75, drop: 1 },
+  /*
+   * Seed 434533485056755, patch corner (-112, 0), 256 blocks square.
+   *
+   * The origin is the spawn column from public/terrain/mountains.json, and
+   * that spawn was chosen by RAY TEST (scripts/terrain/seed-view.mjs), not by
+   * the window scorer -- docs/seed-434533485056755.md shows the scorer's
+   * favourite column on this seed sitting under a closed canopy with 37 of 81
+   * columns roofed. From here: open sky, eight biomes reachable by an
+   * unobstructed ray, 143 blocks of visible relief.
+   *
+   * surfaceY 111 is the grass block at world (-48, 48) plus one. Checked by
+   * scripts/terrain/verify.mjs check 4 rather than trusted, for the same
+   * reason the Nether's 75 is.
+   */
+  mountains: { size: 256, originX: 191, originZ: 48, surfaceY: 111, drop: 1 },
+}
+
+/** The overworld's width. Kept as an export because src/dimensions.js sizes
+ *  the generated superflat with it; it is WORLDS.overworld.size and nothing
+ *  else may assume it describes the world you are standing in. */
+export const PATCH_SIZE = WORLDS.overworld.size
 
 /*
  * Where the patch sits in world coordinates.
@@ -90,8 +155,6 @@ export const PATCH_SIZE = 128
  * preserves for free. A generated world could be centred -- MIN_X = -64,
  * MAX_X = 63 -- and the only thing that would buy is tidier numbers.
  */
-const PATCH_ORIGIN_X = 87
-const PATCH_ORIGIN_Z = 56
 
 /**
  * The y a player stands on: topmost terrain block at SURFACE_Y - 1, feet at
@@ -113,7 +176,7 @@ const PATCH_ORIGIN_Z = 56
  * the build ceiling (see CEILING_Y in src/dimensions.js) is inside noa's
  * vertical chunk range from the ground.
  */
-export const SURFACE_Y = 136
+export const SURFACE_Y = WORLDS.overworld.surfaceY
 
 export const SPAWN = [0.5, SURFACE_Y + 2, 0.5]
 
@@ -137,7 +200,7 @@ export const SPAWN = [0.5, SURFACE_Y + 2, 0.5]
  * going to the Nether moves you in y alone, which is as close to a portal as
  * a command gets.
  */
-export const NETHER_SURFACE_Y = 75
+export const NETHER_SURFACE_Y = WORLDS.nether.surfaceY
 
 export const NETHER_SPAWN = [0.5, NETHER_SURFACE_Y + 1, 0.5]
 
@@ -231,7 +294,26 @@ const missing = new Set()
  * overworld gets installed at boot without a second call.
  */
 function install(name, world, source) {
+  /*
+   * The geometry is stamped ONTO the world object, not looked up on every
+   * voxel. getVoxelID runs 21 million times to build this patch once; a
+   * WORLDS[current] lookup in there is a property chain walked for nothing,
+   * since the answer can only change when setDimension does.
+   *
+   * A world with no row is a hard error rather than a default, because the
+   * failure it prevents is silent: an unknown world would fall back to the
+   * overworld's origin, render a perfectly plausible landscape, and put spawn
+   * 87 blocks from where the manifest says it is.
+   */
+  const g = WORLDS[name]
+  if (!g) throw new Error(`no geometry for world ${JSON.stringify(name)} -- add a row to WORLDS`)
+  if (world.width !== g.size || world.depth !== g.size) {
+    throw new Error(`world ${name} is ${world.width}x${world.depth}, `
+      + `but WORLDS says ${g.size}x${g.size}`)
+  }
   world.source = source
+  world.minX = -g.originX
+  world.minZ = -g.originZ
   patches.set(name, world)
   if (name === current) { patch = world; idTable = null; idTableFor = null }
   return world
@@ -315,22 +397,47 @@ export function terrainInfo() {
     width: patch.width, depth: patch.depth,
     yMin: patch.yMin, yTop: patch.yTop,
     palette: patch.palette.length,
-    originX: PATCH_ORIGIN_X, originZ: PATCH_ORIGIN_Z,
+    originX: -patch.minX, originZ: -patch.minZ,
     missing: [...missing],
   }
 }
 
 /* ---------------- the edges ---------------- */
 
-/*
- * World bounds, in world coordinates. x runs -87..40, z runs -56..71.
- * Exported because the tests and the barrier both need to agree on them, and
- * because "where does the world stop" is the first thing anyone asks.
+/**
+ * World bounds, in world coordinates, for any world -- loaded or not.
+ *
+ * A FUNCTION OF A NAME now, where it used to be four exported constants
+ * (MIN_X, MAX_X, MIN_Z, MAX_Z). Those constants described the overworld and
+ * were read as describing "the world", which was the same sentence until the
+ * mountain patch made it two. Nothing outside this file and
+ * scripts/terrain/verify.mjs imported them, which is why this is a rename
+ * rather than a migration.
+ *
+ * Takes a NAME rather than reading the current patch, because the verifier's
+ * job is to check an asset that is not loaded and never will be -- it runs in
+ * node with no fetch and no Engine. Defaulting to the current world keeps the
+ * in-game caller honest at the same time.
+ *
+ * @param name a key of WORLDS; defaults to the world getVoxelID answers for.
  */
-export const MIN_X = -PATCH_ORIGIN_X
-export const MAX_X = PATCH_SIZE - PATCH_ORIGIN_X - 1
-export const MIN_Z = -PATCH_ORIGIN_Z
-export const MAX_Z = PATCH_SIZE - PATCH_ORIGIN_Z - 1
+export function bounds(name = current) {
+  const g = WORLDS[name]
+  if (!g) throw new Error(`unknown world ${JSON.stringify(name)}`)
+  return {
+    minX: -g.originX, maxX: g.size - g.originX - 1,
+    minZ: -g.originZ, maxZ: g.size - g.originZ - 1,
+  }
+}
+
+/** Where a world puts you when you arrive in it. Centre of the spawn column,
+ *  feet on its floor -- so it is (0.5, _, 0.5) in every world by construction,
+ *  because every world's origin IS its spawn column. */
+export const spawnFor = (name) => {
+  const g = WORLDS[name]
+  if (!g) throw new Error(`unknown world ${JSON.stringify(name)}`)
+  return [0.5, g.surfaceY + g.drop, 0.5]
+}
 
 /*
  * The barrier wall.
@@ -391,8 +498,11 @@ export function getVoxelID(x, y, z, ids) {
   if (!patch) throw new Error('getVoxelID before the world was built -- see main.js')
   if (ids !== idTableFor) buildIdTable(ids)
 
-  const px = x - MIN_X
-  const pz = z - MIN_Z
+  /* patch.minX, not a module constant: the three worlds are 128 and 256
+   * blocks wide and pinned to two different corners. Stamped on at install
+   * so this stays two subtractions. */
+  const px = x - patch.minX
+  const pz = z - patch.minZ
   if (px < 0 || px >= patch.width || pz < 0 || pz >= patch.depth) {
     return (y >= barrierBottom() && y <= barrierTop()) ? ids.barrier : 0
   }
