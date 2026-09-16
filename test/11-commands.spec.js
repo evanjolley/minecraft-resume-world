@@ -2,6 +2,7 @@ import { test, expect } from './fixtures.js'
 import {
   ID, SURFACE_Y, OP_PASSPHRASE, chatCommand, visibleCommands, isOperator,
   gamemode, grantOp, getBlock, position, waitTicks, reloadWorld, playerName,
+  settleOnGround, PAD_X0, PAD_Y, PAD_Z,
 } from './helpers/world.js'
 
 /* Vanilla's rejection, both lines of it. Anything a non-operator types that
@@ -269,17 +270,58 @@ test.describe('operator commands, opped', () => {
         .toBeGreaterThan(t0)
     })
 
-  test('/gamerule fallDamage false is wired to real damage', async ({ page }) => {
-    // A game rule that reports a value nothing reads is a lie with a nice
-    // error message, so this drops the player rather than checking the flag.
-    await chatCommand(page, '/gamerule fallDamage false')
-    await chatCommand(page, '/tp 0.5 76 0.5')
-    await page.waitForFunction(() => {
-      const noa = window.noa
-      return noa.ents.getPhysics(noa.playerEntity).body.atRestY() < 0
-    }, null, { timeout: 10_000, polling: 20 })
-    expect(await page.evaluate(() => window.game.survival.health)).toBe(20)
-  })
+  test('/gamerule fallDamage false is wired to real damage',
+    async ({ page, flatGround }) => {
+      /*
+       * A game rule that reports a value nothing reads is a lie with a nice
+       * error message, so this drops the player rather than checking the flag.
+       *
+       * IT USED TO DROP TO y=76 DOWN THE SPAWN COLUMN, and that is the whole
+       * bug it was failing on: y=76 was open air over a sea-level island, and
+       * the world has been an imported Minecraft patch with its floor at
+       * y=136 for a long time now. So /tp put the player under the bottom of
+       * the world, they died of the void ("Guest fell out of the world" is
+       * what the failure screenshot showed), and the wait for a landing that
+       * was never coming timed out ten seconds later. The rule itself was
+       * never broken -- main.js:277 reads it inside allowDamage, on demand,
+       * so unlike doDaylightCycle (re-driven into sky every tick at main.js
+       * :420) there is nothing here that could quietly overwrite a setter.
+       *
+       * THE PAD rather than a fixed terrain column, for 30-death-messages'
+       * hard-won reason: one page is shared by every spec, so the ground under
+       * a hardcoded column is whatever the spec before it left there. The pad
+       * is the only surface whose height this test actually knows.
+       */
+      await flatGround.build()
+      await chatCommand(page, '/gamerule fallDamage false')
+
+      /*
+       * 10.5 blocks, so a pass cannot be a fall that was simply too short to
+       * hurt: damage is floor(d - 3), which is 7 half-hearts at this height.
+       * Off the integer boundary on purpose -- the peak is first sampled on
+       * the first AIRBORNE tick, already a centimetre down, so sampling only
+       * ever loses height (08-death.spec.js spells this out).
+       */
+      const drop = () => chatCommand(page,
+        `/tp ${PAD_X0 + 0.5} ${PAD_Y + 10.5} ${PAD_Z + 0.5}`)
+      await drop()
+      await settleOnGround(page)
+      expect(await page.evaluate(() => window.game.survival.health),
+        'the fall hurt with fallDamage off').toBe(20)
+
+      /*
+       * The control arm, and it is the half that makes this test about the
+       * RULE. Without it an engine that had lost fall damage entirely would
+       * sail through the assertion above, which is exactly the "reports a
+       * value nothing reads" failure the test was written to catch -- only
+       * pointing the other way.
+       */
+      await chatCommand(page, '/gamerule fallDamage true')
+      await drop()
+      await settleOnGround(page)
+      expect(await page.evaluate(() => window.game.survival.health),
+        'the same fall was free with fallDamage back on').toBe(13)
+    })
 
   test('/gamerule with no value queries it instead of setting it',
     async ({ page }) => {
