@@ -155,6 +155,102 @@ for (const facing of Object.keys(FACINGS)) {
 SHAPE_BOXES.torch = [[7 / 16, 0, 7 / 16, 9 / 16, 10 / 16, 9 / 16]]
 
 /* ------------------------------------------------------------------ *
+ * Wall torches, and the first shape in this file that is not axis-aligned.
+ *
+ * A wall torch IS a transform of a floor torch, which is the whole reason
+ * this is five block ids and not a research project. Compare the fence note
+ * at the bottom of the file: a fence post with two arms and one with three
+ * are not related by ANY transform, so they need different vertices and noa
+ * gives every voxel of an id the same vertices. Four facings of one leaning
+ * torch are one shape seen from four angles, which is exactly what this file
+ * already does eight times over for stairs.
+ *
+ * VANILLA'S NUMBERS, from `block/template_torch_wall.json` in 1.21.8's jar:
+ *
+ *     from [-1, 3.5, 7] to [1, 13.5, 9]
+ *     rotation { origin: [0, 3.5, 8], axis: "z", angle: -22.5 }
+ *
+ * Three things in there are worth reading twice. The box starts at x = -1, so
+ * it hangs a pixel OUT of its own cell and into the wall -- that pixel is what
+ * hides the join. It is 10 tall like the floor torch but starts at y = 3.5,
+ * so the torch sits higher on a wall than on a floor. And the pivot is at the
+ * wall plane, at the BOTTOM of the post, so the tilt swings the flame out
+ * into the room rather than sliding the whole torch sideways.
+ *
+ * The angle is 22.5 degrees, which is not a number to guess at: eyeballing
+ * an axis-aligned approximation gets you a stick glued flat to a wall, and
+ * 22.5 is one of the five angles Minecraft's model format even permits.
+ *
+ * FACING NAMES THE DIRECTION THE TORCH POINTS, away from the wall holding it
+ * -- vanilla's convention, confirmed from `blockstates/wall_torch.json`,
+ * where facing=east is the unrotated model and the unrotated model leans
+ * toward +x, which is east in Minecraft. It is NOT east here; see the FACINGS
+ * note above for why east is -x in this world. Deriving the geometry from the
+ * FACINGS vector rather than from the name is what keeps that one decision in
+ * one place.
+ * ------------------------------------------------------------------ */
+
+/** Vanilla's tilt, in degrees. */
+const WALL_TORCH_TILT = 22.5
+
+/**
+ * Where a shape's mesh is rotated after it is built, keyed like SHAPE_BOXES.
+ * Absent for every axis-aligned shape, which is all of them but these four.
+ */
+export const SHAPE_ROTATION = {}
+
+function wallTorch(facing) {
+  const d = FACINGS[facing]
+  // The axis the torch points along, and which way along it.
+  const a = d[0] ? 0 : 2
+  const s = d[a]
+  // The wall plane in block-local coordinates: 0 at the -axis face, 1 at +.
+  const wall = (1 - s) / 2
+  // The other horizontal axis, which the post is centred on and which the
+  // tilt turns about.
+  const p = a === 0 ? 2 : 0
+
+  const lo = [0, 0, 0], hi = [0, 0, 0]
+  lo[a] = wall - 1 / 16; hi[a] = wall + 1 / 16
+  lo[1] = 3.5 / 16; hi[1] = 13.5 / 16
+  lo[p] = 7 / 16; hi[p] = 9 / 16
+
+  /*
+   * Sign of the tilt. Both rotations are right-handed about a positive axis,
+   * and the top of the post starts directly above the pivot:
+   *   about z, a point at (0, h) goes to (-h sin0, h cos0) -- so to lean
+   *   toward +x the angle must be NEGATIVE;
+   *   about x, a point at (h, 0) goes to (h cos0, h sin0) in (y, z) -- so to
+   *   lean toward +z the angle must be POSITIVE.
+   * Vanilla's own model is the a=0, s=+1 case and says -22.5, which is the
+   * check that this table is not mirrored.
+   */
+  const deg = WALL_TORCH_TILT * (a === 0 ? -s : s)
+  const origin = [0.5, 3.5 / 16, 0.5]
+  origin[a] = wall
+
+  return { boxes: [[...lo, ...hi]], rotation: { axis: p, deg, origin } }
+}
+
+for (const facing of Object.keys(FACINGS)) {
+  const { boxes, rotation } = wallTorch(facing)
+  SHAPE_BOXES[`torch_wall_${facing}`] = boxes
+  SHAPE_ROTATION[`torch_wall_${facing}`] = rotation
+}
+
+/**
+ * The facing name for a block face's outward normal, or null for up and down.
+ * The inverse of the FACINGS table, and the thing that turns "which face did
+ * you click" into "which variant do you get".
+ */
+export function facingFromNormal(normal) {
+  for (const [name, v] of Object.entries(FACINGS)) {
+    if (v[0] === normal[0] && v[2] === normal[2]) return name
+  }
+  return null
+}
+
+/* ------------------------------------------------------------------ *
  * Meshing.
  *
  * Hand-built VertexData rather than CreateBox, for two reasons that are both
@@ -238,7 +334,7 @@ function faceIsInterior(box, face, others) {
  * would silently collapse into one manager and one of them would render as the
  * other. That rules out `mesh.clone()` for, say, the four facings of a stair.
  */
-export function buildShapeMesh(scene, name, boxes, material) {
+export function buildShapeMesh(scene, name, boxes, material, rotation = null) {
   const positions = [], normals = [], uvs = [], indices = []
 
   for (const box of boxes) {
@@ -272,6 +368,27 @@ export function buildShapeMesh(scene, name, boxes, material) {
     }
   }
 
+  /*
+   * The tilt, applied to the finished vertices rather than to the boxes,
+   * because a box list cannot hold one -- every entry in it is a min and a
+   * max on three axes, which is the definition of axis-aligned.
+   *
+   * AND THAT IS WHY A ROTATED SHAPE MUST NOT COLLIDE. The collision resolver
+   * reads the same box list this mesh was built from, so the instant the mesh
+   * is turned and the boxes are not, the two have drifted -- which is the one
+   * thing this file exists to prevent. The check below is the invariant
+   * restated as code: you may rotate a shape only if the shape has opted out
+   * of collision entirely, and blocks.js throws at registration rather than
+   * shipping a torch you can trip over in a place it does not appear to be.
+   *
+   * The road not taken is worth a line: noa's `onCustomMeshCreate` hands out
+   * a TransformNode per voxel, so the rotation COULD live there instead of in
+   * the vertices. It would be the same pixels and one more moving part, and
+   * it would make the mesh a lie about itself -- `buildShapeMesh` would hand
+   * back geometry that is only correct once somebody else turns it.
+   */
+  if (rotation) rotateVertices(positions, normals, rotation)
+
   const mesh = new Mesh(name, scene)
   const data = new VertexData()
   data.positions = positions
@@ -281,6 +398,31 @@ export function buildShapeMesh(scene, name, boxes, material) {
   data.applyToMesh(mesh)
   mesh.material = material
   return mesh
+}
+
+/**
+ * Turn a finished vertex list about one axis-aligned axis, in place.
+ *
+ * Positions rotate about `origin`; normals rotate about nothing, because a
+ * direction has no position -- rotating them about the origin too would move
+ * them off the unit sphere and light the faces wrong.
+ */
+function rotateVertices(positions, normals, { axis, deg, origin }) {
+  const rad = (deg * Math.PI) / 180
+  const sin = Math.sin(rad), cos = Math.cos(rad)
+  // The two axes that MOVE, in right-handed order, for each axis of rotation.
+  const [i, j] = axis === 0 ? [1, 2] : axis === 1 ? [2, 0] : [0, 1]
+  // Mesh space is block space shifted: x and z run -0.5..0.5, y runs 0..1.
+  const o = [origin[0] - 0.5, origin[1], origin[2] - 0.5]
+
+  for (let k = 0; k < positions.length; k += 3) {
+    const u = positions[k + i] - o[i], v = positions[k + j] - o[j]
+    positions[k + i] = o[i] + u * cos - v * sin
+    positions[k + j] = o[j] + u * sin + v * cos
+    const nu = normals[k + i], nv = normals[k + j]
+    normals[k + i] = nu * cos - nv * sin
+    normals[k + j] = nu * sin + nv * cos
+  }
 }
 
 /**
@@ -436,7 +578,9 @@ export function installThinInstanceUploadFix(noa) {
  * Signs are next and will be in this set for the same reason (docs/FUTURE.md
  * item 1). It is a capability of the file, not a torch's special case.
  */
-export const PASS_THROUGH_SHAPES = new Set(['torch'])
+export const PASS_THROUGH_SHAPES = new Set([
+  'torch', 'torch_wall_north', 'torch_wall_south', 'torch_wall_east', 'torch_wall_west',
+])
 
 /** Minecraft's player step height: onto a slab, never onto a full block. */
 const STEP_HEIGHT = 0.6
@@ -835,8 +979,16 @@ function halfFromTarget(normal, hitY) {
 
 /**
  * @param {*} noa
- * @param {Map<number, (facing: string, half: string) => number>} variantOf
+ * @param {Map<number, (facing: string, half: string, normal: number[]) => number>} variantOf
  *        canonical block id -> resolver for the id to place instead
+ *
+ * The resolver gets the clicked face's NORMAL as well, because not every
+ * family picks its variant from the same thing. A stair takes its facing from
+ * where the player is LOOKING (vanilla: you build a staircase by walking up
+ * it, not by aiming at a wall); a torch takes it from the face you clicked,
+ * because the face is the wall it hangs on. Both answers are the same
+ * question asked of different data, so both are passed and each family reads
+ * the one it means.
  */
 export function installPlacementOrientation(noa, variantOf) {
   const originalSetBlock = noa.setBlock.bind(noa)
@@ -856,7 +1008,8 @@ export function installPlacementOrientation(noa, variantOf) {
     const hitY = target ? noa._pickResult.position[1] : 0
 
     const facing = headingToFacing(noa.camera.heading)
-    return originalSetBlock(resolve(facing, halfFromTarget(normal, hitY)), x, y, z)
+    return originalSetBlock(
+      resolve(facing, halfFromTarget(normal, hitY), normal), x, y, z)
   }
 }
 

@@ -1,7 +1,9 @@
 import {
-  SHAPE_BOXES, PASS_THROUGH_SHAPES, buildShapeMesh, createMaterialCache,
-  installNonCubeCollision, installPlacementOrientation, installThinInstanceUploadFix,
+  SHAPE_BOXES, SHAPE_ROTATION, PASS_THROUGH_SHAPES, buildShapeMesh,
+  createMaterialCache, facingFromNormal, installNonCubeCollision,
+  installPlacementOrientation, installThinInstanceUploadFix,
 } from './blockMeshes.js'
+import { EMISSION } from './blockLight.js'
 
 /*
  * Block definitions.
@@ -986,12 +988,70 @@ const FLUID_FLOW_BLOCKS = [
  * comment in this file about ids gives: they are save data and the only safe
  * place to add one is the end.
  * ------------------------------------------------------------------ */
+const TORCH_ID = 655
+/*
+ * The four wall facings, in id order. Same rule as STAIR_STATES above: never
+ * reorder, these are ids. `facing` is the direction the torch POINTS, away
+ * from the wall holding it -- vanilla's convention, and blockMeshes.js's
+ * wall-torch note says where that was confirmed.
+ */
+const WALL_TORCH_FACINGS = ['north', 'south', 'east', 'west']
+
 const TORCHES = [
   {
-    id: 655, key: 'torch', name: 'Torch', all: 'torch', alpha: true,
+    id: TORCH_ID, key: 'torch', name: 'Torch', all: 'torch', alpha: true,
     shape: 'torch', cutout: true, flatItem: true, hardness: T(0, false),
   },
+  ...WALL_TORCH_FACINGS.map((facing, i) => ({
+    id: TORCH_ID + 1 + i, key: `wall_torch_${facing}`, name: 'Torch',
+    all: 'torch', alpha: true, shape: `torch_wall_${facing}`, cutout: true,
+    hardness: T(0, false),
+    // `drops` is what makes these four VARIANTS rather than blocks: items.js
+    // reads shape-plus-drops as "not an item of its own" and gives you a
+    // Torch, and creative.js reads it as "reachable through the torch entry".
+    // Exactly the arrangement the eight stair states already have.
+    drops: TORCH_ID,
+  })),
 ]
+
+/*
+ * A torch on a wall is the same torch, and emits the same 14.
+ *
+ * blockLight.js keys emission by BLOCK KEY and has one family rule, for lava,
+ * so `wall_torch_north` would have been dark while `torch` glowed -- four
+ * unlit torches on the four walls of the room the light engine was built for.
+ * Registered from here rather than by adding four rows to that table because
+ * this is a fact about the block table (a variant is the same block wearing
+ * an orientation) rather than about lighting, and because the day a fifth
+ * facing or a soul torch arrives, the loop is already correct.
+ */
+for (const facing of WALL_TORCH_FACINGS) {
+  EMISSION[`wall_torch_${facing}`] = EMISSION.torch
+}
+
+/*
+ * Which of the five you get, from the face you clicked.
+ *
+ * A stair reads the player's HEADING; a torch reads the NORMAL, because the
+ * face you clicked is the wall it hangs on. Click the top of a block and you
+ * get the floor torch; click a side and you get the wall torch pointing out
+ * of that side, which is what `facingFromNormal` answers.
+ *
+ * CLICKING A CEILING gives the floor torch, and it does not stay. Vanilla
+ * simply refuses the placement, and refusing is not expressible at this seam
+ * -- `noa.setBlock` is a write, not a request, and by the time it is reached
+ * interact.js has already been told yes. So the floor torch is written and
+ * the attachment rule takes it straight back off the ceiling and drops it at
+ * your feet, which costs a frame and no torches. One rule doing the work of
+ * two is the reason this is acceptable rather than a shrug: "a torch needs
+ * something under it or behind it" is the same sentence whether the support
+ * was never there or was mined away.
+ */
+NON_CUBE_VARIANTS.set(TORCH_ID, (_facing, _half, normal) => {
+  const facing = facingFromNormal(normal)
+  if (!facing) return TORCH_ID
+  return TORCH_ID + 1 + WALL_TORCH_FACINGS.indexOf(facing)
+})
 
 export const BLOCK_TYPES = normaliseHardness(
   [...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER, ...FLUID_FLOW_BLOCKS, ...TORCHES])
@@ -1291,6 +1351,16 @@ export function registerBlocks(noa) {
       if (!boxes) throw new Error(`block "${def.key}" wants unknown shape "${def.shape}"`)
       shapeById[def.id] = boxes
       if (PASS_THROUGH_SHAPES.has(def.shape)) passThrough.add(def.id)
+      /*
+       * The invariant, checked where the two halves are wired together. A
+       * rotated mesh is built from boxes that are NOT rotated, so a rotated
+       * shape that also collided would collide as a shape it does not look
+       * like -- the exact drift blockMeshes.js exists to prevent. Throwing at
+       * registration is the cheap version of finding out.
+       */
+      if (SHAPE_ROTATION[def.shape] && !passThrough.has(def.id)) {
+        throw new Error(`rotated shape "${def.shape}" must be pass-through, or its collision is a lie`)
+      }
       ids[def.key] = noa.registry.registerBlock(def.id, {
         /*
          * NO `material`, and this is not an oversight. noa's greedy mesher
@@ -1313,7 +1383,8 @@ export function registerBlocks(noa) {
         // `cutout` is opt-in per block and the cache keys on it, so asking for
         // one here cannot turn the 280 slab and stair materials transparent.
         blockMesh: buildShapeMesh(
-          scene, def.key, boxes, materialFor(def.all, { cutout: def.cutout === true })),
+          scene, def.key, boxes, materialFor(def.all, { cutout: def.cutout === true }),
+          SHAPE_ROTATION[def.shape] ?? null),
       })
       continue
     }
