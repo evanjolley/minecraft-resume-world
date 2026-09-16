@@ -268,6 +268,41 @@ export function buildShapeMesh(scene, name, boxes, material) {
  *
  * Note this means non-cube blocks add ZERO layers to the paged atlas. The
  * 128-layers-per-page budget is untouched by anything in this file.
+ *
+ *
+ * CUTOUT, THE SECOND KIND OF MATERIAL, and it is a general capability rather
+ * than one block's special case.
+ *
+ * Every material this cache made used to be opaque, because every shape in
+ * this file was a solid cuboid of a solid block's texture. A torch is not: it
+ * is a 16x16 sprite that is mostly nothing, and drawn opaque the nothing is a
+ * black rectangle with a torch in it. The same is true of the NEXT non-cube
+ * this file gets -- docs/FUTURE.md item 1 is signs, whose texture is a plank
+ * on a post and transparent everywhere else -- so the flag lives on the cache
+ * and any shape can ask for it.
+ *
+ * Asking is opt-IN, and that is the load-bearing half: the cache is shared by
+ * all 280 slab and stair variants, and a cutout flag set on the cache instead
+ * of per call would have quietly moved every one of them onto the alpha path.
+ * The cache key carries the flag, so `materialFor('torch', { cutout: true })`
+ * and `materialFor('torch')` are two different materials and neither can be
+ * handed out in place of the other.
+ *
+ * CUTOUT, NOT BLEND, and blocks.js's installAlphaPageMaterials note is the
+ * long version: `diffuseTexture.hasAlpha` alone buys alpha TESTING -- the
+ * shader compiles ALPHATEST and discards any texel under `alphaCutOff` (0.4)
+ * -- and leaves everything that survives fully opaque. That is exactly right
+ * for art whose alpha is only ever 0 or 255, which is what a torch sprite is.
+ * It also costs no depth sorting, which blending would, and a blended torch
+ * seen through another blended torch is a sorting bug waiting to be reported.
+ *
+ * `useAlphaFromDiffuseTexture` is therefore deliberately NOT set here; that is
+ * the flag that turns the same texture into a blend, and water is the only
+ * material in this world that wants it.
+ *
+ * backFaceCulling off, because a cutout shape is thin enough to see the inside
+ * of. A torch is a 2x2 pixel post: stand beside one and the far face is what
+ * you are looking at through the near face's discarded texels.
  */
 export function createMaterialCache(noa) {
   const scene = noa.rendering.getScene()
@@ -275,15 +310,21 @@ export function createMaterialCache(noa) {
   // paths agree about where textures live.
   const path = noa.registry._texturePath ?? '/textures/'
   const cache = new Map()
-  return (textureName) => {
-    let mat = cache.get(textureName)
+  return (textureName, { cutout = false } = {}) => {
+    const key = cutout ? `${textureName}|cutout` : textureName
+    let mat = cache.get(key)
     if (mat) return mat
-    mat = noa.rendering.makeStandardMaterial(`noncube-${textureName}`)
+    mat = noa.rendering.makeStandardMaterial(`noncube-${key}`)
     // NEAREST, or 16x16 pixel art turns to soup the moment it is minified.
-    mat.diffuseTexture = new Texture(
+    const tex = new Texture(
       `${path}${textureName}.png`, scene, false, false, Texture.NEAREST_SAMPLINGMODE)
+    mat.diffuseTexture = tex
+    if (cutout) {
+      tex.hasAlpha = true
+      mat.backFaceCulling = false
+    }
     mat.freeze()
-    cache.set(textureName, mat)
+    cache.set(key, mat)
     return mat
   }
 }
