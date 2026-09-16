@@ -429,8 +429,22 @@ outdoor quad and undoes greedy meshing everywhere. The criterion is now phrased
 as VARIATION: a lattice cell whose four corners agree in both channels is left
 merged, and the split region is the bounding box of the cells that disagree. On
 block light alone the two rules coincide exactly, which is why 58's numbers did
-not move. Measured on the flat world at spawn: see the numbers logged by 65's
-budget test and 58's.
+not move. Measured on the flat world at spawn: **536 terrain vertices over 25
+meshes with sky light on, which is the pre-sky-light baseline to the vertex.**
+
+**The numbers.** A sealed room reads 0.0262 at noon and 0.0262 at midnight —
+the same to four decimal places with the sun directly overhead — against 0.3808
+outdoors at that same noon (0.0263 / 0.0263 / 0.3765 on webkit). The last chunk
+to arrive floods both channels in 0.7–0.9ms and its vertex-light pass costs
+0.3ms. Frame cost, from 56's own probe: 30.0 fps to 29.4.
+
+**The mutation, run rather than asserted.** Collapsing `give` to `level - 1`
+— which is the whole of the no-decay rule — makes 65 fail three ways:
+`[shaft] 24 deep, sky by depth: 14,13,12,11,10,9,8,7,6,5,4,3,2,1,0,0,...`
+(`Expected: 15, Received: 14`), `[roof] under open sky 15, under a roof 15`,
+and `[tower] 20 tall: top 15, bottom of the shaft 15, sealed corner 15`. The
+last two are the removal walk failing with it, which is the point of sharing
+one helper between the fill and the removal.
 
 **The bug that cost the most to find**, because it is the one thing the
 no-decay rule genuinely breaks: sky light going down has no range of its own,
