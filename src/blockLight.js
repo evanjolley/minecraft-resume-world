@@ -333,12 +333,38 @@ class BlockLightPlugin extends MaterialPluginBase {
   getClassName() { return 'NoaBlockLightPlugin' }
 
   /*
-   * One float, declared into the MATERIAL uniform buffer by Babylon for us
-   * (materialPluginManager appends every `ubo` entry to the Material block and
-   * writes the GLSL declaration), so the shader just reads `uDaylight`.
+   * One float. NAME ONLY -- no `size`, no `type` -- and the declaration is
+   * written by hand in CUSTOM_FRAGMENT_DEFINITIONS below.
+   *
+   * THIS COMMENT USED TO SAY the opposite: that giving Babylon `size` and
+   * `type` made it "declare the float into the MATERIAL uniform buffer for
+   * us". That is true only for a material that actually compiles a uniform
+   * BLOCK, and these terrain materials do not -- the emitted fragment shader
+   * declares `uniform vec4 vDiffuseColor;` as a plain uniform, so there is no
+   * Material block for the entry to be appended to. Concretely
+   * (materialPluginManager.js:204-213): an entry WITH size and type goes to
+   * `ubo.addUniform` and accumulates `_uboDeclaration`, which is injected by
+   * replacing the token `#define ADDITIONAL_UBO_DECLARATION` -- a token that
+   * is not in this shader. String.replace on a missing token returns the
+   * string unchanged and reports nothing, so the declaration evaporated while
+   * the NAME still reached the effect's uniform list. The result was
+   * `'uDaylight' : undeclared identifier` at fragment line 324, every terrain
+   * material failing to compile, and a world of pure skybox that you could
+   * still stand on, because collision never asks the GPU anything.
+   *
+   * This is the THIRD variant of one trap. terrainAnimation.js:377 hit it via
+   * `fragment:` (token `ADDITIONAL_FRAGMENT_DECLARATION`, equally absent);
+   * this one hit it via `ubo:`. Both tokens are missing from Babylon 6's
+   * shaders, and neither route ever complains. An entry with a name and no
+   * size/type skips the UBO branch entirely and only registers the name
+   * (materialPluginManager.js:211), which is all a `setFloat` needs.
+   *
+   * The rule, for the next plugin: declare your own GLSL at a CUSTOM_*
+   * injection point that you have grepped for in the shader you are patching.
+   * Never let Babylon write a declaration for you.
    */
   getUniforms() {
-    return { ubo: [{ name: 'uDaylight', size: 1, type: 'float' }] }
+    return { ubo: [{ name: 'uDaylight' }] }
   }
 
   /*
@@ -348,8 +374,17 @@ class BlockLightPlugin extends MaterialPluginBase {
    * the frozen-material problem described at `terrainLevel`, and being immune
    * to it by construction is the entire point of putting the daylight here.
    */
-  hardBindForSubMesh(uniformBuffer) {
-    uniformBuffer.updateFloat('uDaylight', terrainLevel)
+  hardBindForSubMesh(uniformBuffer, scene, engine, subMesh) {
+    /*
+     * Set on the EFFECT, not the uniform buffer. `updateFloat` addresses a
+     * slot in the Material uniform block, and per getUniforms above this
+     * float is a plain uniform with no block to live in -- the call found no
+     * slot and silently did nothing. `setFloat` goes through the effect's
+     * uniform location, which is the same path terrainAnimation.js:406 uses
+     * for uAnimRemap on this very material.
+     */
+    const effect = subMesh?.effect
+    if (effect) effect.setFloat('uDaylight', terrainLevel)
   }
 
   /*
@@ -396,6 +431,7 @@ class BlockLightPlugin extends MaterialPluginBase {
       'CUSTOM_FRAGMENT_DEFINITIONS': `
         vec3 noaBaseCol;
         varying float vNoaSkyDark;
+        uniform float uDaylight;
       `,
       // Fires right after baseColor is final (post-texture, post-vColor.rgb,
       // so ambient occlusion is already multiplied in -- vanilla multiplies AO
