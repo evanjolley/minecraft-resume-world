@@ -21,7 +21,7 @@ changes what this project is:
 
 Every Patronus artifact in the inbox and in Granola — the interview confirmations, the
 calendar titles, the offer thread — calls the role **Founding Marketer**. Separately,
-there is an active a16z New Media contract in the inbox with a start date, and it does
+there is an active contract from a second organisation in the inbox with a start date, and it does
 not appear on the resume at all.
 
 Neither of those is a scandal. They are the normal lag of a career moving faster than
@@ -413,7 +413,7 @@ Granola holds **11 meetings in the last 30 days**. The composition is the point:
 
 - **5 meetings** are the Patronus AI Founding Marketer loop — hiring manager screen,
   deep dive, peer sync, case study debrief, founder sync.
-- **4 meetings** are the a16z New Media loop.
+- **4 meetings** are a second interview loop.
 - The rest are intro calls with the same two orgs.
 
 Nine of eleven recent meetings are **Evan being interviewed about his career by people
@@ -428,7 +428,7 @@ how he writes. These tell you how he *talks about exactly this subject*.
 
 And it is the source I would most hesitate over.
 
-- **Third parties are in every one.** Named individuals at Patronus and a16z, speaking
+- **Third parties are in every one.** Named individuals at both organisations, speaking
   candidly in a hiring context, who did not consent to being training data for a public
   chatbot.
 - **It is commercially sensitive.** A case study debrief and a founder sync contain the
@@ -715,7 +715,7 @@ Two rules while recording:
    from before those.
 2. **What is your Patronus job title?** The resume says Member of Technical Staff,
    Growth. Everything else says Founding Marketer. Which one does the agent say?
-3. **What is the a16z New Media arrangement and is it public?** It is not on the resume.
+3. **What is the second arrangement and is it public?** It is not on the resume.
    Is it a job, a contract, a scout role, something else? Can AI Evan mention it at all?
    If a recruiter asks "what are you doing right now", what is the true answer?
 4. No Logo: is $100K → $8M **GMV** or **revenue**? The site says one, the resume says the
@@ -774,7 +774,7 @@ become the voice exemplars.
 16. "You're a growth person who builds things. Which one are you?"
 17. "Why should we hire you over someone who has done this before?"
 18. "What do you want to be doing in three years?"
-19. "Why Patronus?" — and the harder version, "why did you pick Patronus over a16z?"
+19. "Why Patronus?" — and the harder version, "why did you pick it over the other offer?"
 20. "What's your comp expectation?" *(Answer for yourself so you can decide what the
     agent does with it — see group F. It almost certainly should refuse.)*
 21. "Tell me about the Minecraft thing." — a visitor standing inside this world will ask.
@@ -829,7 +829,7 @@ The sibling doc on truthfulness covers *how* the agent refuses. These questions 
     like to work with a specific person? Default should be no — confirm.
 37. **Employers' confidential business.** No Logo's margins, client names, factory
     relationships. Patronus's roadmap. What is the line?
-38. **The a16z arrangement** — say it, hedge it, or refuse it?
+38. **The withheld arrangement** — say it, hedge it, or refuse it?
 39. **Personal life.** Relationship status, where exactly you live, your phone number,
     family. *(Your phone number is on the resume PDF the site already serves. Should the
     agent give it out? That is a decision, not an oversight.)*
@@ -897,3 +897,18 @@ voice; the voice itself comes from Group E, spoken.
 The answers themselves are **not in this repository**. It is public. They live in
 the artifact database behind the quiz, with a gitignored local backup at
 `corpus/` — see `corpus/README.md`.
+
+---
+
+## A redaction, and why it is here
+
+An earlier version of this file named a specific organisation six times. Evan
+flagged that arrangement as **not public** three separate times while answering
+the interview -- in Group A, Group C and Group F -- and this repository is
+public. The references are now generic; every argument they supported is intact,
+because none of them depended on the name.
+
+**This does not remove it from git history.** The commit that introduced it is
+still reachable by anyone who clones. Scrubbing that means rewriting published
+history and force-pushing, which is Evan's call and not one to make quietly on
+his behalf. Recorded here so the decision is visible rather than assumed.

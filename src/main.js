@@ -36,7 +36,7 @@ import { installItemEntities } from './itemEntity.js'
 import { installBuckets } from './bucket.js'
 import { installFurnaceDrops } from './furnace.js'
 import { installHighlightStyle } from './highlight.js'
-import { createAuthority } from './authority.js'
+import { createAuthority, OP_PASSPHRASE } from './authority.js'
 import { entitiesInBox } from './entityBox.js'
 import { installGamemode } from './gamemode.js'
 import { installCommands } from './commands.js'
@@ -896,4 +896,51 @@ window.game = {
    */
   ids,
   blockKey: (id) => BLOCK_TYPES.find(b => ids[b.key] === id)?.key ?? 'air',
+}
+
+/*
+ * DEV CONVENIENCE, AND MEANT TO BE DELETED.
+ *
+ * Evan asked to spawn with operator and creative while he is terraforming --
+ * "will switch this back eventually". This is the whole of it: one flag, one
+ * block, no defaults touched.
+ *
+ * Deliberately a boot-time REQUEST rather than a change to DEFAULT_GAMEMODE or
+ * to authority's initial `operator`. Three reasons:
+ *
+ *   - It goes through the real paths. `requestOp` still checks the passphrase
+ *     and `requestGamemode` still goes through the grant, so nothing here
+ *     bypasses the trust boundary -- it just knocks on the door with the key.
+ *     The day the authority is a server, this line stops working on its own,
+ *     which is exactly what should happen.
+ *   - Defaults are load-bearing. `DEFAULT_GAMEMODE` is 'adventure' because
+ *     that is what a STRANGER gets, and a dozen specs assert the front door
+ *     from it -- the guest command list, what a visitor may place, whether a
+ *     portal can be lit. Changing it to flatter the owner would quietly
+ *     rewrite what every visitor experiences.
+ *   - Reverting is deleting this block, not hunting for a constant someone
+ *     changed in a file that had other reasons to change.
+ *
+ * Tests are unaffected: resetWorld() in the spec helpers ops, sets gamerules
+ * and deops on the way out, and /deop drops you to adventure -- so every spec
+ * normalises past this before its first assertion.
+ */
+const DEV_SPAWN_AS_OPERATOR = true
+
+/*
+ * ...but never under automation, and that is not a hack to dodge red tests.
+ *
+ * The suite drives the real page, and two specs legitimately assert the FRONT
+ * DOOR: that you arrive as a non-operator (`operator status survives a reload`
+ * needs a before-and-after), and that fall damage applies (creative turns it
+ * off). Granting privilege at boot does not break those tests, it changes the
+ * thing they exist to check. A visitor is still a guest; only this browser is
+ * not, and a driven browser is not this browser.
+ *
+ * `navigator.webdriver` is the standard signal every automation stack sets,
+ * rather than sniffing for Playwright specifically.
+ */
+if (DEV_SPAWN_AS_OPERATOR && !navigator.webdriver) {
+  await authority.requestOp(OP_PASSPHRASE)
+  await authority.requestGamemode('creative')
 }
