@@ -1,7 +1,7 @@
 import { Engine } from 'noa-engine'
 
 import { registerBlocks, BLOCK_TYPES } from './blocks.js'
-import { getVoxelID, loadTerrain, terrainInfo, SPAWN } from './island.js'
+import { getVoxelID, terrainInfo, SPAWN } from './island.js'
 import { installPhysics, installSpeedModes, MC } from './physics.js'
 import { createSurvival } from './survival.js'
 import { createFluids, installFluids } from './fluids.js'
@@ -38,7 +38,7 @@ import { installHighlightStyle } from './highlight.js'
 import { createAuthority } from './authority.js'
 import { installGamemode } from './gamemode.js'
 import { installCommands } from './commands.js'
-import { installDimensions } from './dimensions.js'
+import { installDimensions, prepare as prepareDimension } from './dimensions.js'
 import { createRoster, GUEST_NAME } from './identity.js'
 import { installNPC } from './npc.js'
 import { installDebugScreen } from './debugScreen.js'
@@ -46,15 +46,26 @@ import { installTabList } from './tabList.js'
 import { createEvanTools, stubBackend, LINES } from './aiEvan.js'
 
 /*
- * THE BOOT GATE.
+ * THE BOOT GATE -- still a gate, no longer a download.
  *
- * island.js is a lookup into a 981KB asset that arrives over the network, and
- * getVoxelID is synchronous -- noa asks for chunks within a tick of the Engine
- * existing and expects an answer on the spot. So the fetch has to finish
- * first, and this is a top-level await: nothing below runs until the terrain
- * is resident. The loading card in index.html is the page's initial state and
- * is torn down at the bottom of this file, so the gap is covered rather than
- * blank.
+ * getVoxelID is synchronous: noa asks for chunks within a tick of the Engine
+ * existing and expects an answer on the spot. So the world has to be built
+ * before the Engine is, and this is a top-level await -- nothing below runs
+ * until it is. The loading card in index.html covers the gap and is torn down
+ * at the bottom of this file.
+ *
+ * WHAT CHANGED: the overworld used to be a 981KB fetch of imported Minecraft
+ * terrain, and this line was the thing standing between a visitor and a blank
+ * page if it 404'd. It is now generated in a few milliseconds by
+ * src/flatworld.js, with no network involved at all. The await is kept anyway
+ * -- `prepare` returns a promise for both kinds of dimension, and main.js
+ * deliberately does not know which kind the overworld is, so that pointing
+ * dimensions.js at an imported world again is a one-line change here of zero
+ * lines.
+ *
+ * The rejections below are kept because they are the reason the gate exists
+ * at all, and they will apply again the moment anything here is imported --
+ * which, for `/dimension nether`, it still is.
  *
  * REJECTED -- answer air, then invalidate and re-mesh once the data lands.
  * This is the tempting one and it is the wrong one, twice over. noa CACHES the
@@ -71,14 +82,15 @@ import { createEvanTools, stubBackend, LINES } from './aiEvan.js'
  * main thread for the length of a network round trip on a file this size,
  * which is the one thing a browser is entitled to shout at you about.
  *
- * REJECTED -- inlining the asset into the bundle as base64. No fetch, no gate,
+ * REJECTED -- inlining an asset into the bundle as base64. No fetch, no gate,
  * no loading screen. It also adds ~1.3MB to a 1.27MB bundle, moves the cost
  * from a cacheable asset to a parse, and puts Mojang generator output straight
  * into dist/ -- which is precisely what .gitignore and the deploy check are
- * currently keeping it out of while the licence question is open.
+ * keeping it out of while the licence question is open. That question is what
+ * generating the overworld makes moot; it is still open for the Nether.
  */
 const terrainT0 = performance.now()
-await loadTerrain()
+await prepareDimension('overworld')
 console.log(`terrain: ${JSON.stringify(terrainInfo())} in `
   + `${Math.round(performance.now() - terrainT0)}ms`)
 
@@ -620,6 +632,13 @@ const aiEvan = installNPC(noa, {
   skin: '/skins/evan.png',
   cape: '/skins/evan-cape.png',
   chat,
+  /*
+   * The game mode's capability flags, not the mode. He needs exactly one of
+   * them -- `noClip` -- because spectator swaps the physics solver's solidity
+   * test out from under every body in the world and his gate has to know the
+   * difference between that and a floor somebody mined.
+   */
+  caps: authority.caps,
   script: { greet: LINES.greet },
   agent: {
     /*

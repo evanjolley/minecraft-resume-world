@@ -159,11 +159,30 @@
  * FUTURE.md argued for the seam.
  */
 import {
-  loadTerrain, setDimension as setIslandDimension, isLoaded, currentDimension,
-  SPAWN, NETHER_SPAWN,
+  loadTerrain, generateTerrain, setDimension as setIslandDimension, isLoaded,
+  currentDimension, SPAWN, NETHER_SPAWN, SURFACE_Y, PATCH_SIZE,
 } from './island.js'
+import { flatPatch, FLAT_PRESETS } from './flatworld.js'
 import { BLOCK_TYPES } from './blocks.js'
 import { installPortals } from './portals.js'
+
+/*
+ * The build ceiling: the top of the generated world, and therefore the top of
+ * the barrier wall island.js stands around it (barrierTop() reads patch.yTop).
+ *
+ * 64 blocks of headroom over the ground. The imported overworld's ceiling was
+ * 185, which was its highest mountain plus eight and therefore only 49 above
+ * spawn; a flat world has no mountain to clear, so the number has to be
+ * argued rather than derived, and "as much build height as the ground is
+ * flat" is the argument. The owner is here to build.
+ *
+ * NOT higher, and this is the constraint worth knowing: noa's vertical
+ * chunkAddDistance is 3 chunks of 32, so standing at SURFACE_Y the engine
+ * loads to SURFACE_Y + 96. A ceiling inside that is a ceiling you can see the
+ * top of; a ceiling above it is an invisible wall in unloaded space, which is
+ * how you get a player stuck against nothing.
+ */
+const CEILING_Y = SURFACE_Y + 64
 
 /**
  * What a dimension is, in this build: an asset, a spawn, a sky and a fog.
@@ -179,7 +198,26 @@ export const DIMENSIONS = {
   overworld: {
     name: 'overworld',
     id: 'minecraft:overworld',
-    asset: '/terrain/terrain.bin',
+    /*
+     * GENERATED, not fetched -- this row used to read
+     * `asset: '/terrain/terrain.bin'` and that 404KB-gzipped file is why.
+     *
+     * A THUNK rather than a compiled world, so that a dimension nobody visits
+     * costs nothing to declare, and so the table stays a table: it says how to
+     * build the world, it does not hold one. island.js calls it exactly once,
+     * through generateTerrain.
+     *
+     * THIS IS THE SWAP POINT. The owner weighed a plains generator and chose
+     * superflat "for now". Plains is a new module exporting a function of the
+     * same shape and this one line pointing at it -- nothing in island.js,
+     * main.js or the barrier changes, because all any of them know is that
+     * something handed them 128x128 columns of block ids.
+     */
+    generate: () => flatPatch({
+      preset: FLAT_PRESETS.classic,
+      width: PATCH_SIZE, depth: PATCH_SIZE,
+      surfaceY: SURFACE_Y, ceilingY: CEILING_Y,
+    }),
     spawn: SPAWN,
     /* null means "the normal sky": sun, moon, clouds, day cycle. */
     sky: null,
@@ -238,6 +276,37 @@ export const DIMENSIONS = {
 }
 
 /**
+ * Build a dimension's world and hand it to island.js. Idempotent-ish: callers
+ * check `isLoaded` first.
+ *
+ * THE ONE PLACE generated and imported dimensions are told apart. A row with
+ * a `generate` thunk is compiled on the spot; a row with an `asset` is
+ * fetched, and only that path can fail. Everything downstream -- the lookup,
+ * the barrier, the chunk callback, the specs -- sees one kind of world.
+ *
+ * Always returns a promise, including for the generated case where the work
+ * is already done. Rejected the alternative of returning the world directly
+ * and making callers check: `enter` and main.js would each need a branch on
+ * the same distinction this function exists to absorb, and a synchronous
+ * throw on one path and a rejection on the other is two error paths for one
+ * failure.
+ *
+ * @param name a key of DIMENSIONS
+ */
+export function prepare(name) {
+  const dim = DIMENSIONS[name]
+  if (!dim) return Promise.reject(new Error(`unknown dimension ${JSON.stringify(name)}`))
+  if (dim.generate) {
+    // try/catch rather than an async function, so a broken preset is a
+    // rejected promise like a 404 is, rather than a synchronous throw out of
+    // a function whose siblings all return promises.
+    try { return Promise.resolve(generateTerrain(dim.generate, name)) }
+    catch (e) { return Promise.reject(e) }
+  }
+  return loadTerrain(dim.asset, name)
+}
+
+/**
  * Install the dimension switcher.
  *
  * @param noa the engine
@@ -286,7 +355,7 @@ export function installDimensions(noa, { sky, underwater, teleport, authority = 
     if (pending) return { ok: false, error: 'Still loading the last one' }
 
     if (!isLoaded(name)) {
-      pending = loadTerrain(dim.asset, name)
+      pending = prepare(name)
       try { await pending } catch (e) {
         pending = null
         return { ok: false, error: `Could not load the ${name}: ${e.message}` }
