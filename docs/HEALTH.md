@@ -416,3 +416,204 @@ They appear to be regenerated screenshot artifacts. Worth deciding whether
 they should be `git checkout`'d or committed deliberately; leaving them dirty
 means the next agent is told "the tree is clean" when it is not, which is how
 this sweep started.
+
+---
+
+# Deployed payload
+
+Run 2026-09-16 against `9ae3b7f`, in an isolated worktree, which is the only
+reason any of this could be measured: **`npm run build:deploy` was actually
+run.** Every number below comes off the real deploy artifact, not off
+`npm run build`.
+
+## 0. The headline, before anything else
+
+**`npm run build:deploy` was broken and had been for some time.** It threw
+before reaching vite. The deploy was red, and nobody knew, because
+build:deploy is the one command every agent brief in this repo forbids — so
+the guard that was correctly screaming had no audience. Fixed in `9ba9eef`
+(five torch blocks added in `8b4227b` had no SoundType family, and
+`build-sounds.mjs` treats that as fatal on purpose).
+
+That is the finding. Everything after it is arithmetic.
+
+Note for the next brief: §0 of this document is about a regression test nobody
+ran because it was expensive. This is the same failure with the sign flipped —
+a check nobody ran because it was *forbidden*. `npm run smoke` fixed the first
+one. The second needs `build:deploy` to be runnable somewhere, and an isolated
+worktree is that somewhere.
+
+## 1. The premise of the brief was wrong, and by a lot
+
+The task came with `dist` at **15M**, textures at **4.8M**, sounds at **2.7M**.
+Those numbers are real but they are not the deploy:
+
+- **15M was `npm run build`**, which keeps `terrain/` (5.5M, deleted by
+  build:deploy) and whatever sound set happens to be installed locally —
+  vanilla, 181 files, 2.7M. The deploy pins `sounds:free`: **45 files, 448 KB.**
+- **"4.8M of textures" is filesystem block overhead, not bytes.** 1,198 texture
+  files averaging **391 bytes** each, every one rounded up to a 4 KB block.
+  `du` reports 4.7M. The actual bytes are **458 KB**.
+
+The real artifact, measured with `stat`, not `du`:
+
+| | before | after | |
+|---|---|---|---|
+| **dist, real bytes** | 2,677,591 (2.55 MB) | **2,471,869 (2.36 MB)** | 1,279 files |
+| `du -sh dist` says | 7.1M | 6.9M | ignore this number |
+
+**`du` overstates this artifact by ~2.8x.** Quote bytes here, never `du`.
+
+## 2. What a visitor actually downloads
+
+Shipping 1,279 files and fetching 1,279 files are very different things. Under
+Playwright against the real `dist/`, booting to a standing player and opening
+the inventory:
+
+**103 requests. 101 files. 1,931,220 bytes raw → 824,973 brotli.**
+
+Before this work: 2,138,764 raw → 1,032,517 brotli. **The over-the-wire boot
+payload dropped 20.1%.**
+
+The composition is the whole story:
+
+| | raw | over the wire | note |
+|---|---|---|---|
+| `assets/index-*.js` | 1,401,389 | **295,574** br | 73% of raw, 36% of the wire |
+| `sounds/` (43 files) | ~458,000 | ~458,000 | ogg — compression does nothing |
+| `textures/` (39 files) | ~90,000 | ~90,000 | png — same |
+| `fonts/Monocraft.woff2` | 2,648 | 2,648 | **was 210,192** |
+| `index.html` | 28,488 | 9,206 br | |
+
+## 3. Ranked by bytes saved
+
+**1. Monocraft: 210,192 → 2,648 bytes. −207,544 (−98.7%).** `6b374d1`.
+
+The only cut worth making, and it was worth making twice over, because a font
+is already-compressed binary — it arrives at full size no matter what the
+server does. At 210 KB it was **21% of the entire over-the-wire boot payload**
+and larger than every texture in the game combined. It is now 0.3%.
+
+Two separate wins, worth not conflating: dropping 1,298 codepoints the game
+cannot draw is 210 KB → 12.4 KB, and WOFF2 instead of TTF is 12.4 KB → 2.6 KB.
+The first is the real one.
+
+Licence checked, not assumed: OFL 1.1 bars a derivative from using a Reserved
+Font Name, and **Monocraft declares none** — its copyright line carries no
+"with Reserved Font Name" clause. So the subset keeps the family name, which
+is why `index.html` and the canvas font specs in `nametag.js`, `chat.js`,
+`hud.js` and `tabList.js` all needed no change. `OFL.txt` still ships
+untouched and the font's `name` table is preserved. **DECISIONS.md #3 — whether
+the page carries attribution — is untouched and still open.**
+
+Metrics verified byte-identical (advance exactly 720/1080 = the 2/3 em that
+`chat.js:48` and `hud.js:29` hardcode), and `document.fonts.check()` confirms
+in **both chromium and webkit** that the face really loaded rather than
+`font-display: swap` leaving us on the fallback.
+
+**2. There is no second item.** That is the honest answer.
+
+## 4. What was deliberately not cut
+
+**The 1,198 texture files — all of them.** The brief's hypothesis was that
+hundreds ship unreachable. They do not, and cutting them would have been the
+exact regression the brief warned about.
+
+`build-textures.mjs` emits **one `held/<key>.png` per non-invisible block**
+(658) and **one `<material>.png` per material** (430), generated from the same
+`BLOCK_TYPES` / `MATERIALS` tables the runtime reads. The counts reconcile
+exactly: 440 loose PNGs = 430 materials + 5 atlas pages + 5 sprites
+(crack, sun, moon, cloud, hand). **Zero orphans, by construction.**
+
+A default session fetches ~39 of them because they are demand-loaded —
+`blockIcon.js` sets `url(/textures/<name>.png)` as a CSS background when an
+inventory slot is drawn, `heldItem.js` fetches `held/<key>.png` when you hold
+something. But `src/creative.js` puts essentially every block in the picker
+(its own reachability check reports only water, lava and the barrier as
+unreachable), so **every one of those files is one creative-menu scroll away.**
+Unrequested is not unreachable.
+
+And it would not have mattered: all 1,198 come to **458 KB**, less than a
+third of the JS bundle.
+
+**The 43 sounds.** Every single one is fetched at boot — the free set is
+eagerly loaded. 448 KB, 0 files cuttable. The brief's 2.7M / 181-file figure
+and `underwater_ambience.ogg` at 384K are the **vanilla** set, which
+build:deploy never ships. The free build log even lists
+`ambient/underwater/underwater_ambience` under "no sample for".
+
+**The JS bundle.** 1.37 MB → 296 KB brotli, and it is 73% of raw bytes. I
+checked for the obvious sin and it is not there: Babylon is imported deeply
+(`@babylonjs/core/Maths/math.color`, etc.), never as a barrel. The weight is
+`noa-engine` and what it pulls in. **Nothing egregious. Left alone**, and
+code-splitting a single-page game into waterfalls would make the boot worse.
+
+## 5. Two things that are still wrong
+
+**`/skins/evan-cape.png` 404s on every deploy boot.** `--no-cape` deliberately
+omits it, `main.js:688` still requests it, and `playerModel.js` handles the
+miss — so it is a wasted round trip, not a broken render. Worth knowing
+anyway: **`test/01`'s "no failed requests or 404s" assertion has never run
+against a deploy build**, so it would fail there today. Deciding whether the
+request should be suppressed when the cape is absent is a two-line change I
+did not make, because it is a behaviour question.
+
+**`vite preview` masks 404s.** It answered that missing cape with **200 and
+index.html**. `wrangler.toml` deliberately sets `not_found_handling` to a real
+404 for precisely this reason — so measure against the Worker, not against
+preview, or a missing asset looks fine.
+
+## 6. Serving — one thing to confirm at deploy time
+
+`deploy/_headers` is sound. `/assets/*` immutable is unconditionally correct
+(vite content-hashes). `/textures/*` at one day and *not* immutable is right
+and the comment explaining why is right.
+
+`/fonts/*` needed a correction and got one (`9ae3b7f`). Its immutable was
+justified by "a pinned third-party drop… a different file with a different
+name" — true of upstream `Monocraft.ttf`, **false now that the deployed font
+is a subset this repo cuts at a fixed name.** Still immutable, because
+revalidating 2.6 KB costs more than it saves, but the rule that makes it safe
+(**re-cutting means renaming**) is now written in `deploy/_headers` and
+`fonts-src/NOTICE.txt`.
+
+**Not verified, because it cannot be from here:** whether the host actually
+serves compressed responses. Cloudflare should compress `application/javascript`
+automatically, and if it does not, the bundle is a **1.37 MB** download instead
+of 296 KB — which would dwarf every other number in this document. One command
+at deploy time settles it:
+
+```
+curl -sI -H 'Accept-Encoding: br' https://<host>/assets/index-<hash>.js | grep -i content-encoding
+```
+
+Anything other than `br` or `gzip` there is the largest remaining problem.
+
+## 7. Runtime — no numbers, on purpose
+
+I did not measure frame rate, and I am not repeating the ≈30 fps figure this
+repo quotes. That came from headless chromium under SwiftShader and is a
+statement about a software rasteriser, not about a GPU. Quoting it as
+performance is worse than quoting nothing.
+
+I read for allocation-per-frame and per-tick scans and **found nothing worth
+reporting** — `src/sounds.js` resolving all 638 blocks once at module load
+rather than per footstep is the pattern done right, and it is commented as
+such. No speculative micro-optimisation follows.
+
+## 8. Also done
+
+`src/entityLight.js`'s three exports — `entityRig`, `getEntityLight`,
+`trackedEntityMaterials`, two commented as seams "the suite needs" — are
+**deleted** (§5 of this document). Zero importers, zero references in `test/`.
+Deleted rather than wired up, because publishing them meant either a second
+`window.X =` global (the drift §7 objects to) or importing the module into
+`main.js` to hang a debug handle off `window.game`. The replacement comment
+records that choice so nobody re-adds them thinking it was an oversight.
+
+**Still open from §5, not done here:** `ENTITY_FLOOR` is still exported and
+specs 25 and 67 still hardcode `0.4` — they agree by luck. The fix is for
+those specs to import it, which is a `test/` change whose verification runs
+into the known-fossil failures in spec 25 (§3). `blockLight.js:207`
+`getTerrainLight` and the three internal-only `fluids.js` exports are
+untouched. None of them are payload; they are all correctness smells.
