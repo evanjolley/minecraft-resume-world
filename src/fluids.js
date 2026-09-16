@@ -841,15 +841,33 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
     return m.level > level
   }
 
-  /** Does this cell stop a fluid resting on it from falling through? */
+  /**
+   * Is this cell SUPPORT -- does it hold a fluid resting on it up?
+   *
+   * Vanilla's `BlockDynamicLiquid.isBlocked` is `blockMaterial.blocksMovement()`
+   * and `MaterialLiquid` overrides that to FALSE. A fluid is not support.
+   *
+   * WHICH IS THE WHOLE OF THE REPORTED BUG: "I put water on a hill and it
+   * spreads directly horizontal over the empty space." The cell hanging over
+   * the drop pours downward on its first update, so by its SECOND update the
+   * cell beneath it is already a falling column -- and the old body here
+   * answered "blocked" for any fluid, which let the sideways branch in
+   * update() run at every height of the fall. The result was a sheet of water
+   * seven blocks wide hanging in mid-air beside the cliff, exactly as
+   * reported. `if (m) return true` was not a simplification of the comment
+   * above it; it contradicted it.
+   *
+   * NOT "the same fluid at full depth", which is what that old comment
+   * claimed. A source is not support in vanilla either -- water poured onto a
+   * lake does not spread across the surface from the point of impact, it
+   * merges. Water landing ON a lake rather than sinking through it is
+   * canFlowInto's job (a source and a falling column are both already the most
+   * fluid their cell can be), not this one, and that check is untouched.
+   */
   const isBlocked = (x, y, z) => {
     const id = get(x, y, z)
     if (id === 0) return false
-    // A fluid does not hold another fluid up unless it is the same one at full
-    // depth -- water lands ON a lake rather than falling through it.
-    const m = metaById.get(id)
-    if (m) return true
-    return true
+    return !metaById.has(id)
   }
 
   /**
@@ -902,9 +920,29 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
       for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const n = metaAt(x + dx, y, z + dz)
         if (!n || n.fluid !== fluid) continue
-        if (n.falling) continue          // a falling column feeds only downward
-        if (n.level === 0) sources++
-        best = Math.min(best, n.level)
+        /*
+         * A FALLING NEIGHBOUR FEEDS AT FULL STRENGTH, and it used to be
+         * skipped outright ("a falling column feeds only downward").
+         *
+         * Vanilla's checkAdjacentBlock reads the neighbour's LEVEL -- which
+         * for a falling block is its level with bit 8 set -- and then does
+         * `if (i >= 8) i = 0`. Decay 0. That one line is the whole of "a
+         * waterfall spreads the full seven blocks again from where it lands",
+         * which blocks.js's own note on the falling id already claims.
+         *
+         * Skipping it did not just shorten the pool, it OSCILLATED: the
+         * column at the foot of the fall spread a level-1 cell beside itself,
+         * that cell then recomputed its own level, found no feeder it was
+         * willing to look at, de-spread to air, and got refilled on the next
+         * update -- for ever. A pour off a ledge never settled, which is what
+         * a 120-second settle() cap was quietly absorbing.
+         *
+         * `sources` is NOT fed the same way. Vanilla counts
+         * adjacentSourceBlocks before the bit-8 conversion, so a falling
+         * column never helps make an infinite source.
+         */
+        if (n.level === 0 && !n.falling) sources++
+        best = Math.min(best, n.falling ? 0 : n.level)
       }
       const above = metaAt(x, y + 1, z)
       const fedFromAbove = !!above && above.fluid === fluid
@@ -945,11 +983,20 @@ export function createFluidFlow(noa, { blockIds, flowTable, isNether, setBlock }
     /*
      * ---- 3. sideways, but only if it could not fall ----
      *
-     * `i == 0 || isBlocked(below)` in vanilla: a source spreads sideways even
-     * over a hole (the hole is fed by the source's own downward flow), and a
-     * flowing block only spreads sideways when it is sitting on something.
+     * `i >= 0 && (i == 0 || isBlocked(below))` in vanilla: a source spreads
+     * sideways even over a hole (the hole is fed by the source's own downward
+     * flow), and everything else only spreads when it is sitting on something.
+     *
+     * A FALLING COLUMN IS NOT EXEMPT, and it used to be here. Vanilla stores
+     * "falling" as bit 8 of the same `i` the guard reads, so a falling block
+     * carries i >= 8, fails `i == 0`, and has to earn its sideways branch
+     * through isBlocked like any other flow. The exemption is what made a
+     * waterfall a sheet: a column mid-drop cannot flow further down (the cell
+     * below it is already its own falling water, which canFlowInto refuses),
+     * so it fell through to here and spread. Both halves of that -- the
+     * exemption and isBlocked calling fluid "support" -- had to go.
      */
-    if (!source && !me.falling && !isBlocked(x, belowY, z)) return false
+    if (!source && !isBlocked(x, belowY, z)) return false
 
     // A falling column and a source both count as decay 0 for what they feed.
     const outLevel = (source || me.falling) ? decay : me.level + decay
