@@ -245,6 +245,23 @@ const GROUP_RULES = [
   [/^(planks|melon|pumpkin|carved_pumpkin|jack_o_lantern|bookshelf|chiseled_bookshelf|crafting_table|note_block|jukebox|barrel|loom|cartography_table|fletching_table|smithing_table|beehive|bee_nest)$/,
     'wood', 'SoundType.WOOD'],
   [/_(planks|log|wood|stem|hyphae)$/, 'wood', 'SoundType.WOOD'],
+  /*
+   * Torches, floor and all four wall facings. WOOD is vanilla's own answer
+   * (Blocks.TORCH and WALL_TORCH both declare SoundType.WOOD), which reads
+   * oddly for something that is mostly flame but is what Minecraft plays.
+   *
+   * These five arrived with 8b4227b and matched no rule, which made
+   * `npm run build:deploy` throw -- the drift check above doing exactly its
+   * job. It went unnoticed for a while because build:deploy was the one
+   * command agents here were forbidden to run, so the only thing that asks
+   * this question was never asked. Worth remembering that a guard nobody is
+   * allowed to trip is not a guard.
+   *
+   * Listed rather than folded into the `_(planks|log|wood...)$` rule above:
+   * a torch is not made of planks, and widening that suffix set to reach it
+   * would let the next unrelated `_torch`-ish key in for free.
+   */
+  [/^(torch|wall_torch_(north|south|east|west))$/, 'wood', 'SoundType.WOOD'],
   // The marker rule. Slabs and stairs are not classified by the words "slab"
   // and "stairs" -- they fall through to the stripper below, which re-runs
   // these rules against the family name the source cube carries.
