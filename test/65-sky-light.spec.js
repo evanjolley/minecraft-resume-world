@@ -255,20 +255,30 @@ test('a roofed voxel is dark at noon, and a block dropped on open ground darkens
  * What it looks like -- the payoff, and the point of the whole change
  * ------------------------------------------------------------------ */
 
-/** A roofed chamber dug into the ground, big enough to stand and look around. */
+/**
+ * A sealed roofed chamber, built ON the ground rather than dug into it.
+ *
+ * It wanted to be a cave and could not be. This world's flat preset is four
+ * blocks of ground over void -- the whole floor is y 132..135 -- so there is
+ * nothing to dig a room INTO, and a player teleported below it falls forever.
+ * (That is how this test first failed: `settleOnGround` timing out with the
+ * body still accelerating downward.) What the report is about is a ROOF, and a
+ * sealed stone box has one. Spec 56 builds the same shape for the same reason.
+ */
 const RX = 4
-const CEIL = FLOOR + 2
+const CEIL = FLOOR + 4
 
 async function digCave(page) {
   await page.evaluate(([x, z, floor, ceil, r, air, stone]) => {
-    // Hollow out a room, then cap it with solid ground so nothing sees the sky.
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dz = -r; dz <= r; dz++) {
-        for (let y = floor; y < ceil; y++) window.noa.setBlock(air, x + dx, y, z + dz)
-        for (let y = ceil; y <= ceil + 2; y++) window.noa.setBlock(stone, x + dx, y, z + dz)
+    for (let dx = -r - 1; dx <= r + 1; dx++) {
+      for (let dz = -r - 1; dz <= r + 1; dz++) {
+        for (let y = floor; y <= ceil; y++) {
+          const wall = dx === -r - 1 || dx === r + 1 || dz === -r - 1 || dz === r + 1
+          window.noa.setBlock(wall || y === ceil ? stone : air, x + dx, y, z + dz)
+        }
       }
     }
-  }, [CX, CZ, FLOOR - 4, CEIL - 4, RX, ID.air, ID.stone])
+  }, [CX, CZ, FLOOR, CEIL, RX, ID.air, ID.stone])
   await waitTicks(page, 8)
   await drained(page)
 }
@@ -289,29 +299,29 @@ test('a cave at noon is dark, and a glowstone in it is not', async ({ page, terr
   await shot(page, 'sky-outdoors-noon')
 
   await digCave(page)
-  await teleport(page, CX + 0.5, FLOOR - 4, CZ + 0.5)
+  await teleport(page, CX + 0.5, FLOOR, CZ + 0.5)
   await settleOnGround(page)
   await look(page, { heading: HEADING.northMinusZ, pitch: 0.25 })
   await waitTicks(page, 3)
   await drained(page)
   const caveDark = await brightness(page)
-  const caveSky = await sky(page, CX, FLOOR - 4, CZ)
+  const caveSky = await sky(page, CX, FLOOR, CZ)
   await shot(page, 'sky-cave-noon-dark')
 
   // The same cave, with a glowstone in it. Nothing about the clock changes.
-  await setBlock(page, GLOWSTONE, CX + 2, FLOOR - 4, CZ - 2)
+  await setBlock(page, GLOWSTONE, CX + 2, FLOOR, CZ - 2)
   await waitTicks(page, 8)
   await drained(page)
   const caveLit = await brightness(page)
-  const caveBlock = await block(page, CX, FLOOR - 4, CZ)
+  const caveBlock = await block(page, CX, FLOOR, CZ)
   await shot(page, 'sky-cave-noon-glowstone')
 
   console.log(`[payoff] meadow at noon ${outdoors.toFixed(4)}`)
   console.log(`[payoff] cave at noon ${caveDark.toFixed(4)} (sky ${caveSky})`)
   console.log(`[payoff] same cave + glowstone ${caveLit.toFixed(4)} (block ${caveBlock})`)
 
-  // The cave has no sky light in it at all -- it is roofed by three blocks of
-  // stone, so not even a sideways level reaches the middle.
+  // The chamber has no sky light in it at all -- it is sealed, so not even a
+  // sideways level reaches the middle.
   expect(caveSky).toBe(0)
   // THE REPORTED SYMPTOM, as a picture rather than a number: at the same
   // instant of the same day, the cave is darker than the meadow.
@@ -320,6 +330,66 @@ test('a cave at noon is dark, and a glowstone in it is not', async ({ page, terr
   // it would be invisible on the meadow above.
   expect(caveBlock).toBeGreaterThan(0)
   expect(caveLit).toBeGreaterThan(caveDark)
+})
+
+/**
+ * The third picture: a shaft open to the sky, lit to the bottom.
+ *
+ * A TOWER rather than a hole, and not for effect. This world's flat preset is
+ * four blocks of ground over void, so there is nothing to sink a 24-block
+ * shaft INTO -- the numbers version of this above digs downward into open air,
+ * which proves the rule and photographs as nothing. Built upward, the same
+ * geometry is a chimney, and the floor at the bottom of it is the picture: a
+ * lit square inside a sealed dark room, at the same instant of the same day.
+ */
+const TOWER = 20
+
+test('the bottom of a deep shaft is as bright as the top', async ({ page, terrain }) => {
+  await useGamemode(page, 'creative')
+  await terrain.keep([CX - 6, FLOOR - 2, CZ - 6], [CX + 6, FLOOR + TOWER + 2, CZ + 6])
+  await setTime(page, NOON)
+
+  // A sealed room with one 3x3 chimney rising out of its roof, open at the top.
+  await page.evaluate(([x, z, floor, roof, top, r, air, stone]) => {
+    for (let dx = -r - 1; dx <= r + 1; dx++) {
+      for (let dz = -r - 1; dz <= r + 1; dz++) {
+        for (let y = floor; y <= roof; y++) {
+          const wall = dx === -r - 1 || dx === r + 1 || dz === -r - 1 || dz === r + 1
+          window.noa.setBlock(wall ? stone : air, x + dx, y, z + dz)
+        }
+        // The roof, with a 3x3 hole left in the middle of it.
+        const hole = Math.abs(dx) <= 1 && Math.abs(dz) <= 1
+        if (!hole) window.noa.setBlock(stone, x + dx, roof, z + dz)
+      }
+    }
+    // The chimney: a 5x5 stone shell around that hole, all the way up.
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        if (Math.abs(dx) <= 1 && Math.abs(dz) <= 1) continue
+        for (let y = roof; y <= top; y++) window.noa.setBlock(stone, x + dx, y, z + dz)
+      }
+    }
+  }, [CX, CZ, FLOOR, FLOOR + 4, FLOOR + TOWER, 3, ID.air, ID.stone])
+  await waitTicks(page, 10)
+  await drained(page)
+
+  const underShaft = await sky(page, CX, FLOOR, CZ)
+  const atTop = await sky(page, CX, FLOOR + TOWER, CZ)
+  const inCorner = await sky(page, CX + 3, FLOOR, CZ + 3)
+  console.log(`[tower] ${TOWER} tall: top ${atTop}, bottom of the shaft ${underShaft}, sealed corner ${inCorner}`)
+
+  await teleport(page, CX + 3.5, FLOOR, CZ + 3.5)
+  await settleOnGround(page)
+  await look(page, { heading: HEADING.northMinusZ, pitch: 0 })
+  await waitTicks(page, 3)
+  await shot(page, 'sky-shaft-lit-to-the-bottom')
+
+  // The whole rule, twenty blocks of it: the bottom is what the top is.
+  expect(atTop).toBe(15)
+  expect(underShaft).toBe(15)
+  // And the same room, three blocks sideways under a solid roof, is not --
+  // so the 15 above came down the shaft rather than through the stone.
+  expect(inCorner).toBeLessThan(15)
 })
 
 /* ------------------------------------------------------------------ *

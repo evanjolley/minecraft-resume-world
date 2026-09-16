@@ -149,6 +149,27 @@ export const EMISSION = {
 export const MAX_LIGHT = 15
 
 /**
+ * Blocks that stop SKY light while letting block light through, by key.
+ *
+ * One entry, and it is not a special case so much as the world's edge finally
+ * being asked what it is. island.js's barrier is solid, unbreakable and
+ * INVISIBLE, and blocks.js registers it `opaque: false` for the rendering
+ * reason -- an opaque block with no material is a hole in the world. So sky
+ * light poured straight down every column outside the patch, reached the void
+ * under the world floor, and lit the underside of the entire map from beneath.
+ *
+ * MEASURED, not theorised: 32,228 terrain vertices at spawn on the flat world
+ * against a pre-sky-light 536, and the diagnostic said what it was -- 1,024
+ * DOWN-facing quads per chunk, one per block, carrying a real sky gradient
+ * across the underside of a floor nobody can see. The split criterion was
+ * doing exactly what it should with light data that should never have existed.
+ *
+ * The barrier is Minecraft's world border wearing a block's clothes. Daylight
+ * does not come in around the edge of the world.
+ */
+const SKY_OPAQUE = ['barrier']
+
+/**
  * The sky channel's vertex attribute, holding `1 - skyLevel/15`.
  *
  * Named like noa's own `texAtlasIndices` rather than prefixed with the file,
@@ -332,6 +353,18 @@ export function installBlockLight(noa, { ids = {} } = {}) {
   for (let id = 0; id < emissionById.length; id++) {
     opaqueById[id] = noa.registry.getBlockOpacity(id) ? 1 : 0
   }
+  /*
+   * The same table plus SKY_OPAQUE. A SECOND table rather than a flag on the
+   * first, because the two channels genuinely disagree about the barrier and
+   * making them agree would change block light -- a torch at the world edge
+   * currently shines through the wall, which nobody has complained about and
+   * which spec 56 and 58 both measure.
+   */
+  const skyOpaqueById = opaqueById.slice()
+  for (const key of SKY_OPAQUE) {
+    const id = ids[key]
+    if (id !== undefined && id < skyOpaqueById.length) skyOpaqueById[id] = 1
+  }
 
   /*
    * Index 3 is DOWN, and that is load-bearing rather than incidental: the
@@ -355,6 +388,7 @@ export function installBlockLight(noa, { ids = {} } = {}) {
 
   const blockAt = (x, y, z) => world.getBlockID(x, y, z)
   const isOpaque = (x, y, z) => opaqueById[blockAt(x, y, z)] === 1
+  const blocksSky = (x, y, z) => skyOpaqueById[blockAt(x, y, z)] === 1
 
   /*
    * Is there a loaded chunk here, with a one-entry memo in front of it.
@@ -412,6 +446,7 @@ export function installBlockLight(noa, { ids = {} } = {}) {
    */
   function makeChannel({ isSky }) {
     const DEFAULT = isSky ? MAX_LIGHT : 0
+    const blocked = isSky ? blocksSky : isOpaque
     /** chunk key -> Uint8Array(CS^3). Allocated on first write, filled with
      *  DEFAULT so that "absent" and "all default" are the same world. */
     const store = new Map()
@@ -497,7 +532,7 @@ export function installBlockLight(noa, { ids = {} } = {}) {
           const ny = y + NEIGHBOURS[d][1]
           const nz = z + NEIGHBOURS[d][2]
           if (isSky && !loadedAt(nx, ny, nz)) continue
-          if (isOpaque(nx, ny, nz)) continue
+          if (blocked(nx, ny, nz)) continue
           const next = give(level, d)
           if (get(nx, ny, nz) >= next) continue
           set(nx, ny, nz, next)
@@ -706,7 +741,7 @@ export function installBlockLight(noa, { ids = {} } = {}) {
         if (aboveLoaded) cur = skyCh.get(ox + i, oy + size, oz + k) === MAX_LIGHT ? MAX_LIGHT : 0
         for (let j = size - 1; j >= 0; j--) {
           const at = (i * size + j) * size + k
-          const solid = opaqueById[data[at]] === 1
+          const solid = skyOpaqueById[data[at]] === 1
           if (solid) cur = 0
           buf[at] = cur
           if (!solid && cur !== MAX_LIGHT) off++
@@ -768,8 +803,8 @@ export function installBlockLight(noa, { ids = {} } = {}) {
           const vin = skyCh.get(inx, iny, inz)
           const vout = skyCh.get(x, y, z)
           // d ^ 1 is the opposite direction: the pairs are (0,1), (2,3), (4,5).
-          if (!isOpaque(inx, iny, inz) && skyCh.give(vout, d ^ 1) > vin) skyCh.push(x, y, z)
-          if (!isOpaque(x, y, z) && skyCh.give(vin, d) > vout) skyCh.push(inx, iny, inz)
+          if (!blocksSky(inx, iny, inz) && skyCh.give(vout, d ^ 1) > vin) skyCh.push(x, y, z)
+          if (!blocksSky(x, y, z) && skyCh.give(vin, d) > vout) skyCh.push(inx, iny, inz)
           if (d === DOWN && vout > 0 && vout > skyCh.give(vin, DOWN)) skyCh.remove(x, y, z, vout)
         }
       }
@@ -854,10 +889,12 @@ export function installBlockLight(noa, { ids = {} } = {}) {
      * opened -- so digging straight down keeps the bottom of the shaft as
      * bright as the top, which is the rule a 40-block mineshaft is the test of.
      */
+    const wasSkyBlock = skyOpaqueById[prevID] === 1
+    const nowSkyBlock = skyOpaqueById[id] === 1
     let skyMoved = false
-    if (wasOpaque !== nowOpaque) {
+    if (wasSkyBlock !== nowSkyBlock) {
       const skyHere = getSky(x, y, z)
-      if (nowOpaque) {
+      if (nowSkyBlock) {
         if (skyHere > 0) { skyCh.remove(x, y, z, skyHere); skyMoved = true }
       } else {
         for (let d = 0; d < 6; d++) {
@@ -957,7 +994,7 @@ export function installBlockLight(noa, { ids = {} } = {}) {
    * argument below: two quads meeting at an edge sample the shared lattice
    * points through this same function and therefore cannot disagree.
    */
-  function sampleLight(get, px, py, pz, nx, ny, nz) {
+  function sampleLight(get, blocked, px, py, pz, nx, ny, nz) {
     let sum = 0, count = 0
     for (let a = 0; a < 2; a++) {
       for (let b = 0; b < 2; b++) {
@@ -977,7 +1014,7 @@ export function installBlockLight(noa, { ids = {} } = {}) {
           vx = Math.floor(px) - a
           vy = Math.floor(py) - b
         }
-        if (isOpaque(vx, vy, vz)) continue
+        if (blocked(vx, vy, vz)) continue
         sum += get(vx, vy, vz)
         count++
       }
@@ -1032,7 +1069,7 @@ export function installBlockLight(noa, { ids = {} } = {}) {
     for (let x = x0; x <= x1; x++) {
       for (let y = y0; y <= y1; y++) {
         for (let z = z0; z <= z1; z++) {
-          if (isOpaque(x, y, z)) continue
+          if (blocksSky(x, y, z)) continue
           const v = getSky(x, y, z)
           if (seen < 0) seen = v
           else if (v !== seen) return -1
@@ -1213,9 +1250,10 @@ export function installBlockLight(noa, { ids = {} } = {}) {
           const wx = ox + x0 + ux * sPar + vx * t
           const wy = oy + y0 + uy * sPar + vy * t
           const wz = oz + z0 + uz * sPar + vz * t
-          g[b * (w + 1) + a] = lit ? sampleLight(getLight, wx, wy, wz, nx, ny, nz) : 0
+          g[b * (w + 1) + a] = lit
+            ? sampleLight(getLight, isOpaque, wx, wy, wz, nx, ny, nz) : 0
           gs[b * (w + 1) + a] = skyU >= 0
-            ? skyU : sampleLight(getSky, wx, wy, wz, nx, ny, nz)
+            ? skyU : sampleLight(getSky, blocksSky, wx, wy, wz, nx, ny, nz)
         }
       }
       /*
