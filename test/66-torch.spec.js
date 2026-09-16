@@ -335,7 +335,7 @@ test('mine the wall and the wall torch pops as an item', async ({ page, terrain 
   await torchRoom(page)
   await useGamemode(page, 'survival')
   // Stand clear, so falling items and the player are not in each other's way.
-  await teleport(page, CX + 2.5, PY + 1, CZ + 2.5)
+  await teleport(page, CX + 2.5, PY + 1, CZ + 1.5)
 
   // The wall runs at x = CX - 5. A torch on its +x face points west (+x here).
   const WALL_X = CX - 5
@@ -351,6 +351,12 @@ test('mine the wall and the wall torch pops as an item', async ({ page, terrain 
 
   const after = await torchDrops(page)
   console.log(`[attach] torch items on the floor: before ${before}, after ${after}`)
+  // The item on the floor where the torch was, for the eye. Daylight, because
+  // the one thing this picture has to show is an ITEM and not an empty wall.
+  await page.evaluate(() => window.game.sky.setTime(6000))
+  await look(page, { heading: HEADING.eastMinusX, pitch: 0.45 })
+  await waitFrames(page, 6)
+  await shot(page, 'torch-popped')
 
   expect(await getBlock(page, WALL_X + 1, PY + 1, CZ)).toBe(ID.air)
   // It POPPED, it did not vanish. Counting TORCH items specifically rather
@@ -593,16 +599,26 @@ test('five torches in a dark room, photographed', async ({ page, terrain }) => {
   await waitFrames(page, 8)
   await shot(page, 'torch-cave-floor')
 
-  // Turned to face the -x wall, which is where the west-pointing torch is.
-  await teleport(page, CX + 2.5, PY + 2, CZ + 0.5)
-  await look(page, { heading: HEADING.eastMinusX, pitch: 0.05 })
-  await waitFrames(page, 8)
-  await shot(page, 'torch-cave-wall')
-
-  await teleport(page, CX + 0.5, PY + 3.4, CZ + 0.5)
-  await look(page, { heading: HEADING.northMinusZ, pitch: 0.8 })
-  await waitFrames(page, 8)
-  await shot(page, 'torch-room-overview')
+  /*
+   * One shot per wall, from the middle of the room. Four frames rather than
+   * one clever angle, because the thing to look at is the LEAN, and a torch
+   * seen from anywhere but square-on foreshortens its own tilt away.
+   *
+   * Named by the wall, not by the torch: `torch-wall-west` is the west-
+   * pointing torch, which hangs on the room's -x wall.
+   */
+  const views = [
+    ['west', HEADING.eastMinusX, [CX + 2.5, CZ + 0.5]],
+    ['east', HEADING.westPlusX, [CX - 2.5, CZ + 0.5]],
+    ['south', HEADING.northMinusZ, [CX + 0.5, CZ + 2.5]],
+    ['north', HEADING.southPlusZ, [CX + 0.5, CZ - 2.5]],
+  ]
+  for (const [name, heading, [px, pz]] of views) {
+    await teleport(page, px, PY + 1.6, pz)
+    await look(page, { heading, pitch: -0.05 })
+    await waitFrames(page, 8)
+    await shot(page, `torch-wall-${name}`)
+  }
 
   /*
    * The one number in a test full of pictures: the torch is actually DRAWN
