@@ -376,6 +376,39 @@ export function installThinInstanceUploadFix(noa) {
  * Collision.
  * ------------------------------------------------------------------ */
 
+/*
+ * THE OPT-OUT, and read the invariant it is opting out of first.
+ *
+ * One box list drives BOTH the mesh and the collision. That is the whole
+ * reason this file exists -- "the stairs render one way and collide another"
+ * is the bug it was written to make impossible -- and nothing below weakens
+ * it for slabs, for stairs, or for anything that arrives later and says
+ * nothing.
+ *
+ * But some shapes are not things you bump into. You walk THROUGH a torch in
+ * Minecraft, and through a sign, and through a flower; vanilla gives all
+ * three an empty collision shape while drawing them in full. So the opt-out
+ * is not "this shape's boxes are different from its mesh" -- that is the
+ * drift the invariant forbids -- it is "this shape has NO collision at all".
+ * A shape either collides as exactly what it looks like, or it does not
+ * collide. There is no third answer here and there should not be one.
+ *
+ * Declared per SHAPE KEY rather than per block id, so it is a fact about the
+ * geometry (a torch is a torch) rather than a list blocks.js has to remember
+ * to keep in step. blocks.js turns the keys into ids in the same loop that
+ * builds shapeById, and hands them here.
+ *
+ * NOT non-solid: these blocks stay in `shapeById`, so blocks.js's
+ * `blockTargetIdCheck` still lets the crosshair land on one and you can still
+ * mine it. What they leave is the physics resolver and `shapeBoxesFor`, which
+ * is also what dropped items sweep against -- an item that landed on top of a
+ * torch would be resting on nothing.
+ *
+ * Signs are next and will be in this set for the same reason (docs/FUTURE.md
+ * item 1). It is a capability of the file, not a torch's special case.
+ */
+export const PASS_THROUGH_SHAPES = new Set()
+
 /** Minecraft's player step height: onto a slab, never onto a full block. */
 const STEP_HEIGHT = 0.6
 
@@ -627,11 +660,26 @@ function applyStandingFriction(body, dvFromGravity) {
  */
 let shapeLookup = []
 
-/** @returns the sub-boxes for a block id, or undefined for cubes and air. */
+/**
+ * The sub-boxes a block id COLLIDES as: undefined for cubes, for air, and for
+ * a pass-through shape, which is drawn and never bumped into.
+ */
 export const shapeBoxesFor = (id) => shapeLookup[id]
 
-export function installNonCubeCollision(noa, shapeById) {
-  shapeLookup = shapeById
+/**
+ * @param {*} noa
+ * @param {any[]} shapeById sparse array: block id -> boxes, or undefined
+ * @param {Set<number>} passThrough ids whose shape is drawn but never collided
+ */
+export function installNonCubeCollision(noa, shapeById, passThrough = new Set()) {
+  /*
+   * The collision view of the one table. Holes for the pass-through ids and
+   * the SAME array instances for everyone else -- a copy of the boxes would
+   * be a second place for a shape to live, which is the drift the whole file
+   * is guarding against.
+   */
+  const collideById = shapeById.map((boxes, id) => (passThrough.has(id) ? undefined : boxes))
+  shapeLookup = collideById
   const physics = noa.physics
   const originalTick = physics.tick.bind(physics)
 
@@ -698,7 +746,7 @@ export function installNonCubeCollision(noa, shapeById) {
     const dvFromGravity = physics.gravity[1] * (dt / 1000)
     for (const body of physics.bodies) {
       if (body.mass <= 0) continue
-      const h = resolveBody(noa, shapeById, body, prev.get(body), scratch)
+      const h = resolveBody(noa, collideById, body, prev.get(body), scratch)
       if (h === null) support.delete(body)
       else support.set(body, h)
       if (propped.has(body)) applyStandingFriction(body, dvFromGravity * body.gravityMultiplier)

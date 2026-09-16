@@ -1,5 +1,5 @@
 import {
-  SHAPE_BOXES, buildShapeMesh, createMaterialCache,
+  SHAPE_BOXES, PASS_THROUGH_SHAPES, buildShapeMesh, createMaterialCache,
   installNonCubeCollision, installPlacementOrientation, installThinInstanceUploadFix,
 } from './blockMeshes.js'
 
@@ -1238,6 +1238,14 @@ export function registerBlocks(noa) {
   const scene = noa.rendering.getScene()
   const materialFor = createMaterialCache(noa)
   const shapeById = []
+  /*
+   * ...and the ids whose shape is drawn but never collided. Filled from
+   * blockMeshes.js's PASS_THROUGH_SHAPES in the same loop that fills
+   * shapeById, so the two cannot name different blocks. See the opt-out note
+   * there: a shape either collides as exactly what it looks like, or it does
+   * not collide at all.
+   */
+  const passThrough = new Set()
 
   const ids = {}
   for (const def of BLOCK_TYPES) {
@@ -1245,6 +1253,7 @@ export function registerBlocks(noa) {
       const boxes = SHAPE_BOXES[def.shape]
       if (!boxes) throw new Error(`block "${def.key}" wants unknown shape "${def.shape}"`)
       shapeById[def.id] = boxes
+      if (PASS_THROUGH_SHAPES.has(def.shape)) passThrough.add(def.id)
       ids[def.key] = noa.registry.registerBlock(def.id, {
         /*
          * NO `material`, and this is not an oversight. noa's greedy mesher
@@ -1314,7 +1323,7 @@ export function registerBlocks(noa) {
 
   installAlphaPageMaterials(noa)
   installThinInstanceUploadFix(noa)
-  installNonCubeCollision(noa, shapeById)
+  installNonCubeCollision(noa, shapeById, passThrough)
   installPlacementOrientation(noa, NON_CUBE_VARIANTS)
 
   return ids
