@@ -174,6 +174,16 @@ because "shipped work moves up and loses its section" is this file's own rule.
   (`98c3e86`). Not the same bug as `docs/REPORTED.md` #4, which is still open.
 - **The creative inventory, the tab list, F3, death messages and the heart
   animation** all shipped in this stretch too.
+- **Block light** (`src/blockLight.js`). Glowstone, sea lanterns, lava and
+  magma now light the world, by flooding a BFS out over the voxel data and
+  rewriting the finished vertex buffers' alpha channel. The part worth stealing
+  is HOW: noa's mesher was thought to be unreachable without vendoring the
+  package, and it is not — `meshChunk` can be wrapped **on the instance**, so
+  the engine stays a dependency. That pattern is now used twice and is the
+  reason the old item 2 below had to be rewritten rather than ticked off.
+  **Sky light is not built**, so caves are still lit as if the roof were not
+  there, and Evan reports glowstone reading as directional rather than radial.
+  Both are itemised below.
 - **A seed scout with a real occlusion test** (`8aa37eb`,
   `docs/seed-434533485056755.md`), and a 256-block patch cut from it sized by
   measurement rather than by guess (`cf498ef`). This is the machinery the old
@@ -218,32 +228,42 @@ on effort.
    Plausibly the highest value-per-effort item on this entire list. Everything
    else here makes the world more elaborate. This is the first thing that lets
    it say anything. It absorbs "spawn signage" from "Also worth building".
-2. **There is no light engine, and that is four reported symptoms.** New to
-   this list, and it arrives costed rather than as an idea: `docs/lighting.md`
-   is a full diagnosis and a plan, read out of `node_modules/noa-engine/` and
-   not from memory. The argument is not repeated here. What belongs here is the
-   shape of it and the price.
+2. **The light engine is half built, and sky light is the missing half.**
+   This entry used to read "there is no light engine" and cost it at two to
+   four days. **The block half now ships** — `src/blockLight.js` — so what
+   follows is the corrected version, and two of the things the old entry
+   asserted turned out to be wrong in a way worth keeping on the record.
 
-   **One missing feature, four symptoms**, and fixing any one means building
-   all of it: glowstone lights nothing (`docs/REPORTED.md` #5), a torch would
-   light nothing either if torches landed (#3), a player in a cave is lit as if
-   outdoors (`src/entityLight.js`), and F3 has no Client/Server Light lines
-   (`src/debugScreen.js`). Four separate small disappointments, each filed on
-   its own, all the same hole.
+   **What the four symptoms did.** Glowstone lighting nothing
+   (`docs/REPORTED.md` #5) is fixed. F3's missing Client/Server Light lines
+   (`src/debugScreen.js`) and a player in a cave lit as if outdoors
+   (`src/entityLight.js`) are both still open, but they are now a wiring job
+   against `window.blockLight.getBlockLight` rather than a feature. A torch
+   lighting nothing (#3) is moot for a different reason — torches still cannot
+   be placed at all, and that is `blockMesh`, not lighting. See "Also worth
+   building".
 
-   **noa 0.33 offers nothing to build on and one thing to build with.** The
-   registry has no emission field, a chunk stores block ids and nothing else,
-   and the terrain mesher is a closed module that takes no callbacks — so
-   per-voxel light data means editing that file, which means vendoring noa
-   rather than depending on it. Against that, `docs/lighting.md` found a **free
-   per-vertex channel**: ambient occlusion is already premultiplied into vertex
-   colour RGB, so a light term can ride the lane that exists instead of adding
-   an attribute. **Two to four days.**
+   **Two claims here were wrong, and the correction is the useful part.** The
+   old entry said noa's terrain mesher "is a closed module that takes no
+   callbacks — so per-voxel light data means editing that file, which means
+   vendoring noa". It does not. `meshChunk` is reachable **on the noa
+   instance**, so it can be wrapped, the finished vertex buffers read back and
+   rewritten, and `npm update` still works. Nothing was vendored. The old entry
+   also planned to ride the vertex colour RGB lane that ambient occlusion
+   premultiplies into; the shipped engine uses the **alpha** channel instead,
+   which leaves AO untouched rather than sharing with it.
 
-   It is the largest open item in this project that is not content, and it is
-   the reason torches are deliberately not built — a torch that lights nothing
-   is the glowstone complaint arriving a second time, from a player who just
-   mined coal specifically to see in a cave.
+   **What remains is sky light**, and it is the reason caves are still bright.
+   Vanilla seeds 15 in every column open to the sky, propagates DOWN with no
+   decay, sideways at the usual 1 per block, and renders at
+   `max(skyLight * daylight, blockLight)` — only the first term following
+   `src/sky.js`. The BFS, the store, the dirty tracking and the vertex writeback
+   all exist and are tested, so this is a second channel through a pipe that is
+   already laid. The two genuinely new pieces are the no-decay downward rule
+   and the fact that a block edit dirties a whole column rather than a radius.
+   Detail in "Also worth building" below; `docs/lighting.md` is the original
+   diagnosis and is now partly historical.
+
 3. **Dropped non-block items are flat planes.** `itemModel.js` now extrudes
    item sprites for the hand, and the same mesh is reusable in
    `itemEntity.js` — but it needs a `ground` entry in `DISPLAY` (vanilla's is
@@ -1122,27 +1142,98 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
 - **Passive ambient animals.** Deliberately NOT hostile mobs (see below), but
   a couple of wandering chickens would make the island feel alive for a
   fraction of the cost. The model infrastructure now exists.
-- **Block light on entities, which needs a light engine noa does not have.**
-  Entities now follow the day/night cycle — `src/entityLight.js` drives every
-  skin and held-item material from the same `level` sky.js gives the sun, so a
-  model darkens with the ground it stands on. That is only HALF of what vanilla
-  does. Minecraft lights an entity from `max(skyLight * daylight, blockLight)`
-  at its position; this has the daylight term and no block term, because noa
-  ships no light propagation at all — ambient occlusion and one directional
-  vector, with no per-voxel value to read. The same gap is why the F3 screen
-  has no Client/Server Light lines. So the current model is **right outdoors
-  and wrong in a cave**: go underground at noon and you stay lit as if you were
-  standing in the open, and a torch does nothing to you. Deliberately not
-  papered over with a "can this entity see the sky" raycast — that darkens
-  anyone standing in a doorway, and a wrong lighting model is harder to spot
-  and harder to remove later than an absent one. The real fix is a flood-fill
-  light engine over the voxel data, which is a large piece of work that also
-  buys torches that light terrain. **This is item 2 now**, and it is costed:
-  `docs/lighting.md`, two to four days, riding the per-vertex colour channel AO
-  already uses. It was written here as "worth doing only once caves or interiors
-  are somewhere a visitor actually spends time", and a superflat overworld has
-  neither — but the reports came in anyway, because a player who places
-  glowstone expects it to do something wherever he is standing.
+- **Sky light, which is the half of the light engine that is not built.**
+  The block half shipped — `src/blockLight.js` floods light out from glowstone,
+  lava, sea lanterns and magma through a BFS over the voxel data, and writes the
+  result into the vertex colour alpha channel by wrapping `meshChunk` on the noa
+  instance. What it does NOT do is model light coming from the sky, and the
+  symptom is the one you would predict: **caves are lit as if the roof were not
+  there.** Vanilla seeds sky light at 15 in every column open to the sky,
+  propagates it DOWN with no decay at all (which is why a 40-block shaft is
+  fully lit at the bottom) and sideways with the same 1-per-block decay block
+  light uses, then renders a voxel at `max(skyLight * daylight, blockLight)`.
+  Only the first term reacts to `src/sky.js`'s day/night cycle, and that
+  asymmetry is the whole feature — it is what makes a torch matter at midnight
+  and not at noon.
+  The propagation machinery is already written and already tested, so this is
+  mostly a second channel through the same pipe plus the `max` at the end. The
+  two places it gets interesting are the no-decay downward rule, which is a
+  special case in the BFS rather than a different constant, and the fact that
+  sky light has to be recomputed for a whole column when a block is placed or
+  broken in it, where block light only ever dirties a radius.
+- **Block light on entities, now that the engine exists.** `src/entityLight.js`
+  drives every skin and held-item material from the same `level` sky.js gives
+  the sun, so a model darkens with the ground it stands on. That is still only
+  HALF of what vanilla does — `max(skyLight * daylight, blockLight)` — and this
+  has the daylight term and no block term. **The reason has changed, though,
+  and it is worth being precise about it.** This bullet used to say the blocker
+  was that noa ships no light propagation at all. It now does. `entityLight.js`
+  simply has not been wired to `window.blockLight.getBlockLight`, which is a
+  much smaller job than the one this entry was originally costed for: stand a
+  model next to a torch and it should brighten. The same call is what fills in
+  F3's missing Client/Server Light lines. Still deliberately not papered over
+  with a "can this entity see the sky" raycast — that darkens anyone standing
+  in a doorway, and a wrong lighting model is harder to spot and harder to
+  remove later than an absent one.
+- **Torches cannot be placed.** Reported by Evan. Not a regression and not a
+  light-engine bug — **the torch has never been a block.** `src/items.js` keeps
+  it in `UNPLACEABLE` alongside the ladder, with `itemPlaces` answering 0, so it
+  crafts (4 from a coal and a stick), stacks, and sits in the creative
+  `functional_blocks` group while placing nothing. The reason written there is
+  still the true one: a torch is non-cube geometry and this world is 355 full
+  cubes. So the fix is not in the torch, it is `blockMesh` — the same missing
+  piece the importer bullet above is waiting on, and the same class of problem
+  flowing water ran into, where giving a block a `shape` costs it the category
+  it was registered under. Worth knowing that everything downstream is already
+  in place for the day it lands: `EMISSION.torch` is 14 and has been since the
+  light engine shipped, so a placed torch would light its surroundings the
+  moment it could exist at all.
+- **Glowstone lights directionally instead of radially.** Reported by Evan —
+  light does not diffuse out evenly the way it should. **The BFS is almost
+  certainly not the culprit**, since it is a symmetric flood over all six
+  neighbours and the unit tests cover the falloff. The leading hypothesis is
+  the mesher, and it is specific enough to check quickly: **noa merges faces
+  greedily**, and `terrainMesher.js`'s merge predicate compares material and
+  the AO mask and *nothing else*, because noa has no light to compare. So a
+  flat floor becomes one enormous quad with four vertices at its far corners,
+  `writeVertexLight` samples light only at those four corners, and the GPU
+  interpolates linearly across the whole span. A glowstone sitting in the
+  middle of that quad contributes almost nothing to any corner, and whatever
+  gradient does appear is biased toward whichever corner is nearest — which
+  would read exactly as "directional". Vanilla avoids this by refusing to merge
+  faces whose light levels differ.
+  **Flagged as a hypothesis, not a diagnosis.** It has not been verified by
+  experiment, and this repo has a long and well-documented record of confident
+  wrong first guesses about rendering. The cheap test is to place glowstone
+  against a small irregular surface where greedy merging has nothing to merge
+  and see whether the falloff goes round.
+  If it is confirmed, the cost is real and worth knowing in advance: the merge
+  predicate lives *inside* noa's greedy mesher, below the instance-level
+  `meshChunk` wrap that `blockLight.js` uses to stay off a fork. Making it
+  light-aware means either reaching further into noa than anything here
+  currently does, or splitting quads after the fact. **That is the ceiling of
+  the wrap-the-mesher pattern**, and this is the first thing to hit it.
+- **Elytra.** Requested by Evan — the item, how it is used, and the flight
+  model. In vanilla it occupies the **chest armour slot**, which this already
+  has: `src/armor.js` runs Minecraft's real `getDamageAfterAbsorb` over four
+  slots, and an elytra contributing zero defence points needs no special case
+  in that formula — it just takes the chestplate's place and gives up the
+  protection, which is the actual trade the item makes.
+  The flight is the substantial half and it is its own physics mode rather than
+  a tweak to `src/physics.js`'s existing one. Vanilla deploys on a jump press
+  while falling, then each tick rotates the velocity toward the look vector —
+  pitch down and you trade height for speed, pitch up and you climb until you
+  stall. That is a genuinely different integrator from walking, and it is the
+  first thing in this project that would make the pitch axis load-bearing for
+  movement rather than only for the camera. Fireworks as a boost are a separate
+  item that does not exist yet and are not required for a first pass; neither
+  is durability.
+  Two things make this less speculative than it sounds. Creative flight already
+  exists and already has its own velocity handling, so the notion of a second
+  movement mode is established rather than new. And the world it would be used
+  in is currently a superflat plain, where there is nothing to launch from and
+  nothing to fly over — so this is worth more after there is terrain or a build
+  to see from the air, which is the same gap most of section 1 is waiting on.
 
 ## Someday
 
