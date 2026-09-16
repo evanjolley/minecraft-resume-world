@@ -25,6 +25,7 @@ import { installCrackOverlay } from './crackOverlay.js'
 import { installSky, LIGHT_VECTOR } from './sky.js'
 import { installUnderwater } from './underwater.js'
 import { installTerrainAnimation } from './terrainAnimation.js'
+import { installBlockLight } from './blockLight.js'
 import { createArmorReduction } from './armor.js'
 import { itemName, itemId, dropFor, rollDrops, unmappedDrops } from './items.js'
 import { itemModelStats } from './itemModel.js'
@@ -179,6 +180,14 @@ const ids = registerBlocks(noa)
  * first time a chunk containing it is meshed. Late means never.
  */
 const terrainAnim = installTerrainAnimation(noa)
+
+/*
+ * Block light. After installTerrainAnimation because it attaches a second
+ * material plugin to the same terrain materials, and before any chunk is
+ * meshed because it wraps the mesher. Block light only -- see blockLight.js
+ * for what sky light would still add.
+ */
+const blockLight = installBlockLight(noa, { ids })
 
 // noa asks for chunk contents whenever its loader decides it needs them and
 // expects setChunkData in response. Forget that call and the chunk simply
