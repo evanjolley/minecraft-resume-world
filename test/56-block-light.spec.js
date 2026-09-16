@@ -185,24 +185,50 @@ test('a glowstone in a dark room brightens the room', async ({ page, terrain }) 
   expect(lit).toBeGreaterThan(dark * 1.5)
 })
 
-test('the same room at noon is still bright, because sky light is not built', async ({ page, terrain }) => {
+/*
+ * THE ASSERTION THAT WAS BUILT TO FAIL, AND DID.
+ *
+ * This test used to read "the same room at noon is still bright, because sky
+ * light is not built", and it asserted `noon > night * 1.5` -- a sealed room
+ * lit by the sun, recorded as a number so that the next person would not have
+ * to rediscover that it was known to be wrong. It failed on 2026-09-16, which
+ * is what it was for. `src/blockLight.js` grew a sky channel and
+ * `test/65-sky-light.spec.js` is the file that owns the subject now.
+ *
+ * It is INVERTED rather than deleted. The claim has a direction, and a test
+ * that says "a roof works" is worth more here than one less test: this room is
+ * the same room the midnight case above is photographed in, so the pair now
+ * says the light in it comes from the glowstone and from nothing else.
+ */
+test('the same room at noon is dark too, because it has a roof', async ({ page, terrain }) => {
   await terrain.keep([CX - 6, FLOOR, CZ - 6], [CX + 6, CEIL, CZ + 6])
   await buildRoom(page)
   await page.evaluate((t) => window.game.sky.setTime(t), NOON)
   await standInside(page)
   const noon = await brightness(page)
-  await shot(page, 'block-light-room-noon-no-skylight')
+  await shot(page, 'block-light-room-noon-dark')
 
   await page.evaluate((t) => window.game.sky.setTime(t), MIDNIGHT)
   await waitTicks(page, 3)
   const night = await brightness(page)
+  console.log(`[roof] sealed room at noon ${noon.toFixed(4)}, at midnight ${night.toFixed(4)}`)
 
-  /*
-   * This assertion exists to FAIL the day sky light lands, and that is the
-   * point of it. A sealed room lit by the sun is wrong; it is recorded here as
-   * a number so the next person does not have to rediscover that it was known.
-   */
-  expect(noon).toBeGreaterThan(night * 1.5)
+  // The clock moved and the room did not. Not "noon is dark" on its own, which
+  // a black screen would satisfy -- the two readings have to be the SAME, and
+  // one of them is taken with the sun directly overhead.
+  expect(noon).toBeLessThan(night * 1.3)
+  expect(noon).toBeGreaterThan(night * 0.7)
+
+  // And the control, so this is not measuring a broken renderer: the same
+  // clock, the same camera, outside.
+  await page.evaluate((t) => window.game.sky.setTime(t), NOON)
+  await teleport(page, CX + 10.5, FLOOR + 1, CZ + 10.5)
+  await settleOnGround(page)
+  await look(page, { heading: HEADING.northMinusZ, pitch: 0.35 })
+  await waitTicks(page, 3)
+  const outside = await brightness(page)
+  console.log(`[roof] outdoors at the same noon ${outside.toFixed(4)}`)
+  expect(outside).toBeGreaterThan(noon * 3)
 })
 
 /* ------------------------------------------------------------------ *
