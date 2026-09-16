@@ -175,10 +175,31 @@ export function setSunLight(light) {
   sun = light
 }
 
-/** Test seam: the rig, or null if no entity mesh has ever been drawn. */
-export function entityRig() {
-  return rig
-}
+/*
+ * THERE IS NO TEST SEAM HERE, and there used to be three comments claiming
+ * otherwise.
+ *
+ * `entityRig()`, `getEntityLight()` and `trackedEntityMaterials()` were all
+ * exported from this file, and two of them carried comments saying the suite
+ * needed them. No spec could reach any of them: main.js never imports this
+ * module, it does not self-publish to `window` the way blockLight.js does at
+ * :1693, and it has no key in `window.game`. Three exports, zero importers,
+ * zero references in test/. They were deleted rather than wired up.
+ *
+ * Deleted rather than plugged, deliberately. Publishing them would have meant
+ * either a second `window.X =` global -- which is exactly the drift
+ * docs/HEALTH.md §7 already objects to, three lighting modules having invented
+ * three different answers to "how does a spec see me" -- or importing this
+ * module into main.js purely to hang a debug handle off `window.game`.
+ * Neither is worth doing for a seam nothing has ever asked for. If a spec
+ * genuinely needs the rig or the tracked material list later, add it to
+ * `window.game` in main.js at that point, which is the convention, and the
+ * export comes back in three lines.
+ *
+ * The rule this is an instance of: a comment asserting a capability that does
+ * not exist is worse than no comment, because it stops the next person from
+ * checking.
+ */
 
 function ensureRig(scene) {
   if (rig) return rig
@@ -402,15 +423,6 @@ export function setEntityLight(value) {
    */
   adopt()
   for (const [mat, probe] of tracked) apply(mat, probe)
-}
-
-export function getEntityLight() {
-  return level
-}
-
-/** Test seam: the suite needs to know whether anything is actually wired up. */
-export function trackedEntityMaterials() {
-  return [...tracked.keys()]
 }
 
 /**

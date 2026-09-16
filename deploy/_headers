@@ -19,8 +19,28 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
-# Monocraft and its OFL text are a pinned third-party drop. If the typeface
-# ever changes it will be a different file with a different name.
+# Monocraft and its OFL text.
+#
+# THE JUSTIFICATION FOR `immutable` HERE CHANGED, and the header did not, so
+# read this before editing the font. This used to say "a pinned third-party
+# drop -- if the typeface ever changes it will be a different file with a
+# different name", which was true while the deployed file WAS the upstream
+# TTF. It is not any more: what ships is a subset this repo cuts itself
+# (fonts-src/NOTICE.txt), at a fixed name, which puts it in exactly the
+# category /textures/* below is careful NOT to mark immutable -- a permanent
+# URL whose bytes we can change.
+#
+# It stays immutable anyway, because the alternative is revalidating a 2.6 KB
+# file on every visit and the round trip costs more than the file does. The
+# price of that is a rule, and the rule is:
+#
+#   RE-CUTTING THE SUBSET MEANS RENAMING THE FILE.
+#
+# Monocraft-v2.woff2, or a content hash, or anything else -- but not the same
+# name with different bytes, because `immutable` is a promise that a year of
+# caches will hold you to. A client that fetched the old one will not ask
+# again. fonts-src/NOTICE.txt says the same thing next to the command that
+# does the cutting, which is the other place someone will be standing.
 /fonts/*
   Cache-Control: public, max-age=31536000, immutable
 

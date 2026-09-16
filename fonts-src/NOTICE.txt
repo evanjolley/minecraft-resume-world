@@ -107,3 +107,10 @@ measures against it:
 
 If the advance is not 720 the HUD and chat will still render and will be
 subtly misaligned, which is the kind of wrong nobody files a bug about.
+
+AND RENAME THE OUTPUT. deploy/_headers serves /fonts/* with
+`max-age=31536000, immutable`, which is a promise that these bytes at this URL
+never change. Re-cutting the subset under the same name breaks that promise
+for a year of caches -- every returning visitor keeps the old font and never
+asks again. Cut to Monocraft-v2.woff2 (or a content hash) and update the
+@font-face url in index.html. The header file carries the same warning.
