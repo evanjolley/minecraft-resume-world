@@ -251,16 +251,43 @@ export function flowUV(fx, fz, dx, dz) {
  * ------------------------------------------------------------------ */
 
 /**
+ * blockLight.js's sky-light lane, by name.
+ *
+ * The string is duplicated rather than imported because blockLight.js keeps
+ * its `SKY_ATTRIB` module-private, and the terrain vertex format is a contract
+ * between these two files either way -- `pos.length / 12`, `idx[f*6+i] - f*4`
+ * and this name are all things both sides have to agree on. A rename there
+ * should break this file loudly rather than be quietly followed; the sky lane
+ * going missing is EXACTLY the bug this constant exists to have fixed.
+ *
+ * Holds `1 - sky/15`, inverted, which is why a mesh that never carried one
+ * renders at full sky rather than pitch black -- and therefore why this
+ * attribute being dropped looked like "water is too bright in a cave" instead
+ * of looking like a crash.
+ */
+const SKY_ATTRIB = 'noaSkyLight'
+
+/**
  * Split every merged fluid quad back into unit cells and drop each corner to
  * its own height.
  *
  * Installed from fluids.js rather than main.js, and therefore AFTER
  * installBlockLight. That ordering is deliberate and load-bearing: this
- * wrapper is the outer one, so block light has already written the vertex
- * alpha lane on the un-split mesh by the time the split runs, and the split
- * INTERPOLATES the colour buffer along with everything else. Light and ambient
- * occlusion survive at exactly the values noa and blockLight computed. The
- * other order would leave the new vertices unlit until the next remesh.
+ * wrapper is the outer one, so block light has already written BOTH its lanes
+ * on the un-split mesh by the time the split runs -- the alpha of the colour
+ * buffer, and the separate `noaSkyLight` attribute -- and the split
+ * INTERPOLATES both along with everything else. Light and ambient occlusion
+ * survive at exactly the values noa and blockLight computed. The other order
+ * would leave the new vertices unlit until the next remesh.
+ *
+ * Being the outer wrapper is also the whole of the obligation: every buffer
+ * the inner wrappers wrote has to come back out of here at the NEW vertex
+ * count. `noaSkyLight` was missed once already and shipped as "water is bright
+ * in a cave"; blockLight.js guards against the shape of that mistake with a
+ * deferred wrap outside this one that drops any sky attribute whose length
+ * disagrees with the position buffer. That guard should now be a no-op --
+ * 69-fluid-sky asserts the length agrees -- and anything added to this
+ * readback later has to keep it that way.
  */
 export function installFluidGeometry(noa, world) {
   const mesher = noa._terrainMesher
@@ -330,6 +357,25 @@ export function installFluidGeometry(noa, world) {
     const col = mesh.getVerticesData(VertexBuffer.ColorKind)
     const uv = mesh.getVerticesData(VertexBuffer.UVKind)
     const atlas = mesh.getVerticesData('texAtlasIndices')
+    /*
+     * THE SECOND LIGHT LANE, and the one thing this pass used to lose.
+     *
+     * Block light rides in vertex ALPHA, so `bilinear(col, ...)` below has
+     * always carried it for free. Sky light cannot share that lane (the GPU
+     * interpolates, and the interpolation of a packed pair is not the pair of
+     * the interpolations -- blockLight.js's header works the arithmetic), so
+     * it is a second attribute, and a second attribute has to be carried by
+     * hand exactly like `texAtlasIndices` is. It was not, so the rebuilt mesh
+     * left it behind at the old vertex count and every fluid surface in the
+     * world rendered at full sky. Water in a sealed cave at noon was as bright
+     * as water in the meadow above it.
+     *
+     * Null when blockLight never wrote one -- a mesh whose every vertex sits
+     * under open sky skips the allocation entirely, since 0 already means full
+     * sky. Absent in, absent out: rebuilding a zero-filled one would be the
+     * same picture for the cost of a buffer.
+     */
+    const sky = mesh.getVerticesData(SKY_ATTRIB)
     const idx = mesh.getIndices()
     if (!pos || !norm || !col || !uv || !idx) return
     const ox = chunk.x, oy = chunk.y, oz = chunk.z
@@ -348,6 +394,7 @@ export function installFluidGeometry(noa, world) {
 
     const outPos = [], outNorm = [], outCol = [], outUV = [], outIdx = []
     const outAtlas = atlas ? [] : null
+    const outSky = sky ? [] : null
     let vcount = 0
 
     for (let f = 0; f < nf; f++) {
@@ -466,6 +513,22 @@ export function installFluidGeometry(noa, world) {
             bilinear(uv, f, 2, s, t, outUV)
           }
           bilinear(col, f, 4, s, t, outCol)
+          /*
+           * Interpolated from the parent's four corners, not resampled from
+           * the light store -- the same treatment the colour above gets, and
+           * for the same reason: blockLight already averaged the 2x2 of voxels
+           * at each parent corner, and asking the store again per sub-corner
+           * would be a second, differently-rounded answer to a question that
+           * has already been answered.
+           *
+           * Sampled at the corner's PARAMETRIC position, which for a top face
+           * is the corner before it is dropped to `cornerHeight`. The surface
+           * moves down by at most 8/9 of a block and sky light does not decay
+           * downward at all, so the value it would read after the drop is the
+           * value it reads here. The alpha lane has always made the same
+           * trade; this one is no worse.
+           */
+          if (outSky) bilinear(sky, f, 1, s, t, outSky)
           if (outAtlas) outAtlas.push(layer >= 0 ? layer : atlas[f * 4])
         }
         for (const i of pattern) outIdx.push(vcount + i)
@@ -488,6 +551,7 @@ export function installFluidGeometry(noa, world) {
     mesh.setVerticesData(VertexBuffer.ColorKind, new Float32Array(outCol), false, 4)
     mesh.setVerticesData(VertexBuffer.UVKind, new Float32Array(outUV), false, 2)
     if (outAtlas) mesh.setVerticesData('texAtlasIndices', new Float32Array(outAtlas), false, 1)
+    if (outSky) mesh.setVerticesData(SKY_ATTRIB, new Float32Array(outSky), false, 1)
     mesh.setIndices(outIdx)
   }
 
