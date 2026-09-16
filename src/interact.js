@@ -233,20 +233,17 @@ export function installInteraction(noa, inv, fx, authority) {
 
     const [x, y, z] = target.adjacent
 
-    // Don't let the player entomb themselves. Minecraft refuses to place a
-    // block inside any entity's bounding box, and without this check you can
-    // place a block into your own feet and end up stuck inside terrain.
-    //
-    // A spectator has no bounding box worth speaking of, but they cannot
-    // build either, so this stays unconditional.
-    const p = noa.ents.getPositionData(noa.playerEntity)
-    const [px, py, pz] = p.position
-    const w = p.width / 2
-    const intersects =
-      x + 1 > px - w && x < px + w &&
-      z + 1 > pz - w && z < pz + w &&
-      y + 1 > py && y < py + p.height
-    if (intersects) return
+    /*
+     * "Don't let the player entomb themselves" used to be eight lines of
+     * inline box arithmetic here, against the player's position data. It is
+     * gone: authority.js refuses any placement that lands inside a BODY, and
+     * the player is simply one of the bodies. Same rule, one owner, and it
+     * now also covers the NPC standing three blocks away -- which this
+     * version could not see, because it only ever looked at you.
+     *
+     * The refusal arrives as a `!ok` from requestBlockChange below, before
+     * the stack is consumed, which is where it has to happen.
+     */
 
     // A stack holds an ITEM, and most items place nothing at all.
     const id = itemPlaces(stack.id)

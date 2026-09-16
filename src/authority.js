@@ -254,6 +254,68 @@ export function createAuthority({ world, storage = globalThis.localStorage } = {
       if (cause === 'break' && !c.mayBreak) return deny('You cannot break blocks in this game mode')
       if (cause === 'place' && !c.mayBuild) return deny('You cannot place blocks in this game mode')
       if (cause === 'command' && !isOperator()) return NOT_ALLOWED
+      /*
+       * NOTHING GETS BUILT INSIDE SOMEBODY.
+       *
+       * Vanilla's rule, and it is a rule about the WORLD rather than about
+       * the player: `BlockItem.placeBlock` asks `Level.isUnobstructed`, which
+       * tests the candidate block's shape against every entity box that
+       * overlaps it. Your own box is in that set, which is why you cannot
+       * seal yourself into the floor by aiming down -- the check that stops
+       * you entombing yourself and the check that stops you building through
+       * Evan are not two features, they are one sentence.
+       *
+       * WHY IT MOVED HERE. interact.js had half of it: eight lines of inline
+       * arithmetic against `noa.ents.getPositionData(noa.playerEntity)`,
+       * which is the player and only ever the player. Evan now has a real
+       * body, so a player-shaped check had become a bug with a comment on it,
+       * and the fix is the one onBlockDestroyed took a pass earlier -- put
+       * the general question at the boundary every block change already
+       * crosses, rather than a second entity-shaped branch at one call site.
+       * Right-click is not the only way a block appears.
+       *
+       * COMMANDS ARE EXEMPT, which is also vanilla: /setblock and /fill write
+       * the world and do not consult entities, and an operator who wants a
+       * block where somebody is standing is allowed to have one. That is why
+       * this sits under the cause checks instead of above them.
+       *
+       * QUIETLY, with no message. Vanilla does not tell you why the block did
+       * not appear; it simply does not appear, and the item is not spent.
+       * `deny` carries a string because the shape demands one and /setblock
+       * would want it -- for a 'place' nothing renders it, because
+       * interact.js returns on `!ok` before it consumes the stack.
+       *
+       * AND ONLY BLOCKS THAT WOULD ACTUALLY COLLIDE, which is the clause that
+       * stops this being a regression in two other callers. `isUnobstructed`
+       * is `state.getCollisionShape().isEmpty() || noCollision(...)` -- an
+       * empty shape is unobstructed by definition, which is why vanilla lets
+       * you pour water over your own feet, walk into a torch you just placed,
+       * and stand in a portal while it lights. bucket.js and portals.js both
+       * come through here with `cause: 'place'`, and both would have started
+       * silently failing against the body doing the asking.
+       *
+       * So the question is solidity, asked of the registry through the same
+       * read-only window as getBlock. Fluids and the portal are non-solid;
+       * blocks.js also registers the non-cube shapes non-solid and hands
+       * their collision to blockMeshes.js, so a slab may be placed inside you
+       * where vanilla would refuse. That is the one place this diverges, it
+       * is the cheap direction to be wrong in, and it stays honest as long as
+       * "solid" keeps meaning "a whole cube that stops you".
+       *
+       * Neither adapter call is optional-chained, and that is a departure
+       * from the `world.getBlock?.() ?? 0` two lines down. That one is
+       * decorating an announcement and a missing reader costs an event. This
+       * is a RULE, and a rule that quietly switches itself off when its
+       * adapter is incomplete is the worst version of itself -- so an
+       * incomplete `world` throws here, at the first placement, instead of
+       * letting blocks through for the rest of the session.
+       */
+      if (cause === 'place' && world.blockIsSolid(id)) {
+        const [bx, by, bz] = position
+        const inTheWay = world.entitiesInBox(
+          [bx, by, bz], [bx + 1, by + 1, bz + 1])
+        if (inTheWay.length) return deny('There is something in the way')
+      }
       const was = world.getBlock?.(position[0], position[1], position[2]) ?? 0
       world.setBlock(id, position[0], position[1], position[2])
       announceDestroyed(was, id, position, cause)

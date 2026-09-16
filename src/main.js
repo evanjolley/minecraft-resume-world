@@ -36,6 +36,7 @@ import { installBuckets } from './bucket.js'
 import { installFurnaceDrops } from './furnace.js'
 import { installHighlightStyle } from './highlight.js'
 import { createAuthority } from './authority.js'
+import { entitiesInBox } from './entityBox.js'
 import { installGamemode } from './gamemode.js'
 import { installCommands } from './commands.js'
 import { installDimensions, prepare as prepareDimension } from './dimensions.js'
@@ -354,6 +355,23 @@ const authority = createAuthority({
      * being threaded through the request.
      */
     getBlock: (x, y, z) => noa.getBlock(x, y, z),
+    /*
+     * The authority's SECOND read-only window, and it is the same kind of
+     * thing as getBlock above: a question about the world that the decision
+     * needs and that a server would answer off its own copy. Placement asks
+     * it -- a block may not appear inside a body -- and the punching that
+     * docs/FUTURE.md is heading for will ask it with a different box.
+     *
+     * entityBox.js rather than a closure here, because "what is standing in
+     * this box" is not main.js's idea and combat is going to want it too.
+     */
+    entitiesInBox: (min, max) => entitiesInBox(noa, min, max),
+    /*
+     * "Would this block stop somebody", straight off noa's registry. The
+     * placement rule needs it to tell a wall from a bucket of water, and
+     * blocks.js is where the answer is already written down.
+     */
+    blockIsSolid: (id) => noa.registry.getBlockSolidity(id),
     getTime: () => sky.getTime(),
     setTime: (t) => sky.setTime(t),
     teleport: movePlayer,

@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures.js'
 import {
-  aim, teleport, waitTicks, settleOnGround, setBlock, getBlock, useGamemode, ID, SURFACE_Y,
+  aim, teleport, waitTicks, settleOnGround, setBlock, getBlock, useGamemode,
+  HEADING, ID, SURFACE_Y,
 } from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 
@@ -45,6 +46,13 @@ const evanState = (page) => page.evaluate(() => {
  *  drives. Read off the live Babylon node, not off our own arithmetic. */
 const legAngle = (page) => page.evaluate(
   () => window.game.aiEvan.model.parts.legRight.pivot.rotation.x)
+
+/** How many planks are in the hotbar, for the placement test: a refused
+ *  placement has to cost nothing, which is half of what it means to fail the
+ *  way vanilla fails. */
+const planksHeld = (page) => page.evaluate(() => window.game.inventory.slots
+  .filter(s => s && s.id === 5)
+  .reduce((n, s) => n + s.count, 0))
 
 /** Put him back in his column and drop him again. He is not the player, so
  *  resetWorld does not restore him and a spec that walks him off has to. */
@@ -241,6 +249,97 @@ test('mining the floor out from under him makes him fall', async ({ page }) => {
   await resetEvan(page)
   expect((await evanAt(page))[1]).toBeCloseTo(before[1], 1)
 })
+
+test('a block will not place inside him, and places one block over',
+  async ({ page, terrain }) => {
+    /*
+     * "I shouldn't be able to place blocks inside Evan -- like he should be a
+     * real player."
+     *
+     * He IS one, to the only module that gets a vote: authority.js refuses a
+     * placement whose voxel overlaps any entity's box, and the player's own
+     * box has always been in that set -- it is what stops you sealing
+     * yourself into the floor. What changed is that the check stopped being
+     * written in terms of the player.
+     *
+     * TWO DIRECTIONS, because one of them alone proves nothing. A refusal on
+     * its own is also what a broken aim, an empty hand or a mode with no
+     * build permission looks like. The second placement is the same hand, the
+     * same key, the same distance and the same block, moved ONE METRE
+     * sideways so it misses his 0.6-wide box, and it has to land.
+     *
+     * THE GEOMETRY. The camera is on the far side of him and looks straight
+     * through him at an anchor block beyond -- his model does not stop a
+     * raycast, because noa's targeting walks voxels and he is not one. So the
+     * targeted face is the anchor's near side and the cell that would be
+     * built into is the one he is standing in, which is the only way to aim a
+     * right-click at a man.
+     */
+    const evan = await evanAt(page)
+    const [fx, fz] = [Math.floor(evan[0]), Math.floor(evan[2])]
+    // Chest height. His box is 1.8 tall from his feet, so one block up is
+    // unambiguously inside it -- and unlike his feet it has air on all sides,
+    // which the aim below needs.
+    const hy = Math.round(evan[1]) + 1
+
+    const INSIDE = [fx, hy, fz]
+    const BESIDE = [fx, hy, fz + 1]
+    await terrain.keep([fx, hy, fz], [fx + 1, hy, fz + 1])
+    for (const z of [fz, fz + 1]) await setBlock(page, ID.cobblestone, fx + 1, hy, z)
+
+    // Survival, not creative: a creative stack never shrinks, so it could not
+    // show that a refused placement costs nothing.
+    await useGamemode(page, 'survival')
+    await page.evaluate((id) => window.game.inventory.add(id, 10), ID.planks)
+
+    const rightClick = async (z) => {
+      await teleport(page, fx - 1.5, evan[1] + 2, z + 0.5)
+      await settleOnGround(page)
+      await aim(page, { heading: HEADING.westPlusX, pitch: 0 })
+      await page.mouse.down({ button: 'right' })
+      await page.mouse.up({ button: 'right' })
+      await waitTicks(page, 3)
+    }
+
+    await rightClick(fz)
+    expect(await getBlock(page, ...INSIDE), 'a block landed inside Evan').toBe(ID.air)
+    expect(await planksHeld(page), 'the refused block was still charged for').toBe(10)
+
+    await rightClick(fz + 1)
+    expect(await getBlock(page, ...BESIDE),
+      'the control placement failed too -- the refusal above proves nothing')
+      .toBe(ID.planks)
+    expect(await planksHeld(page)).toBe(9)
+
+    /*
+     * AND THE THIRD DIRECTION, which is the one that keeps two other features
+     * working. Vanilla's rule is about a block's COLLISION SHAPE, not about
+     * placement: an empty shape is unobstructed by definition, which is why
+     * you can pour water over your own feet and stand in a portal while it
+     * lights. bucket.js and portals.js both request `cause: 'place'`, so
+     * without that clause both would have started failing silently against
+     * whoever was standing there.
+     *
+     * Asked at the seam rather than with a bucket in hand: the claim is about
+     * what the authority decides, and a bucket would drag in reach, aim and
+     * an item that this file is not about.
+     */
+    const poured = await page.evaluate(async (position) => {
+      const { authority, fluids } = window.game
+      const res = await authority.requestBlockChange(
+        { id: fluids.ids.water, position, cause: 'place' })
+      /*
+       * Undone inside the same task, before a tick can run. A granted request
+       * really does write the block, and water that survives to the next tick
+       * schedules a flow that outlives the terrain fixture's undo -- see the
+       * note resetWorld carries about exactly that.
+       */
+      window.noa.setBlock(0, position[0], position[1], position[2])
+      fluids.flow?.reset?.()
+      return res
+    }, INSIDE)
+    expect(poured.ok, 'water is not solid -- it may share a block with a body').toBe(true)
+  })
 
 test('walk_to moves him across the ground and stops him there',
   async ({ page }) => {
