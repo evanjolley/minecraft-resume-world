@@ -31,7 +31,7 @@ import { shot } from './helpers/shots.js'
  *
  *   the run gets shorter ...   Expected: 0.8888888888888888  Received: 1
  *   the drop per block ...     step 3  Expected: 0.1111111111111111  Received: 0
- *   the mesh ... carries ...   Expected: >= 5  Received: 1
+ *   the mesh ... carries ...   Expected: >= 6  Received: 1
  *
  * The fourth is the screenshot, which asserts nothing and says so.
  *
@@ -176,7 +176,15 @@ test.describe('flowing water has a shape', () => {
      * and look for vertices standing at a fraction of a block inside the water
      * row -- which a cube mesh, by construction, can never have.
      */
-    const fractions = await page.evaluate(() => {
+    /*
+     * POLLED, not read once. The channel spans several chunks and noa remeshes
+     * them asynchronously after the pour, so a single read lands mid-remesh
+     * and sees whichever chunks happen to be finished -- which failed as "only
+     * one height in the mesh" about half the time and passed the other half.
+     * helpers/world.js is explicit that a readiness gate is a condition, not a
+     * duration, so this waits on the condition and then reads it.
+     */
+    const read = () => page.evaluate(() => {
       const hits = new Set()
       for (const mesh of window.noa.rendering.getScene().meshes) {
         const p = mesh.getVerticesData('position')
@@ -189,14 +197,37 @@ test.describe('flowing water has a shape', () => {
       return [...hits].sort((a, b) => a - b)
     })
     /*
-     * EIGHTEENTHS, not ninths, and the factor of two is the proof that the
-     * corner average ran. A cell's own height is a whole number of ninths; a
-     * corner between two cells one level apart lands exactly halfway between
-     * two ninths. Half of a ninth is an eighteenth. Nothing else in this
-     * scene stands at one.
+     * The tolerance is 0.012 and that number is not a fudge: the heights are
+     * rounded to three decimals on the way out of the page, and 18 * 0.0005 is
+     * 0.009, so anything tighter than that throws away real hits. At 0.003 it
+     * kept 0.389 and 0.5 and discarded 0.056, 0.167, 0.278 and 0.722, which
+     * are the same eighteenths one rounding step away.
      */
-    const steps = fractions.filter(f => Math.abs(f * 18 - Math.round(f * 18)) < 0.003)
-    expect(steps.length).toBeGreaterThanOrEqual(5)
+    const eighteenths = (f) => f.filter(v => Math.abs(v * 18 - Math.round(v * 18)) < 0.012)
+    /*
+     * POLLED, not read once, and the condition is the assertion itself.
+     *
+     * The channel spans several chunks and noa remeshes them asynchronously
+     * after the pour, so a single read lands mid-remesh and sees whichever
+     * chunks happen to be finished -- which failed half the time as "only one
+     * height in the mesh", and then, once the count was waited for, as "the
+     * shallow end has not arrived yet". helpers/world.js insists a readiness
+     * gate is a CONDITION rather than a duration; this is the condition. If
+     * the heights are wrong it never becomes true and the expects below
+     * report it, which is what the flat-heights mutation in the header did.
+     */
+    const ready = (f) => {
+      const st = eighteenths(f)
+      return st.length >= 6 && Math.max(...st) > 0.6 && Math.min(...st) < 0.2
+    }
+    let fractions = await read()
+    for (let i = 0; i < 60 && !ready(fractions); i++) {
+      await waitFrames(page, 2)
+      fractions = await read()
+    }
+
+    const steps = eighteenths(fractions)
+    expect(steps.length).toBeGreaterThanOrEqual(6)
     expect(Math.max(...steps)).toBeGreaterThan(0.6)
     expect(Math.min(...steps)).toBeLessThan(0.2)
   })
@@ -354,6 +385,16 @@ test.describe('flowing water can be heard', () => {
        * what it caused.
        */
       const audio = await armAudio(page)
+      /*
+       * WAIT FOR THE GRAPH, not for the gesture. armAudio presses the key that
+       * opens the autoplay gate, but play() is a silent no-op until the
+       * context is running AND the sample is decoded -- and WebKit decodes
+       * slower than Chromium, which is the only reason this file failed there
+       * and passed here.
+       */
+      await page.waitForFunction(() =>
+        window.game.sounds.state === 'running' && window.game.sounds.decoded > 0,
+        null, { timeout: 15_000 })
       await buildChannel(page)
       await pour(page)
 
@@ -363,7 +404,7 @@ test.describe('flowing water can be heard', () => {
       await page.evaluate(([y]) => window.noa.setBlock(636, 4, y, 0), [Y])
       await audio.drain()
       await stubRandom(page)
-      await waitTicks(page, 6)
+      await waitTicks(page, 12)
       await unstubRandom(page)
       const still = await audio.drain()
       expect(still.map(r => r.name), 'a still source is silent')
@@ -373,7 +414,7 @@ test.describe('flowing water can be heard', () => {
       await page.evaluate(([y]) => window.noa.setBlock(642, 4, y, 0), [Y])
       await audio.drain()
       await stubRandom(page)
-      await waitTicks(page, 6)
+      await waitTicks(page, 12)
       await unstubRandom(page)
       const flowing = await audio.drain()
       expect(flowing.map(r => r.name), 'flowing water is heard')

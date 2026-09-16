@@ -12,14 +12,17 @@ test.describe('world generation', () => {
   test('the world is a 128x128 patch with an invisible wall around it',
     async ({ page }) => {
       /*
-       * REWRITTEN, not relaxed. This used to assert an 80x80 island with open
-       * void past its rim. The world is now a 128x128 cut of real Minecraft
-       * terrain with the spawn column at the origin, so it runs -87..40 on x
-       * and -56..71 on z -- deliberately not symmetric, and the asymmetry is
-       * asserted because it is the thing a stale mental model gets wrong.
+       * REWRITTEN ONCE, not relaxed since. This used to assert an 80x80 island
+       * with open void past its rim. The world is a 128x128 patch with spawn
+       * at the origin, so it runs -87..40 on x and -56..71 on z -- deliberately
+       * not symmetric, and the asymmetry is asserted because it is the thing a
+       * stale mental model gets wrong.
        *
        * (It ran -40..87 until the terrain asset stopped being mirrored in X.
-       * Same patch, same spawn column, reached from the other end.)
+       * Same patch, same spawn column, reached from the other end. The bounds
+       * then survived the overworld going from imported terrain to a generated
+       * superflat UNCHANGED, which is the point of deriving them from the
+       * patch origin rather than from what happens to be in the asset.)
        *
        * What is NOT relaxed: one block past each edge is still checked, and it
        * is now the barrier rather than air. Off by one here and either you can
@@ -77,38 +80,70 @@ test.describe('world generation', () => {
       expect(props.targetable).toBe(false)
     })
 
-  test('the strata under spawn run grass, dirt, stone down to bedrock',
+  test('the ground is Classic Flat: grass, two dirt, bedrock, void',
     async ({ page }) => {
-      // Was: an assertion about noise-generated strata from y=63 to a bedrock
-      // floor at y=0. Same shape of claim against the real world -- the block
-      // you stand on, the dirt under it, and rock under that.
+      /*
+       * REWRITTEN TWICE, and the claim has narrowed both times. It was
+       * noise-generated strata from y=63 down to a bedrock floor at y=0; then
+       * it was the same shape of claim against imported Minecraft terrain
+       * (grass, dirt under it, some rock under that, bedrock two hundred
+       * blocks down at y=-64).
+       *
+       * It is now the EXACT ladder, because the world is generated from a
+       * preset and a preset has no "some rock under that" in it. This is
+       * Minecraft's own Classic Flat, from minecraft.wiki's Superflat page:
+       * bedrock, two dirt, a grass block. Four blocks, and then nothing.
+       *
+       * Asserting the exact blocks rather than "solid, not dirt" is the whole
+       * gain of generating the world: src/flatworld.js's FLAT_PRESETS.classic
+       * is a list this test can be read against, so a typo in the preset fails
+       * here instead of rendering as a slightly wrong hillside.
+       */
       expect(await getBlock(page, 0, SURFACE_Y, 0)).toBe(ID.air)
       expect(await getBlock(page, 0, SURFACE_Y - 1, 0)).toBe(ID.grass)
       expect(await getBlock(page, 0, SURFACE_Y - 2, 0)).toBe(ID.dirt)
       expect(await getBlock(page, 0, SURFACE_Y - 3, 0)).toBe(ID.dirt)
-
-      const below = await getBlock(page, 0, SURFACE_Y - 4, 0)
-      expect(below).not.toBe(ID.dirt)
-      expect(below).not.toBe(ID.air)
+      expect(await getBlock(page, 0, SURFACE_Y - 4, 0)).toBe(ID.bedrock)
 
       /*
-       * The floor is read through the GENERATOR, not through noa.getBlock, and
-       * that is a real distinction rather than a convenience. Bedrock is at
-       * y=-64, two hundred blocks under spawn, and noa's vertical
-       * chunkAddDistance is three chunks of 32 -- so the floor is never
-       * resident while you are standing on the surface and getBlock would
-       * answer 0 for "unloaded", which is the same 0 it uses for air. Asking
-       * the generator asks what the world IS rather than what is currently in
-       * memory.
+       * Below the bedrock, read through the GENERATOR rather than through
+       * noa.getBlock -- a real distinction rather than a convenience, kept
+       * from the version of this test that had to reach y=-64. getBlock
+       * answers 0 for a chunk that is not resident and 0 is also air, so
+       * "there is nothing there" and "nothing is loaded there" are the same
+       * answer. `voxelAt` asks what the world IS.
+       *
+       * (The floor is four blocks down now instead of two hundred, so it
+       * would in fact be resident. Asking the generator anyway keeps the test
+       * honest the day the preset gets thicker.)
        */
       const gen = (x, y, z) =>
         page.evaluate(([a, b, c]) => window.game.voxelAt(a, b, c), [x, y, z])
 
-      expect(await gen(0, -64, 0)).toBe(ID.bedrock)
-      // ...and nothing at all below it. This is the void respawn.js still
-      // watches for; it is simply no longer reachable by walking.
-      expect(await gen(0, -65, 0)).toBe(ID.air)
+      expect(await gen(0, SURFACE_Y - 5, 0)).toBe(ID.air)
+
+      // FLAT means flat: the same ladder in a far corner of the patch, not
+      // just under spawn. This is the assertion the imported world could not
+      // make, and it is the one the owner actually asked for.
+      expect(await gen(MIN_X, SURFACE_Y - 1, MAX_Z)).toBe(ID.grass)
+      expect(await gen(MAX_X, SURFACE_Y - 1, MIN_Z)).toBe(ID.grass)
+      expect(await gen(MIN_X, SURFACE_Y, MAX_Z)).toBe(ID.air)
+      expect(await gen(MAX_X, SURFACE_Y - 4, MIN_Z)).toBe(ID.bedrock)
     })
+
+  test('the overworld is generated, not an imported asset', async ({ page }) => {
+    /*
+     * The one thing about this world you cannot tell by probing voxels, and
+     * the reason the change was worth making: no Mojang generator output
+     * ships for the overworld, so DECISIONS.md #1's licence question and the
+     * 404KB asset both stop applying to it.
+     *
+     * Asserted as terrain.source rather than by watching for a request to
+     * /terrain/terrain.bin, because a 404 that nobody notices would also mean
+     * "no request succeeded". This asks what the world IS made of.
+     */
+    expect(await page.evaluate(() => window.game.terrain.source)).toBe('generated')
+  })
 
   test('the player comes to rest standing on the grass, not inside it', async ({ page }) => {
     const [x, y, z] = await page.evaluate(() =>
