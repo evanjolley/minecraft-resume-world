@@ -110,7 +110,7 @@ export function build(s) {
  * you have to be told is not a number the world contains.
  */
 function forecourt(s) {
-  s.rect([51, 1], [55, 26], -1, 'smooth_stone')
+  s.rect([51, 0], [55, 27], -1, 'smooth_stone')
   s.rect([51, 12], [55, 16], -1, PAVING)           // the axis, in a darker stone
   /* x = 51 and x = 55, and NOT 52 or 54, which is not a detail. The column
    * plinths below are three wide and they are drawn after this; the first
@@ -230,6 +230,16 @@ function gatehouse(g) {
     ],
   })
   g.clear([0, 0, 3], [0, 3, 5])            // and straight through, into the courtyard
+  /*
+   * AND THE WALL CAP COMES OFF IN FRONT OF THE GATE. The compound wall's
+   * capping courses sit at y = 3 and 4 and overhang a block east -- which is
+   * one block in front of this face, at exactly the height of the arch's
+   * shoulders. From the road the moon gate read as a rectangular hole with a
+   * black beam across it: the circle was there and nothing could see it.
+   * Taking the cap out over the gatehouse is also what a real gate does --
+   * the gate tower stands proud of the wall it is set into.
+   */
+  g.clear([W + 1, 3, -1], [W + 1, 5, D + 1])
 
   // The passage: red columns down both sides, lit, so the gate is a room and
   // not a hole. The lanterns are at y = 4, over head height and out of reach.
@@ -250,14 +260,21 @@ function gatehouse(g) {
   tieredRoof(g, [0, 0], [W, D], 6, TILE_PINK, PLASTER)
 }
 
-/** A guardian lion on a plinth. Not a statue so much as an agreement to read
- *  three blocks as one, which is what every voxel animal is. */
+/*
+ * A guardian lion. Not a statue so much as an agreement to read four blocks
+ * as one, which is what every voxel animal is.
+ *
+ * EVERY BLOCK OF IT IS ON THE GROUND, and the first draft's were not: the paw
+ * and the haunch were at y = 1 with nothing under them, which from the road
+ * at eye level read as a grey plus sign hanging in the air beside the gate.
+ * A plan view cannot show you that. A screenshot from where a visitor stands
+ * shows you nothing else.
+ */
 function lion(l) {
-  l.set(0, 0, 0, 'polished_andesite')
-  l.set(0, 1, 0, 'smooth_stone')
-  l.set(0, 2, 0, 'chiseled_quartz_block')
-  l.set(1, 1, 0, 'smooth_stone')           // the paw, out toward the road
-  l.set(0, 1, -1, 'polished_andesite')
+  l.set(0, 0, 0, 'smooth_stone')           // body
+  l.set(0, 1, 0, 'chiseled_quartz_block')  // head
+  l.set(1, 0, 0, 'polished_andesite')      // the forepaws, out toward the road
+  l.set(0, 0, -1, 'polished_andesite')     // the haunch
 }
 
 /* --------------------------------------------------------------- courtyard */
@@ -312,11 +329,16 @@ function courtyard(s) {
   trying.pillar(0, 0, 0, 2, 'white_concrete')
   trying.set(0, 3, 0, 'light_blue_concrete')
   trying.set(0, 4, 0, 'red_concrete')                      // unfinished: no cap yet
+  /* Both scaffold posts go NORTH of the stele, not one north and one south.
+   * The south one stood at z = 13, which is the gate-to-hall sightline -- the
+   * first thing you see walking in through the moon gate was a scaffolding
+   * pole in the middle of the axis. Visible from the gate and from nowhere
+   * else, which is the entire argument for standing where a visitor stands. */
   trying.pillar(-1, -1, 0, 3, 'oak_log')                   // the scaffolding, still up
-  trying.pillar(1, 1, 0, 3, 'oak_log')
+  trying.pillar(1, -1, 0, 3, 'oak_log')
   trying.line([-1, 3, -1], [1, 3, -1], 'oak_log')
-  trying.set(1, 0, -1, 'crafting_table')
-  trying.set(-1, 0, 1, 'torch')
+  trying.set(1, 0, -2, 'crafting_table')
+  trying.set(0, 0, -1, 'torch')
   trying.rect([-1, -1], [1, 1], -1, PAVING)
 }
 
@@ -491,34 +513,38 @@ function cellar(c) {
   c.set(12, -3, 2, 'barrel')
 
   /*
-   * SEVENTY-TWO DAYS. Twelve across, six down, one block a day, laid into the
-   * floor you are standing on. The last one -- the far corner, day 72 -- is
-   * gold, because that is the day the hundred thousand landed. There is no
-   * label. There does not need to be one; it is a calendar and it is 12 x 6.
+   * SEVENTY-TWO DAYS. Twelve across, six rows down, one block a day, laid
+   * into the floor you are standing on. The last one -- the far corner,
+   * day 72 -- is gold, because that is the day the hundred thousand landed.
+   *
+   * THE ROWS ARE RULED APART BY A COURSE OF STONE, and they have to be. The
+   * first version laid the seventy-two blocks edge to edge and the whole
+   * thing read as a pink carpet: the number was there and nobody could count
+   * it, which is the same as it not being there. A gap between rows turns a
+   * rectangle into twelve, six times.
    */
   for (let i = 0; i < 72; i++) {
-    const x = 3 + (i % 12), z = 5 + Math.floor(i / 12)
+    const x = 3 + (i % 12), z = 3 + 2 * Math.floor(i / 12)
     c.set(x, -4, z, i === 71 ? 'gold_block' : 'pink_concrete')
   }
-  c.set(3, -2, 4, 'glowstone')
-  c.set(14, -2, 4, 'glowstone')
-  c.set(3, -2, 12, 'glowstone')
-  c.set(14, -2, 12, 'glowstone')
+  c.set(2, -2, 5, 'glowstone')
+  c.set(16, -2, 5, 'glowstone')
+  c.set(2, -2, 11, 'glowstone')
+  c.set(16, -2, 11, 'glowstone')
 
-  /*
-   * THE MARKET MAP, at the far end past the calendar. He picked a market his
-   * content could fit rather than fitting content to a market, and that is
-   * the assumption the whole experiment was about -- so there are five
-   * candidates set into the floor and exactly ONE of them is lit, with the
-   * desk it got decided at sat in front of it.
-   */
-  const m = c.at(4, 0, 12, 'bilibili/market')
-  for (const dx of [0, 3, 6, 9]) m.set(dx, -4, 0, 'gray_concrete')
-  m.set(6, -4, 0, 'sea_lantern')                           // the one he picked
-  m.set(6, -3, 0, 'light_blue_stained_glass')
-  m.set(9, -3, 1, 'bookshelf')
-  m.set(0, -3, 1, 'crafting_table')
-  m.set(3, -3, 1, 'barrel')
+  // The desk the days got counted at, along the aisle by the way in.
+  c.set(3, -3, 2, 'crafting_table')
+  c.set(5, -3, 2, 'barrel')
+  c.set(7, -3, 2, 'bookshelf')
+
+  const m = c.at(3, 0, 1, 'bilibili/market')
+  for (const dx of [0, 2, 6, 8]) {
+    m.set(dx, -3, 0, 'gray_concrete')
+    m.set(dx, -2, 0, 'gray_concrete')
+  }
+  m.set(4, -3, 0, 'sea_lantern')                           // the one he picked
+  m.set(4, -2, 0, 'light_blue_stained_glass')
+  m.set(11, -3, 0, 'bookshelf')
 }
 
 /* ------------------------------------------------------------------ pagoda */
