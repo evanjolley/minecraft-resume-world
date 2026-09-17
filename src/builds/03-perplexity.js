@@ -149,7 +149,7 @@ function paths(s) {
   tree(s.at(26, 0, 9, 'perplexity/tree'))
   tree(s.at(2, 0, 2, 'perplexity/tree'))
   tree(s.at(2, 0, 14, 'perplexity/tree'))
-  tree(s.at(40, 0, 25, 'perplexity/tree'))
+  tree(s.at(34, 0, 25, 'perplexity/tree'))   // clear of the rear question mark
   tree(s.at(45, 0, 25, 'perplexity/tree'))
 }
 
