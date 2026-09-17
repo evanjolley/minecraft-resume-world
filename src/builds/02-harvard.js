@@ -57,12 +57,15 @@
  * whole front therefore face -x. +z runs south. y = 0 is the air above the
  * grass; y = -1 IS the grass.
  *
- * Text on a west-facing wall reads the right way round written in +z order:
- * stand facing east and north (-z) is on your left, so characters running +z
- * run left to right. That is not a thing to take on trust -- stage 1 shipped
- * a letter facing the wrong way and only a screenshot found it -- so the
- * 2024 on the frieze and the MAL in the stacks were both read off a picture
- * before this file was committed.
+ * TEXT ON A WEST-FACING WALL COMES OUT BACKWARDS, and this cost a build and
+ * a screenshot to find. The intuition says: stand facing east, north (-z) is
+ * on your left, so characters running +z run left to right. That intuition is
+ * real-world and this renderer is Babylon, which is LEFT-handed -- facing +x,
+ * +z is on your LEFT. So a `zy` pattern on a wall the road looks at is drawn
+ * right to left, and 2024 came out as a mirrored 4202 in the first shot from
+ * above. `mirror()` below is the fix; `facingWest` is every place it applies.
+ * A wall facing EAST (Sever's blackboard, read from inside) needs no mirror,
+ * because the viewer is looking -x and the handedness flips back.
  *
  * The plot is 56 deep (x 0..55, away from the road) and 28 of frontage
  * (z 0..27). Everything is written in its own coordinates via s.at(...).
@@ -93,13 +96,18 @@ function word(text) {
   return rows
 }
 
+/** Reverse a drawing left-to-right. Everything this build paints on a wall
+ *  the ROAD can see goes through here -- see the note above about Babylon
+ *  being left-handed, which is the whole reason this function exists. */
+const mirror = (rows) => rows.map(r => [...r].reverse().join(''))
+
 export function build(s) {
   ground(s)
   wallAndGates(s)
   theLetter(s.at(2, 0, 0, 'harvard/letter'))
   massHall(s.at(13, 0, 2, 'harvard/mass-hall'))
   memorialChurch(s.at(13, 0, 16, 'harvard/church'))
-  johnHarvard(s.at(5, 0, 18, 'harvard/statue'))
+  johnHarvard(s.at(8, 0, 6, 'harvard/statue'))
   widener(s.at(21, 0, 2, 'harvard/widener'))
   sever(s.at(46, 0, 6, 'harvard/sever'))
   elms(s)
@@ -150,7 +158,7 @@ function ground(s) {
  * the Yard through it, which is the entire point of a Harvard gate.
  */
 function wallAndGates(s) {
-  const openings = [[0, 1], [12, 15], [26, 27]]      // north, main, south
+  const openings = [[0, 1], [13, 15], [26, 27]]      // north, main, south
   const open = (z) => openings.some(([a, b]) => z >= a && z <= b)
 
   for (let z = 0; z <= 27; z++) {
@@ -161,7 +169,7 @@ function wallAndGates(s) {
 
   // Piers: a brick post with a white cap, one either side of every opening
   // and two more to break the runs up.
-  for (const z of [2, 6, 11, 16, 21, 25]) {
+  for (const z of [2, 6, 12, 16, 21, 25]) {
     s.pillar(1, z, 0, 3, 'bricks')
     s.set(1, 4, z, 'smooth_quartz')
   }
@@ -172,16 +180,15 @@ function wallAndGates(s) {
    * scrollwork that starts at y = 4 -- above a player's head, because the
    * opening has to stay walkable and an arch you crouch under is a bug.
    */
-  for (const z of [11, 16]) {
+  for (const z of [12, 16]) {
     s.pillar(1, z, 0, 6, 'bricks')
     s.set(1, 3, z, 'smooth_quartz')
     s.set(1, 7, z, 'smooth_quartz')
     s.set(1, 8, z, 'sea_lantern')
   }
-  s.box([1, 4, 12], [1, 6, 15], 'black_stained_glass')
-  s.line([1, 7, 12], [1, 7, 15], 'smooth_quartz')
-  s.set(1, 5, 13, 'polished_blackstone')             // the scroll, picked out
-  s.set(1, 5, 14, 'polished_blackstone')
+  s.box([1, 4, 13], [1, 6, 15], 'black_stained_glass')
+  s.line([1, 7, 13], [1, 7, 15], 'smooth_quartz')
+  s.set(1, 5, 14, 'polished_blackstone')             // the scroll, picked out
 
   // The two side gates get the same treatment at half the height.
   for (const [a, b] of [[0, 1], [26, 27]]) {
@@ -233,12 +240,12 @@ function elm(t, leaves = 'oak_leaves') {
 }
 
 function elms(s) {
-  elm(s.at(6, 0, 4, 'harvard/elm'))
-  elm(s.at(6, 0, 9, 'harvard/elm'), 'birch_leaves')
-  elm(s.at(10, 0, 4, 'harvard/elm'))
-  elm(s.at(10, 0, 25, 'harvard/elm'), 'cherry_leaves')
-  elm(s.at(6, 0, 24, 'harvard/elm'))
-  elm(s.at(45, 0, 2, 'harvard/elm'), 'birch_leaves')
+  elm(s.at(4, 0, 3, 'harvard/elm'))
+  elm(s.at(4, 0, 11, 'harvard/elm'), 'birch_leaves')
+  elm(s.at(4, 0, 17, 'harvard/elm'))
+  elm(s.at(4, 0, 24, 'harvard/elm'), 'birch_leaves')
+  elm(s.at(9, 0, 25, 'harvard/elm'), 'cherry_leaves')
+  elm(s.at(45, 0, 2, 'harvard/elm'))
 }
 
 /* --------------------------------------------------------------- mass hall */
@@ -389,13 +396,21 @@ function memorialChurch(c) {
   })
 
   // Tall glass down both flanks and the east end, crimson at the head of each.
+  /*
+   * Tall glass down both flanks and the east end, crimson at the head of
+   * each. CLEAR glass, and that is the correction: the first pass used WHITE
+   * stained glass on a white wall, which from the axis is not a window, it is
+   * a slightly different white -- the whole north flank read as a blank wall
+   * from the one place everybody walks past it. Clear glass reads because
+   * what shows through it is a lit interior.
+   */
   for (const z of [2, 4, 6]) {
-    c.box([W, 1, z], [W, 4, z], 'white_stained_glass')
+    c.box([W, 1, z], [W, 4, z], 'glass')
     c.set(W, 5, z, 'red_stained_glass')
   }
   for (const x of [2, 5]) {
     for (const z of [0, D]) {
-      c.box([x, 1, z], [x, 4, z], 'white_stained_glass')
+      c.box([x, 1, z], [x, 4, z], 'glass')
       c.set(x, 5, z, 'red_stained_glass')
     }
   }
@@ -451,7 +466,7 @@ function steeple(t) {
 /*
  * THE STATUE OF THREE LIES, and the crypt under it.
  *
- * Bronze, seated, facing the gate, with one shoe rubbed gold -- which is the
+ * Bronze, seated in the north lawn, facing the gate, one shoe rubbed gold -- which is the
  * only part of the real thing anybody touches, and the only part of this one
  * that is not copper. (The other tradition associated with that statue is
  * not built here and will not be.)
@@ -472,16 +487,25 @@ function steeple(t) {
 function johnHarvard(j) {
   j.rect([-2, -2], [4, 4], -1, 'polished_andesite')  // the plaza, over the crypt lid
 
-  j.box([0, 0, 0], [2, 1, 2], 'stone_bricks')        // the plinth
-  j.rect([0, 0], [2, 2], 2, 'chiseled_stone_bricks')
-  for (const z of [0, 1, 2]) j.set(0, 1, z, 'gold_block')   // three marks, west face
+  /* FIVE WIDE, and it was three until a screenshot. Three gold marks on a
+   * three-wide plinth is not three marks, it is a gold band across the front
+   * of the pedestal -- the blocks touch, so the count disappears. Two blocks
+   * of stone between them and the eye can see there are three of them, which
+   * is the only thing the marks are for. */
+  j.box([0, 0, -1], [2, 1, 3], 'stone_bricks')
+  j.rect([0, -1], [2, 3], 2, 'chiseled_stone_bricks')
+  for (const z of [-1, 1, 3]) j.set(0, 1, z, 'gold_block')  // three marks, west face
 
-  j.box([-1, 3, 0], [1, 3, 2], 'copper_block')       // legs, feet over the edge
+  /* OXIDIZED copper, not copper. Plain copper_block is the same orange as
+   * bricks, and from the road the statue read as a pile of masonry with a
+   * gold square in it. Green patina is what old bronze does anyway, and it is
+   * the only colour on this plot that is not brick, quartz, slate or grass. */
+  j.box([-1, 3, 0], [1, 3, 2], 'oxidized_copper')       // legs, feet over the edge
   j.set(-1, 3, 2, 'gold_block')                      // the shoe
-  j.box([0, 4, 0], [2, 4, 2], 'copper_block')        // lap and seat
-  j.box([1, 5, 0], [2, 6, 2], 'copper_block')        // torso and the chair back
-  j.set(1, 7, 1, 'copper_block')                     // head
-  j.line([2, 7, 0], [2, 7, 2], 'copper_block')       // the chair, finished
+  j.box([0, 4, 0], [2, 4, 2], 'oxidized_copper')        // lap and seat
+  j.box([1, 5, 0], [2, 6, 2], 'oxidized_copper')        // torso and the chair back
+  j.set(1, 7, 1, 'oxidized_copper')                     // head
+  j.line([2, 7, 0], [2, 7, 2], 'oxidized_copper')       // the chair, finished
   j.set(0, 5, 1, 'bookshelf')                        // the book on his knee
 
   crypt(j.at(0, 0, 0, 'harvard/three-lies'))
@@ -562,7 +586,7 @@ function widener(w) {
   w.pattern({
     at: [6, 15, 4], plane: 'zy',
     legend: { '#': 'smooth_quartz', ' ': 'red_concrete' },
-    rows: word('2024'),
+    rows: mirror(word('2024')),
   })
   w.box([5, 20, 0], [9, 20, S], 'smooth_quartz')     // the cornice, overhanging
   for (let z = 0; z <= S; z += 2) w.set(6, 21, z, 'smooth_quartz')   // the balustrade
@@ -605,11 +629,16 @@ function widener(w) {
  * east door into the court.
  */
 function wideStacks(w, E, S) {
-  for (const x of [11, 13, 15, 17, 19]) w.box([x, 0, 3], [x, 2, 20], 'bookshelf')
-  for (const x of [12, 14, 16, 18]) {
+  for (const x of [11, 13, 15, 17, 19]) w.box([x, 0, 3], [x, 2, 19], 'bookshelf')
+  /* A LAMP PER AISLE, and it has to be per aisle: the shelf runs are solid
+   * from floor to ceiling and block light stops dead at anything solid, so a
+   * glowstone over aisle x = 12 lights aisle x = 12 and nothing else. The
+   * first pass lit the even aisles and left x = 10 and x = 20 pitch black,
+   * which is what a screenshot from the bottom of the stair showed. */
+  for (const x of [10, 12, 14, 16, 18, 20]) {
     w.set(x, 0, 2, 'torch')
     w.set(x, 0, 21, 'torch')
-    w.set(x, 3, 11, 'glowstone')                     // let into the boards above
+    for (const z of [7, 12, 17]) w.set(x, 3, z, 'glowstone')   // into the boards above
   }
   w.clear([14, 0, 0], [15, 2, 0])                    // north service door
   w.clear([E, 0, 11], [E, 2, 12])                    // east door, out to the court
@@ -617,38 +646,58 @@ function wideStacks(w, E, S) {
   w.set(10, 0, 20, 'crafting_table')
 
   /*
-   * The stair up into the reading room, at the back. Four solid blocks, not
-   * stair blocks: a mis-faced stair key builds a staircase you cannot climb
-   * and the only way you find out is by walking it.
+   * The stair up into the closed stacks is built by readingRoom(), at z = 20,
+   * because the hole it needs in the floor is that room's floor. Four solid
+   * blocks when it gets there, not stair blocks: a mis-faced stair key builds
+   * a staircase you cannot climb and you only find out by walking it.
    */
-  w.clear([10, 3, 22], [12, 3, 22])
-  for (let i = 0; i <= 3; i++) w.box([10 + i, 0, 22], [10 + i, i, 22], 'dark_oak_planks')
 }
 
 /*
- * THE READING ROOM. Two long tables with lamps down the middle, benches
- * either side, a shelf wall, and the stair to the roof running up the north
- * wall.
+ * THE READING ROOM, and the room behind it.
  *
- * EASTER EGG, BEHIND. The bookcase run at x = 18 has exactly one gap in it,
- * at the far south end, where nobody walks. Behind it is a stack aisle, and
- * the back of the aisle says MAL in red -- eleven blocks wide, five tall,
- * facing west so it reads the right way round. He minored in Spanish. He
- * says his Spanish is bad. The wall it is painted on is a FALSE wall one
- * block inside the real one, so nothing shows from the back court: an easter
- * egg you can read from outside the building is not an easter egg.
+ * Two long tables with torches on them, benches either side, and a wall of
+ * bookcases across the middle of the building at z = 12.
+ *
+ * EASTER EGG, BEHIND. That bookcase wall has exactly one gap in it, in the
+ * far east corner, where nobody walks. Through it is the closed stacks -- the
+ * same footprint again, nine blocks deep, no windows -- and across the far
+ * end of it, in red on a wall of sea lanterns, MAL. He minored in Spanish. He
+ * says his Spanish is bad. This is him grading it.
+ *
+ * THE ROOM IS DEEP BECAUSE THE WORD IS WIDE, which took three tries to
+ * understand. The sign started life on the wall of a one-block aisle behind
+ * the shelves, and an eleven-block word photographed from two blocks away is
+ * not a word, it is one red stroke filling the screen. You cannot read a sign
+ * you cannot step back from. So the hidden space is a ROOM, nine deep, and
+ * you read the sign from the doorway.
+ *
+ * (And nothing shows from outside: the sign is a false wall one block inside
+ * Widener's real south wall. An easter egg you can see from the back court
+ * is not an easter egg, it is a light fitting.)
  */
 function readingRoom(w, E, S) {
-  for (const [x, z] of [[12, 6], [12, 17], [16, 6], [16, 17], [14, 11]]) w.set(x, 13, z, 'glowstone')
-
-  w.box([12, 4, 3], [13, 4, 20], 'dark_oak_planks')  // the tables
-  w.box([15, 4, 3], [16, 4, 20], 'dark_oak_planks')
-  for (const z of [5, 9, 13, 17]) {
-    w.set(12, 5, z, 'glowstone')
-    w.set(16, 5, z, 'glowstone')
+  for (const z of [4, 9, 15, 20]) {
+    w.set(12, 13, z, 'glowstone')
+    w.set(15, 13, z, 'glowstone')
   }
-  for (const x of [11, 14, 17]) w.line([x, 4, 3], [x, 4, 20], 'oak_slab')   // benches
-  w.box([14, 4, 22], [17, 7, 22], 'bookshelf')       // the south shelf wall
+
+  /*
+   * TORCHES ON THE TABLES, and the torches are a correction. The lamps were
+   * glowstone blocks standing on the tabletops, which at y = 5 is a glowing
+   * cube exactly at a walking player's eye -- from the door the room read as
+   * two rows of floating lights. A torch is the same light in a tenth of the
+   * volume and reads as a reading lamp.
+   */
+  w.box([12, 4, 3], [13, 4, 10], 'dark_oak_planks')
+  w.box([15, 4, 3], [16, 4, 10], 'dark_oak_planks')
+  for (const z of [4, 8]) {
+    w.set(12, 5, z, 'torch')
+    w.set(16, 5, z, 'torch')
+  }
+  for (const x of [11, 14]) w.line([x, 4, 3], [x, 4, 10], 'oak_slab')       // benches
+  w.set(17, 4, 3, 'barrel')
+  w.set(10, 4, 10, 'crafting_table')
 
   // The stair to the roof: eleven blocks up the north wall, arriving level
   // with the deck. The ceiling and the deck are cut out over it first.
@@ -656,19 +705,33 @@ function readingRoom(w, E, S) {
   w.clear([10, 14, 1], [E - 2, 14, 1])
   for (let i = 0; i <= 10; i++) w.box([10 + i, 4, 1], [10 + i, 4 + i, 1], 'dark_oak_planks')
 
-  // The shelf run, and its one gap.
-  w.box([18, 4, 2], [18, 8, 20], 'bookshelf')
-  w.box([20, 4, 6], [20, 8, 16], 'white_concrete')   // the false wall behind it
+  // The bookcase wall, and its one gap.
+  w.box([10, 4, 12], [20, 10, 12], 'bookshelf')
+  w.clear([20, 4, 12], [20, 6, 12])
+
+  /*
+   * The sign. A sea lantern ground with the letters cut out of it in red, so
+   * the panel is its own light -- block light in this engine falls off a
+   * level a block and stops dead at anything solid, and every version of
+   * "put a lamp near it" photographed as grey concrete in a grey room.
+   */
+  w.box([10, 4, 22], [20, 9, 22], 'sea_lantern')
   w.pattern({
-    at: [20, 4, 6], plane: 'zy',
-    legend: { '#': 'red_concrete', ' ': 'white_concrete' },
+    at: [10, 4, 22], plane: 'xy',
+    legend: { '#': 'red_concrete', ' ': 'sea_lantern' },
     rows: word('MAL'),
   })
-  w.set(19, 3, 11, 'sea_lantern')                    // let into the aisle floor
-  w.box([19, 4, 18], [19, 4, 19], 'dark_oak_planks') // the carrel
-  w.set(19, 5, 18, 'torch')
-  w.set(19, 4, 20, 'bookshelf')
-  w.set(19, 4, 3, 'barrel')
+
+  // The closed stacks themselves: shelving down both sides, a carrel in the
+  // corner, and the stair down into the lower stacks.
+  w.box([10, 4, 14], [10, 7, 20], 'bookshelf')
+  w.box([20, 4, 14], [20, 7, 20], 'bookshelf')
+  w.box([13, 4, 18], [14, 4, 18], 'dark_oak_planks')
+  w.set(13, 5, 18, 'torch')
+  w.set(16, 4, 18, 'barrel')
+
+  w.clear([10, 3, 20], [12, 3, 20])
+  for (let i = 0; i <= 3; i++) w.box([10 + i, 0, 20], [10 + i, i, 20], 'dark_oak_planks')
 }
 
 /*
@@ -740,6 +803,12 @@ function sever(v) {
     ],
   })
 
+  /* A LIT VALANCE STRAIGHT OVER THE BOARD, which is how a real lecture hall
+   * lights one and the only thing that works here: block light falls off a
+   * level a block and stops at anything solid, so the four glowstones in the
+   * ceiling lit the ceiling and left a black wall reading as a black wall. */
+  v.box([0, 6, 1], [0, 6, 14], 'glowstone')
+
   v.box([1, 0, 7], [1, 0, 9], 'dark_oak_planks')     // the lectern
   v.set(1, 1, 8, 'torch')
   v.set(2, 0, 14, 'bookshelf')
@@ -751,7 +820,8 @@ function sever(v) {
   v.box([7, 0, 1], [7, 2, D - 1], 'polished_andesite')
   v.line([7, 3, 2], [7, 3, D - 2], 'spruce_slab')
 
-  for (const [x, z] of [[2, 4], [2, 12], [6, 4], [6, 12]]) v.set(x, 7, z, 'glowstone')
+  for (const [x, z] of [[2, 4], [2, 12], [5, 4], [5, 12], [7, 8]]) v.set(x, 7, z, 'glowstone')
+  for (const z of [2, 8, 14]) v.set(7, 3, z, 'torch')
 
   /*
    * A slate gable with the ridge down the LONG axis, courses stepping in
