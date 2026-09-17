@@ -182,9 +182,21 @@ export function flatPatch({ preset, width, depth, surfaceY, ceilingY, builds = s
    * empty superflat world back, which is what a spec that wants to measure
    * the ground wants, and it is how the dimension table would turn the builds
    * off for a second generated dimension without this file learning about
-   * dimensions. It defaults ON because the world having a road in it is the
-   * normal case now, and a default of "empty" would mean the day somebody
-   * adds a generated dimension they silently get an empty overworld too.
+   * dimensions.
+   *
+   * WHICH IS NOW WHAT ACTUALLY HAPPENS, and it needed nothing added here.
+   * There are two generated worlds: the overworld passes `builds: null` and
+   * is bare ground for the owner to build on, and `claude-opus-5-1` passes
+   * `builds: stampBuilds` and is the eight-stage timeline. Both rows are in
+   * src/dimensions.js and this function still knows nothing about either.
+   *
+   * IT STILL DEFAULTS ON, and that is worth a second look now that the
+   * default is NOT what the main world uses. The default is for the next
+   * caller, not for the current one: a generated world that quietly came out
+   * empty is a failure you discover by walking around in it, and one that
+   * quietly came out with somebody else's house in it is a failure you
+   * discover immediately. Loud beats silent, so the riskier value is the
+   * default and the safe one is typed out.
    *
    * SHARED COLUMN, HANDLED: the stamper clones a column the first time it
    * writes to it. Read the COPY ON WRITE note in src/builds/stamp.js before

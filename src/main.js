@@ -220,11 +220,17 @@ noa.camera.zoomDistance = 0
  * WHICH WAY A VISITOR IS FACING ON THEIR FIRST FRAME, and it is not a detail.
  *
  * noa's default heading is 0, which in this world is SOUTH (+Z; see the
- * compass note in debugScreen.js). Spawn is the south end of the road and the
- * timeline runs NORTH from it, so a default heading spawned every visitor
- * looking at the patch edge behind them with the entire world at their back.
- * Math.PI is north: you arrive under the arch looking up the road, with the
- * stage markers and the guide ahead of you.
+ * compass note in debugScreen.js). Math.PI is NORTH, and north is where the
+ * guide stands -- three blocks up whatever the world in front of you is (see
+ * EVAN_XZ below), so you arrive looking at the one thing there is to talk to
+ * rather than past it.
+ *
+ * It was set for a stronger reason and the reason survives the world it was
+ * written for: in claude-opus-5-1 spawn is the south end of the road and the
+ * timeline runs north from it, so heading 0 put every visitor looking at the
+ * patch edge behind them with the entire world at their back. The camera is
+ * boot state, not per-world state, so one heading has to serve both; north
+ * is right in the built world and not wrong in a flat one.
  *
  * Set here rather than passed to the Engine because noa takes no such option
  * -- playerStart places the body, the camera is its own object -- and it is
@@ -632,29 +638,34 @@ const commands = installCommands(chat, authority, { noa })
  * ------------------------------------------------------------------ */
 
 /*
- * Where he stands: THREE BLOCKS UP THE ROAD FROM WHERE YOU LAND.
+ * Where he stands: THREE BLOCKS AHEAD OF WHERE YOU LAND, WHICHEVER WORLD
+ * THAT IS.
  *
- * He is the guide to a timeline now, and a guide is a person you meet at the
- * door. Spawn is the south end of the road -- patch (63, 120), under the
- * arch, see SPAWN_PATCH_X/Z in src/builds/plots.js -- so he stands at patch
- * (65, 117): the far lane of the paving, three blocks north and two across,
- * which puts him in frame the moment you arrive without standing in the lane
- * you walk up. He is the first thing you can talk to and he is facing the
- * eight stages he is there to explain.
+ * AN OFFSET FROM SPAWN, not an address, and that is the whole of this line.
+ * He is the guide, and a guide is a person you meet at the door -- so the
+ * fact worth writing down is "two across and three up the way you are
+ * facing", and the coordinate is derived from it. Written as the address
+ * instead (it was `[-21.5, 61.5]` this morning) it is only correct for one
+ * world, and the day the world under it changed he was left standing sixty
+ * blocks out in an empty field, which is worse than no guide at all.
  *
- * He was at world (-4.5, 0.5) -- the old world origin, which used to be
- * spawn and is now the MIDDLE OF STAGE 4'S PLOT, sixty-seven blocks from
- * where anybody arrives and soon to be indoors. A guide you meet a minute
- * after you needed him is not a guide, and one standing inside somebody's
- * wall is a bug. Moved for the first reason; the second is why it could not
- * wait.
+ * AND IT IS ALREADY PER-WORLD. src/npc.js takes exactly one thing out of
+ * this array -- `spawnOffset`, this minus spawnFor() of the boot world -- and
+ * re-drops him at the new world's spawn plus that offset every time
+ * noa.worldName changes. So deriving it here is not a new mechanism, it is
+ * the difference between the offset being a fact and being an accident of
+ * whichever world happened to boot. In the bare overworld it puts him three
+ * north and two east of the origin; in claude-opus-5-1 it puts him at patch
+ * (65, 117), the far lane of the paving under the arch, facing the eight
+ * stages he is there to explain. Both are "in frame the moment you arrive,
+ * not standing in the lane you walk up".
  *
  * The ground is still found by SCANNING rather than hardcoded, and the scan
- * still earns its place: the road is a build now (src/builds/road.js), the
- * builds are stamped after the terrain is generated, and the column he
- * stands in is therefore one somebody else may repave. Ask the world.
+ * still earns its place: in claude-opus-5-1 the road is a build
+ * (src/builds/road.js) stamped after the terrain is generated, so the column
+ * he stands in is one somebody else may repave. Ask the world.
  */
-const EVAN_XZ = [-21.5, 61.5]
+const EVAN_XZ = [SPAWN[0] + 2, SPAWN[2] - 3]
 
 /*
  * LEAVES ARE NOT A FLOOR, and this is the one thing the scan below has to

@@ -18,20 +18,26 @@
 export const SURFACE_Y = 136
 
 /*
- * WHERE resetWorld PUTS THE PLAYER, and it is no longer the world origin.
+ * WHERE resetWorld PUTS THE PLAYER: the world origin, again.
  *
- * The overworld is a timeline now -- eight stages either side of one road,
- * see src/builds/plots.js -- and its spawn is the south end of that road:
- * patch (63, 120), which is world (-24, 64). The origin, where this used to
- * be, is patch (87, 56), which is the middle of stage 4's plot and will have
- * a building standing on it.
+ * It was the south end of the road for one day, while the eight-stage
+ * timeline WAS the overworld. The timeline moved to its own world
+ * (`claude-opus-5-1`, see src/dimensions.js) and the default is bare
+ * superflat again, so spawn went back to (0.5, 0.5) -- which is what almost
+ * every spec in this suite is written against, and why the move back is
+ * smaller than the move out was.
  *
  * Duplicated from src/island.js rather than imported, like the block ids and
  * the passphrase below and for the same reason: if somebody moves spawn,
  * these tests should FAIL rather than quietly follow it. test/01-world.spec.js
- * reads the real value out of src/builds/plots.js and asserts the game agrees.
+ * reads the real value out of src/island.js's WORLDS and asserts the game
+ * agrees.
+ *
+ * NOT the built world's spawn. A spec that wants to stand on the road has to
+ * enter claude-opus-5-1 first, and test/70-builds.spec.js and
+ * test/71-parkour.spec.js do exactly that.
  */
-export const SPAWN = [-23.5, SURFACE_Y + 2, 64.5]
+export const SPAWN = [0.5, SURFACE_Y + 2, 0.5]
 
 /**
  * World bounds, in world coordinates, mirroring island.js. The patch is
@@ -45,26 +51,29 @@ export const MIN_Z = -56
 export const MAX_Z = 71
 
 /*
- * A column with grass at SURFACE_Y - 1 and NOTHING above it, nine blocks east
- * of spawn and two south of it, out in the margin.
+ * A column with grass at SURFACE_Y - 1 and NOTHING above it, four blocks west
+ * of spawn.
  *
  * Every "teleport up and fall" test drops down this column, so all it has to
- * be is grass at the same height as spawn with clear sky over it -- and all
- * it has to STAY is nobody's. It used to be world (-4.5, 0.5), the old world
- * origin, which the plot table (src/builds/plots.js) has since handed to
- * stage 4: patch (82, 56), the middle of the Arize plot, where there is now a
- * building. A drop column inside somebody's roof is a spec that fails for a
- * reason that has nothing to do with what it was testing.
+ * be is grass at the same height as spawn with clear sky over it.
  *
- * Patch (72, 122) instead -- world (-15, 66). That is MARGIN: south of every
- * plot (they stop at z = 117), east of the road's verge (it stops at x = 67),
- * and test/70-builds.spec.js asserts the margins are empty, which turns "this
- * column is clear" from a thing this comment claims into a thing the suite
- * checks. It is nine blocks from spawn, so it is inside the chunks a booted
- * world already has meshed.
+ * THE ARGUMENT FOR THIS COLUMN HAS COLLAPSED INTO NOTHING, and that is the
+ * honest note to leave. It was the spawn column until the world was an
+ * imported dark forest and leaves hung over it; then world (-4.5, 0.5) until
+ * the plot table handed that column to stage 4 and a building went up on it;
+ * then patch (72, 122), out in a margin test/70-builds.spec.js asserts is
+ * empty, because a drop column inside somebody's roof is a spec that fails
+ * for a reason that has nothing to do with what it was testing.
+ *
+ * The default world is bare superflat now -- no canopy, no buildings, no
+ * margins, every column identical and open to the ceiling -- so there is no
+ * longer any property to choose a column BY. It goes back to (-4.5, 0.5)
+ * purely because that is near spawn, which keeps the fall inside chunks a
+ * booted world has already meshed. If builds ever return to the default
+ * world, this constant needs an argument again.
  */
-export const DROP_X = -14.5
-export const DROP_Z = 66.5
+export const DROP_X = -4.5
+export const DROP_Z = 0.5
 
 /** Block ids, mirroring blocks.js. Duplicated on purpose: if someone
  *  renumbers the table, these tests should fail rather than follow along. */
@@ -943,4 +952,62 @@ export async function standOnBedrock(page, terrain) {
   }, floor)
   await settleOnGround(page)
   return floor
+}
+
+/* ---------------- worlds ---------------- */
+
+/**
+ * The world the model built: eight stages down one road, a parkour course at
+ * the end of it. `/world claude-opus-5-1`.
+ *
+ * NAMED HERE ONCE so that the specs which need to stand in it -- 70-builds,
+ * 71-parkour, and the switching test in 01-world -- do not each carry the
+ * string. Duplicated from src/dimensions.js rather than imported, like the
+ * block ids and the passphrase above: importing dimensions.js into a node
+ * test process drags Babylon in behind it, and a renamed world should fail
+ * these tests loudly rather than have them follow it.
+ *
+ * THE SUFFIX IS A SERIES NUMBER, not a version. The next world a model builds
+ * is -2; a different model starts its own count at 1. See the WORLDS table in
+ * src/island.js.
+ */
+export const BUILT_WORLD = 'claude-opus-5-1'
+
+/**
+ * Go to a world and wait for its chunks to actually be there.
+ *
+ * THE WAIT IS THE POINT. A world change is two assignments and a promise that
+ * resolves immediately; noa then invalidates every chunk and re-meshes them
+ * over the following second or two (see the header of src/dimensions.js). A
+ * spec that reads noa.getBlock on the next line reads the OLD world's cache,
+ * which is the exact bug a world switch invites, so every caller gets the
+ * settle for free rather than remembering it.
+ *
+ * Ticks AND frames, in that order: the chunk queue is drained on the tick and
+ * the mesh is built for the render, and a spec that screenshots needs both.
+ */
+export async function enterWorld(page, name) {
+  const res = await page.evaluate(n => window.game.dimensions.enter(n), name)
+  if (!res.ok) throw new Error(`enterWorld(${name}): ${res.error}`)
+  await waitTicks(page, 20)
+  await waitFrames(page, 10)
+  return res
+}
+
+/**
+ * Put the world back, for an afterEach.
+ *
+ * resetWorld does NOT do this -- it restores the player, the inventory and
+ * the clock, all of which are per-test, and the world you are standing in is
+ * not: one booted page is shared by a whole worker, so a spec that ends
+ * somewhere else hands the next spec somewhere else. Same reasoning as
+ * test/34-nether.spec.js and test/51-worlds.spec.js, which is where this
+ * pattern came from.
+ *
+ * A no-op when you are already home, so it is safe in an afterEach that runs
+ * after a test that failed before it switched.
+ */
+export async function leaveWorld(page) {
+  if (await page.evaluate(() => window.game.dimensions.active) === 'overworld') return
+  await enterWorld(page, 'overworld')
 }

@@ -1,11 +1,20 @@
 /*
  * WHERE EVERY BUILD GOES, as data.
  *
- * The world is a walkable autobiography: eight stages of a life, laid out
- * along one road, oldest at the north end. This file is the survey map. It
- * exists so that eight people (or eight agents) can build eight plots at the
- * same time without one of them having to read another's code to find out
+ * `claude-opus-5-1` is a walkable autobiography: eight stages of a life, laid
+ * out along one road, oldest at the north end. This file is the survey map.
+ * It exists so that eight people (or eight agents) can build eight plots at
+ * the same time without one of them having to read another's code to find out
  * where the boundary is.
+ *
+ * WHICH WORLD THIS IS THE MAP OF, since it is no longer the default one. The
+ * overworld went back to bare superflat at the owner's request and the
+ * timeline moved to `claude-opus-5-1` -- a row in src/dimensions.js and a row
+ * in src/island.js's WORLDS, reached by `/world claude-opus-5-1`. NOTHING IN
+ * THIS FILE CHANGED for that, which is the test of whether the coordinate
+ * systems below were the right ones: the plots are patch indices into a
+ * 128x128 patch with its ground at GROUND_Y, and claude-opus-5-1 is that
+ * patch. The world it lives in was never one of the three coordinate systems.
  *
  * ------------------------------------------------------------------------
  * ONE COORDINATE SYSTEM PER JOB, and there are three of them. Getting these
@@ -148,6 +157,11 @@ export function toWorld(px, py, pz) {
  * which reads as a beginning rather than as a wall. In world coordinates that
  * is (-24, 64); src/island.js turns it into a spawn point and every spec that
  * asserts where you land reads it from here.
+ *
+ * IT IS claude-opus-5-1'S SPAWN, not the overworld's, as of the day the
+ * timeline moved out of the default world. The overworld spawns at its origin
+ * again -- see the WORLDS table in src/island.js for why the empty world went
+ * back to (0, 0) rather than to its own centre.
  */
 export const SPAWN_PATCH_X = 63
 export const SPAWN_PATCH_Z = 120

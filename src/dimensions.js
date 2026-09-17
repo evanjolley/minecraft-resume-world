@@ -157,12 +157,50 @@
  * island. The resume point you were standing next to in the overworld is the
  * one you are standing next to in the Nether, which is the whole reason
  * FUTURE.md argued for the seam.
+ *
+ * WHERE claude-opus-5-1 SITS IN THAT SCHEME, written down rather than pinned
+ * silently, because a fourth world showed up after the argument was settled.
+ *
+ * GEOMETRICALLY IT IS INSIDE IT, and for free. Its WORLDS row is the
+ * overworld's row with a different spawn -- same 128 patch, same origin
+ * column 87/56, same ground at 136 -- so a portal at (x, y, z) there is in
+ * exact register with (x, y, z) in the Nether, which is the whole content of
+ * the 1:1 mapping. Nothing had to be pinned; it inherited the register by
+ * being the same cut of the same square, which is also why the builds still
+ * fit in it.
+ *
+ * MECHANICALLY THE RETURN TRIP IS ASYMMETRIC, and that is a known edge rather
+ * than an oversight. src/portals.js decides where a portal goes with one
+ * line -- `dimensions.active === 'nether' ? 'overworld' : 'nether'` -- so
+ * walking into a portal in claude-opus-5-1 correctly lands you in the Nether
+ * at the same coordinates, and walking back lands you in the OVERWORLD at
+ * those coordinates rather than in the world you left. Its `lit` register is
+ * keyed by world name and grows a key for any name (`lit[dim] || (lit[dim] =
+ * [])`), so nothing throws and no portal is forgotten; you simply come back
+ * to the bare field instead of to the road.
+ *
+ * NOT FIXED HERE, deliberately. The fix is a "which overworld did I leave"
+ * memory in portals.js, that file belongs to nobody this pass, and a portal
+ * lit in a world that is now a museum is a thing the owner has to do on
+ * purpose before the bug is reachable at all. Named so the next person finds
+ * it written down instead of discovering it standing in an empty field.
+ *
+ * `mountains` is still outside the argument entirely -- different seed,
+ * different size, different origin, no portal relationship with anything.
  */
 import {
   loadTerrain, generateTerrain, setDimension as setIslandDimension, isLoaded,
   currentDimension, spawnFor, SURFACE_Y, PATCH_SIZE,
 } from './island.js'
 import { flatPatch, FLAT_PRESETS } from './flatworld.js'
+/* Named here rather than left to flatPatch's default, so that the ONE fact
+ * that tells the two generated worlds apart is visible in the table that
+ * defines them. src/builds/index.js's own header calls this "where a reader
+ * would most expect to find it" and left it as a one-line change; this is
+ * that line. dimensions.js already pulls blocks.js and Babylon in behind it,
+ * so the node-verifier argument that keeps this import out of island.js does
+ * not apply here. */
+import { stampBuilds } from './builds/index.js'
 import { BLOCK_TYPES } from './blocks.js'
 import { installPortals } from './portals.js'
 
@@ -239,8 +277,67 @@ export const DIMENSIONS = {
       preset: FLAT_PRESETS.classic,
       width: PATCH_SIZE, depth: PATCH_SIZE,
       surfaceY: SURFACE_Y, ceilingY: CEILING_Y,
+      /*
+       * AND NOTHING STANDING ON IT. This is the owner's world to build in,
+       * which is what he asked for when he saw the AI-built one: bare ground,
+       * the barrier, nothing stamped, spawn in the middle of it.
+       *
+       * `null` rather than deleting the seam: flatPatch has taken a `builds`
+       * parameter since the day the stamper landed and its note says in as
+       * many words that null gives you the empty world back and that this is
+       * how a dimension row would turn the builds off. No mechanism was
+       * invented to do this; the seam was already cut.
+       */
+      builds: null,
     }),
     /* null means "the normal sky": sun, moon, clouds, day cycle. */
+    sky: null,
+    fog: { density: 0 },
+  },
+  /*
+   * THE WORLD THE MODEL BUILT, kept under its own name.
+   *
+   * Eight stages of a life down one road -- Omaha, Harvard, Perplexity,
+   * Arize, Bilibili, No Logo, Patronus, and a parkour course in San Francisco
+   * -- stamped into a superflat by src/builds/. It was the overworld for one
+   * day. The owner's verdict was "interesting but not what I am going to go
+   * with", and the ask was to save it the way `mountains` is saved rather
+   * than delete it. `/world claude-opus-5-1` is the whole of that.
+   *
+   * THE NAME IS A SERIES, see the WORLDS row in src/island.js for the
+   * convention in full: claude-<model>-<n>, and the next one is -2.
+   *
+   * GENERATED, NOT CAPTURED, which is the difference between this row and
+   * `mountains` and is worth being clear about. There is no
+   * claude-opus-5-1.bin; the world is the same superflat compiled a second
+   * time with stampBuilds run over it, so it costs a fetch of nothing and it
+   * cannot go stale against the build files. What it DOES cost is the stamp
+   * itself on first entry -- nine builds rewriting columns of a 128x128 patch
+   * -- paid once, lazily, because `enter` only prepares a world somebody asks
+   * for.
+   *
+   * REJECTED -- exporting it to an asset the way the mountains were, so that
+   * the builds could be deleted afterwards. It makes the world immutable in
+   * the wrong sense: the builds are source, they are still being fixed (three
+   * commits today), and an asset would freeze whichever version happened to
+   * be current when somebody remembered to run the script. It would also put
+   * this world back in front of the licence and bundle-size arguments that
+   * flatworld.js exists to have won.
+   *
+   * Same sky and fog as the overworld because it IS an overworld -- stated
+   * rather than inherited, for the reason `mountains` states it.
+   */
+  'claude-opus-5-1': {
+    name: 'claude-opus-5-1',
+    id: 'minecraft:overworld',
+    generate: () => flatPatch({
+      preset: FLAT_PRESETS.classic,
+      width: PATCH_SIZE, depth: PATCH_SIZE,
+      surfaceY: SURFACE_Y, ceilingY: CEILING_Y,
+      /* The default, said out loud. The two generated rows now differ in
+       * exactly this field, which is the point of naming it in both. */
+      builds: stampBuilds,
+    }),
     sky: null,
     fog: { density: 0 },
   },

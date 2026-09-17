@@ -23,10 +23,24 @@
  * place and it is somebody else's file today; flatPatch takes a `builds`
  * parameter instead, defaulting to this function, so moving the decision into
  * the dimension table later is a one-line change with no new concepts.
+ *
+ *   -- AND IT WAS TAKEN, exactly as advertised and for exactly one line each.
+ *   The two generated rows in src/dimensions.js now say `builds: null`
+ *   (overworld) and `builds: stampBuilds` (claude-opus-5-1), which is the
+ *   only field that differs between them.
  * ------------------------------------------------------------------------
- * ONLY THE OVERWORLD IS STAMPED. Not because of a name check -- because the
- * other two dimensions are IMPORTED assets and never pass through flatPatch
- * at all. The geometry assertion below is the guard that matters: if a second
+ * ONLY claude-opus-5-1 IS STAMPED, and where that is decided moved.
+ *
+ * It used to be "only the overworld", and not because of a name check --
+ * because the other dimensions are IMPORTED assets that never pass through
+ * flatPatch at all. That is still true of the Nether and the mountains. What
+ * changed is that there are now TWO generated worlds through the same
+ * function, and the one that gets the builds is named in the dimension table
+ * rather than implied by being the only caller. The overworld is the owner's
+ * bare ground to build on; this timeline is the world the model built, kept
+ * under a name.
+ *
+ * The geometry assertion below is still the guard that matters: if a
  * generated dimension ever appears at a different size or ground height, it
  * fails here rather than scattering half a house across a world whose ground
  * is sixty blocks lower.

@@ -108,26 +108,37 @@ import { SPAWN_PATCH_X, SPAWN_PATCH_Z, ORIGIN_X, ORIGIN_Z } from './builds/plots
  *                    Absent means the origin column, which is what every
  *                    world did before there was anything to arrive AT.
  *
- * THE OVERWORLD'S SPAWN IS NO LONGER THE ORIGIN, and that is the one thing in
- * this table that will surprise a reader of the old comments. The world is a
- * timeline now: eight stages down one road, oldest first. Arriving at the
- * origin would drop a visitor in the middle of stage 4's front garden, facing
- * nothing, with no way to tell that the place has a direction. So spawn is
- * the SOUTH END OF THE ROAD, under the arch, with the whole timeline running
- * away north in front of them.
+ * THE OVERWORLD'S SPAWN IS THE ORIGIN AGAIN, and the reason is the reason
+ * this table grew a fourth row.
  *
- * The number comes from src/builds/plots.js rather than being written here,
- * because it is a property of the road and the road may move. What stays here
- * is the translation: the plot table thinks in patch indices (0..127) and
- * this table thinks in world coordinates, and the subtraction that connects
- * them belongs at the boundary.
+ * For one day the overworld WAS the timeline -- eight stages down one road,
+ * spawn at the south end of it -- and this comment argued for that at length.
+ * The owner looked at the built world, said it was interesting but not what
+ * he was going to go with, and asked for it to be kept under a name while the
+ * default went back to bare superflat he can build on himself. So the road,
+ * the eight stages and the spawn that faces up them all moved together into
+ * `claude-opus-5-1`, and the overworld is a blank 128x128 field.
  *
- * WHAT THIS COSTS, honestly: "spawn is (0, 0) in every world" was a real
- * invariant and several specs lean on it -- test/08-death.spec.js asserts you
- * respawn at x=0.5, z=0.5. They are asserting the old world. The Nether and
- * the mountains keep the origin, so the portal register that src/dimensions.js
- * argues for is untouched; it is only the overworld's arrival point that
- * moved, and it moved because the overworld finally has somewhere to arrive.
+ * Which means the spawn question has to be re-answered rather than inherited:
+ *
+ *   claude-opus-5-1  the SOUTH END OF THE ROAD, under the arch, with the
+ *                    timeline running away north in front of you. Unchanged,
+ *                    because it is a property of the road and the road did
+ *                    not move -- the numbers still come from
+ *                    src/builds/plots.js rather than being written here, and
+ *                    what stays here is the translation from patch indices
+ *                    (0..127) to world coordinates.
+ *   overworld        THE ORIGIN. Rejected: the patch centre, patch (64, 64),
+ *                    which is the obvious answer for an empty square and is
+ *                    worse for a reason that has nothing to do with taste.
+ *                    "Spawn is horizontal (0, 0) in every world" is a real
+ *                    invariant that most of this suite is written against --
+ *                    test/08-death.spec.js asserts you respawn at x=0.5,
+ *                    z=0.5, test/51-worlds.spec.js asserts the property
+ *                    itself, and every "look at the block under your feet"
+ *                    spec reads getBlock(0, SURFACE_Y - 1, 0). On flat ground
+ *                    every column is the same column, so centring would buy
+ *                    literally nothing and cost that invariant a second time.
  *
  * THE NETHER'S ROW IS THE OLD CONSTANTS, UNCHANGED, and deliberately still
  * shares the overworld's origin. src/dimensions.js argues at length for the
@@ -138,6 +149,35 @@ import { SPAWN_PATCH_X, SPAWN_PATCH_Z, ORIGIN_X, ORIGIN_Z } from './builds/plots
  */
 export const WORLDS = {
   overworld: {
+    /* No spawnX/spawnZ: the origin, which is what `?? 0` in spawnFor means.
+     * `drop: 2` is inherited from the old SPAWN constant and is asserted by
+     * specs that watch the landing. */
+    size: 128, originX: 87, originZ: 56, surfaceY: 136, drop: 2,
+  },
+  /*
+   * THE BUILT WORLD, AND THE NAMING CONVENTION -- read this before adding the
+   * next one.
+   *
+   *     claude-<model>-<n>
+   *
+   * `claude-opus-5` is the model that built it; the trailing `-1` is a SERIES
+   * NUMBER, not a version of the model. It is 1 because it is the first world
+   * this model built. The next world Opus 5 builds is `claude-opus-5-2`
+   * whether or not it resembles this one; the first one a different model
+   * builds starts its own count at 1 (`claude-sonnet-5-1`). The suffix exists
+   * precisely so that "build me another one" never has to overwrite the last
+   * one, and so nobody has to guess whether -2 means "second attempt" or
+   * "version 2 of the same place". It means the second world.
+   *
+   * GEOMETRICALLY IDENTICAL TO THE OVERWORLD, every number of it: same 128
+   * patch, same origin column, same ground at 136. That is not laziness, it
+   * is what keeps the builds valid -- src/builds/plots.js is written in patch
+   * indices against a 128x128 patch with its ground at GROUND_Y, and
+   * stampBuilds throws if handed anything else. The only row field that
+   * differs from the overworld's is the spawn, which is the one thing about
+   * this world that is about the road rather than about the ground.
+   */
+  'claude-opus-5-1': {
     size: 128, originX: 87, originZ: 56, surfaceY: 136, drop: 2,
     spawnX: SPAWN_PATCH_X - ORIGIN_X, spawnZ: SPAWN_PATCH_Z - ORIGIN_Z,
   },
