@@ -113,8 +113,11 @@ const EXTRA = [
   [BIOME.BIRCH, 54, 98],
   [BIOME.BAMBOO, 150, 136],
   [BIOME.RIVERLANDS, 132, 158],
-  [BIOME.HILLS, 146, 206],
-  [BIOME.PEAKS, 196, 248],
+  [BIOME.HILLS, 146, 202],
+  /* The massif, twice, so the mountain is a RANGE rather than a cone with a
+   * hills border halfway up it. SUMMIT below sits on the first of them. */
+  [BIOME.PEAKS, 190, 234],
+  [BIOME.PEAKS, 218, 250],
 ]
 
 /** [biome, x, z] for every anchor: one per chapter centre, plus EXTRA. */
@@ -326,7 +329,7 @@ const AMPLITUDE = {
   [BIOME.BIRCH]: 3.0,
   [BIOME.BAMBOO]: 3.5,
   [BIOME.RIVERLANDS]: 1.6,  // a floodplain is flat, and the water needs it flat
-  [BIOME.HILLS]: 8.0,
+  [BIOME.HILLS]: 9.0,
   [BIOME.PEAKS]: 13.0,
 }
 
@@ -344,10 +347,16 @@ function fbm(x, z, salt) {
  * The climb is a parkour going UP and the owner builds it, so its footprint
  * must stay dead flat at y = 136 like every other plot. A mountain under it
  * would be a mountain he has to demolish. So the massif stands WEST of the
- * path across z 205..255 -- in view from the last three bends, behind the
+ * path across z 200..255 -- in view from the last three bends, behind the
  * climb from the plot's own entrance, and on ground nothing else claims.
+ *
+ * IT SAT TEN ROWS FURTHER SOUTH AND CAME OUT A THIRD SHORTER. The relief
+ * tapers to nothing over the last ten columns of the patch (a hillside that
+ * ends at the barrier is a hillside ending at whatever the outside of the
+ * world is), and a summit nine rows from the south edge spends most of its
+ * height paying that taper. Measured at 12 blocks; moved to z = 234 it is 20.
  */
-const SUMMIT = { x: 196, z: 246, r: 62, h: 15 }
+const SUMMIT = { x: 190, z: 234, r: 58, h: 22 }
 
 /**
  * The height this column wants, in blocks above the ordinary ground, before

@@ -90,8 +90,25 @@ function species(x, z) {
   return 'cherry'
 }
 
-/** One tree, drawn at (x, z) standing on ground height `base`. */
-function tree(s, x, z, base, kind, r) {
+/**
+ * One tree, drawn at (x, z) standing on ground height `base`.
+ *
+ * `model` is here for one reason and it is a defect the hills found: A LEAF
+ * MAY NOT BE WRITTEN INTO THE GROUND. On flat land a canopy is five blocks
+ * up and never meets anything, so `s.set` unconditionally was correct for as
+ * long as the world was flat. On a hillside the tree below you has its crown
+ * at the height of the slope above it, and every one of those leaf blocks was
+ * being stamped straight through the hill -- leaves buried in stone, and a
+ * hole in the mountainside wherever one landed on the surface column. It also
+ * silently broke the slope measurement, because a column whose top block is a
+ * leaf reads as four blocks lower than it is.
+ *
+ * Vanilla has the same situation and the opposite rule: leaves only replace
+ * air. The stamper has no read, on purpose (see its header -- it writes
+ * columns once, between generation and install), so the model is the thing
+ * that knows where the ground is. Air starts at local y = h.
+ */
+function tree(s, x, z, base, kind, model) {
   const log = `${kind}_log`, leaf = `${kind}_leaves`
   const blob = (cx, cy, cz, rad, jitter) => {
     const ri = Math.ceil(rad)
@@ -105,6 +122,7 @@ function tree(s, x, z, base, kind, r) {
           if (dist > rad - 0.8 && hash(cx + dx, cz + dz, jitter + dy) < 0.45) continue
           const px = cx + dx, pz = cz + dz
           if (!onMap(px, pz)) continue
+          if (cy + dy < model.h[at(px, pz)]) continue      // it is inside the hill
           s.set(px, cy + dy, pz, leaf)
         }
       }
@@ -186,7 +204,7 @@ export function plantForest(s, model) {
        * one thing in a plot that has to be legible from the path. */
       if (!clearOfReserved(model, x, z, 6)) continue
 
-      tree(s, x, z, model.h[j], species(x, z), 0)
+      tree(s, x, z, model.h[j], species(x, z), model)
     }
   }
 

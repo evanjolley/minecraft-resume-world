@@ -99,7 +99,17 @@ export function drawPath(model, samples, surfaceOf) {
        * the spine keeps the approach ramp gentle and makes the step onto the
        * bridge one block, which is a step.
        */
-      const want = nearSpawn(x, z, SPAWN_FLAT) ? 0 : Math.round(s.h)
+      /*
+       * THE SPINE'S HEIGHT IS NOW A HEIGHT ABOVE THE LANDSCAPE, not above the
+       * grass. It was the same number for as long as the landscape was flat.
+       * `model.ground` is what the relief and the slope clamp left here, and
+       * the path rides on top of it -- so a stretch the spine marks +1 is one
+       * block above whatever the ground beside it is doing, which is what a
+       * raised causeway is, rather than one block above sea level, which
+       * halfway up a hillside is a trench.
+       */
+      const base = model.ground[j]
+      const want = nearSpawn(x, z, SPAWN_FLAT) ? 0 : base + Math.round(s.h)
       model.h[j] = water ? Math.max(1, want) : want
       /* Three percent of the surface stays grass: a tuft the walking never
        * quite killed. `null` means "leave the generator's block", which for a
@@ -146,7 +156,27 @@ export function drawPath(model, samples, surfaceOf) {
  * shallow angle and turns to meet the plot square. A T-junction at 90 degrees
  * is the one shape in this landscape that would look drawn.
  */
-export function drawSpurs(model, samples, surfaceOf) {
+/*
+ * WHERE A SPUR GOES, separated from the drawing of it.
+ *
+ * THE MERGE IS WHY THIS IS ITS OWN FUNCTION. Chapters renumbered when Harvard
+ * and the school work became one plot, and the spurs re-cut themselves from
+ * the table -- the curve machinery below reads CHAPTERS and aims at whatever
+ * rectangles are in it, so losing a row costs nothing. But the RELIEF pass in
+ * src/builds/land.js now has to know where the spurs run BEFORE they are
+ * drawn: terrain that rises between the path and a plot entrance is a hill on
+ * the one stretch of the walk that has to be an invitation. So the geometry
+ * is computed here, once, and both passes read it.
+ *
+ * REJECTED -- letting the relief pass find the spurs by looking for
+ * KIND.SPUR after they are drawn. That is the same ordering trap the header
+ * of land.js is about: the ground has to exist before things stand on it, and
+ * the spur has to exist before the ground is decided.
+ *
+ * @returns [{ x, z }] -- a dense list of centreline points along every spur.
+ */
+export function spurCurves(samples) {
+  const out = []
   for (const c of CHAPTERS) {
     /* LEFT is the LOW-x side, which in this engine is EAST: Babylon is
      * left-handed, facing +z puts +x on your right, and the visitor walks
@@ -173,10 +203,22 @@ export function drawSpurs(model, samples, surfaceOf) {
     const cz = az + (bz - az) * 0.45 + (bz > az ? 5 : -5)
 
     const steps = Math.ceil(Math.hypot(bx - ax, bz - az) * 4)
+    const points = []
     for (let k = 0; k <= steps; k++) {
       const t = k / steps
-      const x0 = (1 - t) ** 2 * ax + 2 * (1 - t) * t * cx + t * t * bx
-      const z0 = (1 - t) ** 2 * az + 2 * (1 - t) * t * cz + t * t * bz
+      points.push({
+        x: (1 - t) ** 2 * ax + 2 * (1 - t) * t * cx + t * t * bx,
+        z: (1 - t) ** 2 * az + 2 * (1 - t) * t * cz + t * t * bz,
+      })
+    }
+    out.push({ chapter: c, points })
+  }
+  return out
+}
+
+export function drawSpurs(model, samples, surfaceOf) {
+  for (const { points } of spurCurves(samples)) {
+    for (const { x: x0, z: z0 } of points) {
       for (let dx = -2; dx <= 2; dx++) {
         for (let dz = -2; dz <= 2; dz++) {
           const x = Math.round(x0 + dx), z = Math.round(z0 + dz)

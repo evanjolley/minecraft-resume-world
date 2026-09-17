@@ -286,21 +286,35 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
   const survey = (page, surfaceY) => page.evaluate((y0) => {
     const v = window.game.voxelAt
     const t = window.game.terrain
-    let columns = 0, sampled = 0, above = 0, grass = 0
+    let columns = 0, sampled = 0, above = 0, grass = 0, green = 0
     // World coordinates, derived from the live patch rather than hardcoded,
     // so this reads the whole of whichever world is current.
     const x0 = -t.originX, z0 = -t.originZ
+    const GRASS = window.game.ids.grass
     for (let z = z0; z < z0 + t.depth; z++) {
       for (let x = x0; x < x0 + t.width; x++) {
         columns++
-        if (v(x, y0 - 1, z) === window.game.ids.grass) grass++
-        for (let y = y0; y <= t.yTop; y++) {
-          sampled++
-          if (v(x, y, z) !== 0) above++
+        if (v(x, y0 - 1, z) === GRASS) grass++
+        /*
+         * `grass` counts the PRESET'S OWN LEVEL and `green` counts the whole
+         * column, and the pair stopped being the same number when the
+         * overworld grew relief. A column the hills raised has dirt or stone
+         * at y0 - 1 and its grass four blocks higher; a column they sank has
+         * air there. So the first is "how much of this world is still exactly
+         * as generated" and the second is "is this still a green world", and
+         * the assertions below want one of each.
+         */
+        let hasGrass = false
+        for (let y = y0 - 4; y <= t.yTop; y++) {
+          if (y >= y0) sampled++
+          const id = v(x, y, z)
+          if (y >= y0 && id !== 0) above++
+          if (id === GRASS) hasGrass = true
         }
+        if (hasGrass) green++
       }
     }
-    return { columns, sampled, above, grass, world: t.dimension }
+    return { columns, sampled, above, grass, green, world: t.dimension }
   }, surfaceY)
 
   test('the landscape is standing in the default world', async ({ page }) => {
@@ -337,9 +351,18 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
      *
      * Both bounds matter. Too few and the landscape did not stamp; too many
      * and something has paved the world.
+     *
+     * AND THE GROUND ALSO MOVED, as of the biome pass: six biomes with their
+     * own palettes and their own relief, so about 26,000 columns are still
+     * the preset's grass at the preset's height and the rest have been
+     * raised, sunk, paved, flooded or painted. `green` is the check that this
+     * did not turn into a quarry -- the world is still mostly a green world,
+     * its grass is just not all at y = 135 any more.
      */
     expect(s.grass).toBeLessThan(256 * 256 - 8_000)
-    expect(s.grass).toBeGreaterThan(30_000)
+    expect(s.grass).toBeGreaterThan(15_000)
+    expect(s.green).toBeGreaterThan(30_000)
+    expect(s.green).toBeLessThan(256 * 256 - 8_000)
 
     /*
      * THE PLOTS ARE EMPTY -- ALL OF THEM EXCEPT THE ONES SOMEBODY HAS BUILT.
