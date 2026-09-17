@@ -46,7 +46,7 @@
 import { stamper } from './stamp.js'
 import { GROUND_Y, LAND_SIZE, LAND, CHAPTERS, LAND_SPAWN_X, LAND_SPAWN_Z } from './plots.js'
 import { SPINE, sampleSpine } from './spine.js'
-import { carveRiver, buildBridge } from './river.js'
+import { carveRiver, carveIsland, bridgeToIsland, buildBridge } from './river.js'
 import { drawPath, drawSpurs, lampPosts, spurCurves } from './path.js'
 import { plantForest } from './flora.js'
 import { markChapters } from './chapters.js'
@@ -645,6 +645,11 @@ export function stampLand(world, surfaceY) {
    * path is laid on ground that has already stopped moving. */
   shapeRelief(model)
   carveRiver(model)
+  /* The island's loop is cut off the river, so the river has to exist first
+   * -- where the two meet, the loop overwrites the river's bank and the join
+   * is water to water rather than a dam across the channel. */
+  carveIsland(model)
+  bridgeToIsland(model)
   clampSlope(model, pinnedColumns(model, false))
   model.ground.set(model.h)
 

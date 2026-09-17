@@ -222,9 +222,23 @@ test.describe('drinking', () => {
 
   test('drinking Turtle Master gives BOTH of its effects at their own amplifiers',
     async ({ page }) => {
-      await drink(page, 'turtle_master')
-      expect(await active(page, 'slowness')).toEqual({ amp: 3, ticks: 400 })
-      expect(await active(page, 'resistance')).toEqual({ amp: 2, ticks: 400 })
+      /*
+       * BOTH IN ONE EVALUATE, and it is not tidiness: the effect clock is
+       * live, so two round trips to the page can straddle a tick and the
+       * second effect reads 399. That is a flake in the SPEC and it found
+       * itself on webkit, which is slower to turn a round trip around.
+       */
+      const both = await page.evaluate(async () => {
+        window.game.potions.drinkNow('turtle_master')
+        const e = window.game.effects
+        const read = (k) => {
+          const i = e.instance(window.noa.playerEntity, k)
+          return i ? { amp: i.amplifier, ticks: i.ticks } : null
+        }
+        return { slowness: read('slowness'), resistance: read('resistance') }
+      })
+      expect(both.slowness).toEqual({ amp: 3, ticks: 400 })
+      expect(both.resistance).toEqual({ amp: 2, ticks: 400 })
     })
 
   test('an instant potion is never stored, and it moves health', async ({ page }) => {
@@ -404,6 +418,51 @@ test.describe('they are findable', () => {
       'Potion of Swiftness II (1:30)',
       'Splash Potion of Swiftness II (1:30)',
     ])
+  })
+
+  test('a potion in hand, and the effect it gives', async ({ page }) => {
+    await useGamemode(page, 'creative')
+    await page.evaluate(() => window.game.inventoryScreen.setOpen(false))
+    await setHotbar(page, 'potion_swiftness')
+    await drink(page, 'swiftness')
+    await waitTicks(page, 6)
+    // The bottle in the fist, the swirl around the player, and the Speed
+    // icon on the HUD -- the three places a potion is supposed to show up.
+    await shot(page, 'potions-in-hand')
+    await clearAll(page)
+    await useGamemode(page, 'survival')
+  })
+
+  test('a splash potion in flight and the dose it lands', async ({ page }) => {
+    await useGamemode(page, 'creative')
+    await page.evaluate(() => window.game.inventoryScreen.setOpen(false))
+    await setHotbar(page, 'splash_potion_poison')
+    /*
+     * Thrown straight down, which is the only aim that is guaranteed to hit
+     * something within a frame or two wherever the player happens to be
+     * standing. Twenty degrees of lift on top of straight down is still down.
+     */
+    await page.evaluate(() => { window.noa.camera.pitch = Math.PI / 2 })
+    const inFlight = await page.evaluate(() => {
+      window.game.potions.throwSplash('poison')
+      return window.game.potions.flying.length
+    })
+    expect(inFlight).toBe(1)
+    await waitTicks(page, 2)
+    await shot(page, 'potions-splash-thrown')
+    // ...and it has to actually land, rather than be a sprite that flies off.
+    await waitTicks(page, 20)
+    const landed = await page.evaluate(() => ({
+      flying: window.game.potions.flying.length,
+      last: window.game.potions.splashed.at(-1),
+    }))
+    expect(landed.flying).toBe(0)
+    expect(landed.last.hits.length).toBeGreaterThan(0)
+    // Poison's colour, from effects.js, is what the break is tinted with.
+    expect(landed.last.color).toBe(0x87A363)
+    await shot(page, 'potions-splash-landed')
+    await clearAll(page)
+    await useGamemode(page, 'survival')
   })
 
   test('the Food & Drinks tab, with the potions in it', async ({ page }) => {

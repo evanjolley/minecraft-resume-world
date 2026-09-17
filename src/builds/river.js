@@ -43,6 +43,7 @@
  * rather than at a ladder somebody has to find.
  */
 import { KIND, at, onMap, hash, smoothNoise } from './land.js'
+import { landPlot } from './plots.js'
 
 /*
  * THE COURSE, as [patch x, centre z, half width]. Hand-placed for the same
@@ -174,17 +175,238 @@ export function buildBridge(s, model, samples) {
   }
 
   /*
-   * THE PIERS. Cobblestone from the bed to just under the deck, at the two
+   * THE PIERS. Cobblestone from the bed to just under the deck, at the
    * columns nearest the middle of the span. Structurally decorative and
    * visually load-bearing: a deck floating over water reads as a glitch.
+   *
+   * ONE SPAN PER BRIDGE, and that is the whole reason this walks connected
+   * components instead of taking the middle of everything marked BRIDGE.
+   * There are two bridges now -- the river crossing between Bilibili and New
+   * York, and the short one onto the island -- and the midpoint of their
+   * union is a point in a field halfway between them. The first version of
+   * this function could not have known that; it is what a global mid is
+   * always one more bridge away from getting wrong.
+   *
+   * AND THE LONG AXIS, not z. The river is crossed along z and the moat along
+   * x, so "the middle of the span" is a different coordinate for each. The
+   * bounding box says which.
    */
-  const decks = [...deckOf.keys()]
-  const zs = decks.map(j => (j / 256) | 0)
-  const zMid = Math.round((Math.min(...zs) + Math.max(...zs)) / 2)
-  for (const j of decks) {
-    const x = j % 256, z = (j / 256) | 0
-    if (Math.abs(z - zMid) > 1) continue
-    if ((x + z) % 3 !== 0) continue
-    s.pillar(x, z, -3, deckOf.get(j) - 2, 'cobblestone')
+  for (const span of components(deckOf)) {
+    let xLo = 999, xHi = -1, zLo = 999, zHi = -1
+    for (const j of span) {
+      const x = j % 256, z = (j / 256) | 0
+      if (x < xLo) xLo = x
+      if (x > xHi) xHi = x
+      if (z < zLo) zLo = z
+      if (z > zHi) zHi = z
+    }
+    const alongZ = (zHi - zLo) >= (xHi - xLo)
+    const mid = alongZ ? Math.round((zLo + zHi) / 2) : Math.round((xLo + xHi) / 2)
+    for (const j of span) {
+      const x = j % 256, z = (j / 256) | 0
+      if (Math.abs((alongZ ? z : x) - mid) > 1) continue
+      if ((x + z) % 3 !== 0) continue
+      s.pillar(x, z, -3, deckOf.get(j) - 2, 'cobblestone')
+    }
   }
+}
+
+/** Split a set of column indices into 4-connected groups. A flood fill with
+ *  an explicit stack rather than recursion: a deck is only a few hundred
+ *  columns, but a recursive fill over a voxel map is the one that blows the
+ *  stack on the day somebody makes a causeway. */
+function components(deckOf) {
+  const seen = new Set()
+  const out = []
+  for (const start of deckOf.keys()) {
+    if (seen.has(start)) continue
+    const group = []
+    const stack = [start]
+    seen.add(start)
+    while (stack.length) {
+      const j = stack.pop()
+      group.push(j)
+      const x = j % 256, z = (j / 256) | 0
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, nz = z + dz
+        if (!onMap(nx, nz)) continue
+        const k = at(nx, nz)
+        if (!deckOf.has(k) || seen.has(k)) continue
+        seen.add(k)
+        stack.push(k)
+      }
+    }
+    out.push(group)
+  }
+  return out
+}
+
+
+/* ====================================================================== *
+ *
+ * NEW YORK IS AN ISLAND, AND THE RIVER IS WHAT MAKES IT ONE.
+ *
+ * "Ok yes nyc on an island and connect the water to the river somehow? And
+ * build a lil bridge."
+ *
+ * THE WATER IS THE RIVER'S, NOT A NEW POOL. The river already runs east-west
+ * across the whole map at about z = 155, twelve rows north of chapter 4's
+ * plot, and it was put there because the crossing is the move to the city.
+ * So the moat is cut as a loop that RUNS OFF IT -- the northern rim at z 156
+ * to 162 is inside the river's own bank zone, the two bodies are one body,
+ * and the island is a piece of ground the river goes round rather than a
+ * pond somebody dug beside it. Nothing here invents a second water table.
+ *
+ * REJECTED -- a square moat. It is four rectangles and it would read as a
+ * castle. The shape below is the distance to the PLOT RECTANGLE, expanded by
+ * a shore and then jittered by a noise field, so the shoreline is a curve
+ * with bays in it that still keeps a guaranteed six blocks of land between
+ * the water and the chapter's border.
+ * ------------------------------------------------------------------------
+ * IT CANNOT FLOOD, AND FOR EXACTLY THE REASON THE RIVER CANNOT.
+ *
+ * Read the header of this file first. Every water column is a SOURCE and
+ * every water column is enclosed: bed under the deepest water, a one-deep
+ * shelf between the two-deep middle and the land, and an unbroken BANK ring
+ * outside the shelf. The bank is the containment. It is also the way OUT --
+ * swim to the shelf, stand up in ankle-deep water, step up one block onto
+ * sand -- and it works on every metre of the shore rather than at a ladder.
+ *
+ * THE BANK RING IS ALSO WHAT KEEPS THE RELIEF HONEST. src/builds/land.js
+ * pins every WATER, SHALLOW and BANK column at height 0 before the slope
+ * clamp runs, so the ground beside the water cannot be sunk by a biome and
+ * leave a water block with an open face over a hole. The ring is not
+ * decoration; it is the boundary condition the whole height field is solved
+ * against.
+ * ====================================================================== */
+
+/** How much dry land there is between the chapter's border and the water. */
+const SHORE = 6
+
+/** The bands of the loop, as distances outward from the shore line. Read as
+ *  a cross-section of one side: a metre and a half of sand, a shelf you can
+ *  stand up in, four and a half of open water, the shelf again, the bank. */
+const BANDS = { bankIn: 1.5, shelfIn: 3.0, deep: 7.5, shelfOut: 9.0, bankOut: 10.5 }
+
+/**
+ * SIGNED distance from (x, z) to a rectangle: positive outside, and NEGATIVE
+ * inside by how far in you are.
+ *
+ * The unsigned version is two lines shorter and it is wrong twice over, which
+ * is worth recording because both failures look like the same typo. Every
+ * column inside the rectangle answers 0, so (a) the whole island interior sits
+ * exactly on the shore line and the jitter floods half of it, and (b) the
+ * chapter's own plot -- six blocks further in -- also answers 0, so the guard
+ * below fires on a plot that is nowhere near the water. The second one is
+ * what actually threw.
+ */
+function toRect(x, z, r) {
+  const dx = Math.max(r.x0 - x, 0, x - r.x1)
+  const dz = Math.max(r.z0 - z, 0, z - r.z1)
+  if (dx > 0 || dz > 0) return Math.hypot(dx, dz)
+  return -Math.min(x - r.x0, r.x1 - x, z - r.z0, r.z1 - z)
+}
+
+/**
+ * Cut the loop. Runs AFTER carveRiver so that where the two meet, the island's
+ * water simply overwrites the river's bank and the join is water to water.
+ */
+export function carveIsland(model) {
+  const c = landPlot('ch4')
+  const ring = { x0: c.x0 - SHORE, x1: c.x1 + SHORE, z0: c.z0 - SHORE, z1: c.z1 + SHORE }
+
+  for (let z = ring.z0 - 14; z <= ring.z1 + 14; z++) {
+    for (let x = ring.x0 - 14; x <= ring.x1 + 14; x++) {
+      if (!onMap(x, z)) continue
+      const j = at(x, z)
+      /* A moat through somebody's plot would be a moat through the one thing
+       * this pass may not touch, and the chapter it belongs to is the one it
+       * would drown. Throws rather than clipping, for the same reason
+       * carveRiver does: a clipped shoreline is a square bite nobody notices
+       * until the plot is built on. */
+      if (model.kind[j] === KIND.PLOT) {
+        const d0 = toRect(x, z, ring)
+        if (d0 > -3 && d0 <= BANDS.bankOut) {
+          throw new Error(
+            `the New York moat runs into a chapter plot at patch (${x}, ${z}) `
+            + `-- SHORE in src/builds/river.js is ${SHORE} and is not enough.`)
+        }
+        continue
+      }
+      /* The jitter is what stops it reading as a racetrack. Two scales again:
+       * a slow one that makes bays and headlands, a fast one that roughens
+       * the last block of the edge. */
+      const d = toRect(x, z, ring)
+        + (smoothNoise(x, z, 14, 601) - 0.5) * 4.5
+        + (smoothNoise(x, z, 5, 607) - 0.5) * 1.6
+
+      if (d <= 0) continue                               // the island itself
+      if (d > BANDS.bankOut) continue                    // the mainland
+      if (d <= BANDS.bankIn || d > BANDS.shelfOut) {
+        /* The two bank rings. Never demote water the river already put here:
+         * where the loop meets the river the answer has to be the wetter of
+         * the two, or the join would be a dam across the channel. */
+        const k = model.kind[j]
+        if (k === KIND.WATER || k === KIND.SHALLOW) continue
+        model.kind[j] = KIND.BANK
+        model.surface[j] = hash(x, z, 241) < 0.4 ? 'sand'
+          : hash(x, z, 251) < 0.5 ? 'gravel' : 'coarse_dirt'
+      } else if (d <= BANDS.shelfIn || d > BANDS.deep) {
+        if (model.kind[j] === KIND.WATER) continue        // already deeper
+        model.kind[j] = KIND.SHALLOW
+        model.depth[j] = 1
+        model.surface[j] = hash(x, z, 239) < 0.4 ? 'sand' : 'gravel'
+      } else {
+        model.kind[j] = KIND.WATER
+        model.depth[j] = 2
+        model.surface[j] = hash(x, z, 233) < 0.25 ? 'clay' : 'gravel'
+      }
+    }
+  }
+}
+
+/*
+ * THE CROSSING, and it is the same three blocks of deck the spur would have
+ * been if the water were not there.
+ *
+ * src/builds/path.js aims every spur at the plot's path-side edge at
+ * z = z0 + 6, which is where src/builds/chapters.js opens the border. So the
+ * bridge is a straight run along x at that z, from the mainland bank to the
+ * island bank, and drawSpurs -- which skips BRIDGE columns the same way it
+ * skips PATH -- simply arrives at each end of it.
+ *
+ * MARKED BEFORE THE SPUR IS DRAWN. A deck column is water with a plank over
+ * it (see writeGround), and the bug the river's bridge already documents is
+ * that a raster which asks "is this water" turns the deck back into path on
+ * its second visit and fills the channel with dirt. BRIDGE is sticky and it
+ * has to be set first.
+ */
+export function bridgeToIsland(model) {
+  const c = landPlot('ch4')
+  const lowX = c.side === 'LEFT'
+  const z0 = c.z0 + 6
+  const from = lowX ? c.x1 + 1 : c.x0 - 1
+  const dir = lowX ? 1 : -1
+  let decks = 0
+  for (let step = 0; step < 24; step++) {
+    const x = from + step * dir
+    for (let z = z0 - 1; z <= z0 + 1; z++) {
+      if (!onMap(x, z)) continue
+      const j = at(x, z)
+      const k = model.kind[j]
+      if (k !== KIND.WATER && k !== KIND.SHALLOW) continue
+      model.kind[j] = KIND.BRIDGE
+      /* A deck is never at the water's own level: the water surface is local
+       * y = -1 and a plank written there is a plank floating IN the moat,
+       * which is what the river's bridge found out the hard way. */
+      model.h[j] = 1
+      decks++
+    }
+  }
+  if (decks === 0) {
+    throw new Error('the New York bridge crosses no water: the moat and the spur '
+      + 'do not line up. Check SHORE in src/builds/river.js against the door z '
+      + 'that src/builds/chapters.js opens.')
+  }
+  return decks
 }

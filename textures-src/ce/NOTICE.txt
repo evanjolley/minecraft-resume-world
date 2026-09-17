@@ -13,6 +13,19 @@ the ones src/blocks.js names, plus the substitute bases the build derives
 1.17+ blocks from. Adding a block that wants a texture which isn't here makes
 the build fail by name rather than render as checkerboard.
 
+`item/` is the same arrangement for that pack's assets/minecraft/textures/item:
+an 89-file subset of the sprites src/items.js names. It grew by five when
+potions landed -- potion.png, potion_overlay.png, splash_potion.png,
+glass_bottle.png and milk_bucket.png -- all copied unmodified from the same
+pack and the same commit as everything else here.
+
+The potion sprites are the only two-layer art in the set. The build composites
+them: potion_overlay.png is greyscale and is multiplied by the potion's colour,
+and potion.png (or splash_potion.png) goes over the top untinted. That is
+exactly what vanilla's models/item/potion.json describes and what Minecraft
+does at render time, so the result is CC-BY-SA-4.0 like every other derivative
+below.
+
 Modification: crack.png is a derivative of the pack's crack_anylength.png.
 Its RGB channels have been flattened to black while preserving the original
 alpha, so it can be used as a pure alpha mask for a black crack overlay.
