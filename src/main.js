@@ -600,7 +600,7 @@ const drops = installItemEntities(noa, { inventory, authority, sounds, inputLock
  *                     `drops.popResource` is the same scatter a broken block's
  *                     own drop uses, so a furnace's contents land like ore.
  */
-const buckets = installBuckets(noa, { inventory, authority, inputLock })
+const buckets = installBuckets(noa, { inventory, authority, inputLock, effects })
 installFurnaceDrops(inventory.furnaces, authority, drops.popResource)
 
 /*
@@ -805,6 +805,14 @@ const aiEvan = installNPC(noa, {
   roster,
   id: EVAN_ID,
   position: EVAN_DROP,
+  /*
+   * Slow Falling and Levitation reach Evan too, and that is the only reason
+   * npc.js takes this: its fall-through-the-floor guard writes gravity every
+   * tick, so a bare 1 there silently defeated the effect. The freeze still
+   * wins -- see the note at the write site.
+   */
+  gravityFor: (e) => effects.gravityMultiplier(
+    e, noa.ents.getPhysics(e).body.velocity[1] <= 0),
   /*
    * Evan's real appearance, converted from his account's pre-1.8 64x32 sheet
    * by scripts/build-textures.mjs. Only HE wears it -- the player above

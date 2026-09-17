@@ -201,6 +201,13 @@ function angleDelta(a, b) {
 export function installNPC(noa, {
   roster, id, position, skin, cape = null, chat, caps = () => ({ noClip: false }),
   agent = null, script = {}, height = NPC_HEIGHT,
+  /*
+   * What his gravity should be when he is NOT frozen. Injected rather than
+   * imported so npc.js keeps knowing nothing about status effects -- it asks
+   * "what multiplier now", and effects.js is what answers. Defaults to normal
+   * gravity, which is what this module means on its own.
+   */
+  gravityFor = () => 1,
 }) {
   const entry = roster.get(id)
   if (!entry) throw new Error(`installNPC: no roster entry ${id}`)
@@ -804,7 +811,17 @@ export function installNPC(noa, {
       if (lastRest) noa.ents.setPosition(entity, lastRest[0], lastRest[1], lastRest[2])
       return
     }
-    body.gravityMultiplier = 1
+    /*
+     * NOT A BARE 1. Slow Falling and Levitation both work by changing a body's
+     * gravity multiplier, and this line ran after physics.js had set it --
+     * so Evan drank a Slow Falling and fell at full speed, silently, because
+     * two systems owned one field and the later writer won.
+     *
+     * The freeze above still wins over both, which is the right precedence:
+     * it exists to stop him falling through an unloaded floor, and a potion
+     * must not be able to defeat that.
+     */
+    body.gravityMultiplier = gravityFor(entity)
     if (body.atRestY() < 0) lastRest = [...at()]
 
     steer(secs)

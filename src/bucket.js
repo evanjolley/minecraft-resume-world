@@ -44,6 +44,28 @@ export const LAVA = blockIdOf('lava')
 
 export const EMPTY_BUCKET = itemId('bucket')
 
+/*
+ * MILK, and it does not exist yet.
+ *
+ * Milk is the cure: drinking it calls removeAllEffects(), which is why it is
+ * the answer to a bad potion and why brewing a cure for every effect would be
+ * a wasted feature. It is a BUCKET, so the drinking belongs here rather than
+ * in a food system this world does not have.
+ *
+ * WHAT IS MISSING IS ONE ROW IN src/items.js -- `{ key: 'milk_bucket', name:
+ * 'Milk Bucket', stack: 1 }` -- and that file is held by another agent this
+ * pass, so it cannot be added today. `itemId` throws on an unknown key, so the
+ * lookup is guarded and the whole branch is inert until the item exists. It
+ * then lights up with no further change here.
+ *
+ * Rejected: adding the item anyway and resolving the conflict later. items.js
+ * is 44 KB of table that another agent is editing right now, and a two-line
+ * addition landing in the middle of that is a merge conflict traded for a
+ * feature nobody can reach without a cow.
+ */
+let MILK_BUCKET = null
+try { MILK_BUCKET = itemId('milk_bucket') } catch { /* wave two */ }
+
 /** Filled bucket item -> the source block it pours. */
 export const POURS = new Map([
   [itemId('water_bucket'), WATER],
@@ -140,7 +162,7 @@ export function bucketRay(noa, stopAtSource) {
  * @param {object} deps inventory, authority, inputLock
  * @returns {object} handles for the console and the test suite
  */
-export function installBuckets(noa, { inventory, authority, inputLock }) {
+export function installBuckets(noa, { inventory, authority, inputLock, effects = null }) {
   /**
    * Put a stack in the selected hotbar slot, and deal with the one case that
    * is not a straight swap: an empty bucket that came out of a stack of them.
@@ -226,9 +248,29 @@ export function installBuckets(noa, { inventory, authority, inputLock }) {
     const stack = inventory.selectedStack()
     if (!stack) return
     if (stack.id === EMPTY_BUCKET) return void await fill()
+    if (MILK_BUCKET !== null && stack.id === MILK_BUCKET) return void drinkMilk()
     const fluid = POURS.get(stack.id)
     if (fluid !== undefined) return void await pour(fluid)
   }
+  /**
+   * Drinking milk: every effect gone, and the bucket comes back empty.
+   *
+   * NO DURATION AND NO PARTIAL CURE. Vanilla's MilkBucketItem is literally
+   * `entity.removeAllEffects()` -- it does not care whether an effect is
+   * beneficial, so a Speed II you were relying on goes with the Poison. That
+   * asymmetry is the whole design of the item and is what makes it a cost
+   * rather than a free save.
+   *
+   * Instant rather than a drink animation: this world has no use-and-hold for
+   * food, and adding one for the single item that would need it is a bigger
+   * change than the cure is.
+   */
+  const drinkMilk = () => {
+    const cleared = effects?.clear(noa.playerEntity) ?? 0
+    handBack(inventory.selectedStack(), EMPTY_BUCKET)
+    return cleared
+  }
+
   noa.inputs.down.on('alt-fire', onUse)
 
   return {
@@ -239,6 +281,9 @@ export function installBuckets(noa, { inventory, authority, inputLock }) {
     ray: (stopAtSource = true) => bucketRay(noa, stopAtSource),
     fill,
     pour,
+    /** For the spec, and inert until items.js has a milk bucket. */
+    drinkMilk,
+    get hasMilk() { return MILK_BUCKET !== null },
     isSource,
     WATER, LAVA,
   }
