@@ -118,7 +118,26 @@ export function installParticles(noa, deps = {}) {
     let sys = systems.get(texName)
     if (sys) return sys
 
-    const tex = new Texture(`/textures/${texName}.png`, scene, true, false, Texture.NEAREST_SAMPLINGMODE)
+    /*
+     * invertY TRUE, and the fourth argument is worth the paragraph because it
+     * was false and the flame burned upside down.
+     *
+     * The UV writer below puts V=0 at the BOTTOM of the quad. Babylon's
+     * invertY is what decides which row of the PNG V=0 lands on: false means
+     * row 0, which is the TOP of the image. So with it off, the top of every
+     * sprite renders at the bottom of every quad.
+     *
+     * Nothing noticed for as long as this file only drew block chips. A chip
+     * is a random 4x4 cell of a block texture, spun by a random angle, so
+     * mirroring it changes a picture nobody could describe. A FLAME is not
+     * like that: vanilla's particle/flame.png is red (255,0,0) at the top and
+     * white-hot (255,245,198) at the bottom, because a flame is hottest where
+     * it meets what is burning. Flipped, the torch had dark red sitting on
+     * its head and a white glow floating above it -- which was measured, not
+     * guessed: the colour profile down the flame's centre column read white,
+     * yellow, orange, red from top to bottom, exactly reversed.
+     */
+    const tex = new Texture(`/textures/${texName}.png`, scene, true, true, Texture.NEAREST_SAMPLINGMODE)
     const mat = noa.rendering.makeStandardMaterial(`particle-${texName}`)
     /*
      * Unlit, with brightness carried by emissiveColor. Babylon needs vertex

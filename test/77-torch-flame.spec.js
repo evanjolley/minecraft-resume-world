@@ -43,7 +43,16 @@ const TORCH = 655
 const WALL_TORCH = { north: 656, south: 657, east: 658, west: 659 }
 
 const flames = (page) => page.evaluate(() => window.game.particles.flames)
-const live = (page) => page.evaluate(() => window.game.particles.live)
+/*
+ * BLOCK particles only -- total live minus the flames.
+ *
+ * `particles.live` counts every system, and the burst test below reads it
+ * before and after a burst to assert the difference is 24. Once torches were
+ * burning nearby, a flame expiring between the two reads made that 23. The
+ * burst test is about block chips, so it should count block chips.
+ */
+const blockParticles = (page) => page.evaluate(
+  () => window.game.particles.live - window.game.particles.flames)
 
 /**
  * A stone floor at PY with a stone wall along its -x edge, cleared above.
@@ -354,6 +363,226 @@ test('the flame is different from one frame to the next', async ({ page, terrain
 
 
 /* ------------------------------------------------------------------ *
+ * 3b. The size and the orientation, measured in pixels
+ * ------------------------------------------------------------------ */
+
+/*
+ * "Torch animation looks a lil off" -- and the only honest way to answer that
+ * is a ruler, because every plausible cause looks the same from an armchair.
+ *
+ * THE RULER. A lit stone block is exactly one block wide, so photographing one
+ * from a fixed vantage converts pixels to blocks with nothing assumed about
+ * the projection. (It agrees with the arithmetic to a pixel: 720 / (2 * 1.5 *
+ * tan 35deg) = 342.8, measured 342.) Then the torch goes on the same spot and
+ * the flame is measured against the post, which is 2 texels of 16 = 0.125
+ * blocks and is therefore a second ruler standing inside the picture.
+ *
+ * WHAT THE NUMBERS HAVE TO BE, from 1.21.8's own source:
+ *   SingleQuadParticle: quadSize = 0.1 * (rand * 0.5 + 0.5) * 2, so 0.1..0.2
+ *   renderVertex builds corners from (+/-1, +/-1) * quadSize, so quadSize is a
+ *     HALF-extent and the quad's EDGE is 0.2..0.4 blocks
+ *   FlameParticle does not scale (only SmallFlameProvider does, and a torch
+ *     spawns ParticleTypes.FLAME)
+ *   particle/flame.png paints 4 of its 8 columns, so the flame you can SEE is
+ *     half the quad: 0.1..0.2 blocks, which is 0.8x..1.6x the post
+ *
+ * This test exists because the first read of the screenshot was "it is far too
+ * big, about half a block" and the measurement said 0.13 blocks, a ratio of
+ * 1.00 against the post. The size was never wrong. What WAS wrong is below.
+ */
+const RULER_D = 2.0                    // camera to the torch's own plane
+const D_POST = 22.5 - 20.5625          // camera to the post's front face
+const PPB_AT = (px1_5, d) => px1_5 * 1.5 / d
+
+/** Read a screenshot back as raw pixels inside the page. */
+async function pixels(page, buf) {
+  return page.evaluate((url) => new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const c = document.createElement('canvas')
+      c.width = img.width; c.height = img.height
+      c.getContext('2d').drawImage(img, 0, 0)
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+      resolve({ d: Array.from(d), W: c.width, H: c.height })
+    }
+    img.src = url
+  }), `data:image/png;base64,${buf.toString('base64')}`)
+}
+
+function analyse(im, kind) {
+  const P = (x, y) => { const o = (y * im.W + x) * 4; return [im.d[o], im.d[o+1], im.d[o+2]] }
+  const centreRun = (y, test) => {
+    const runs = []; let a = -1
+    for (let x = 380; x < 900; x++) {
+      const m = test(P(x, y))
+      if (m && a < 0) a = x
+      if ((!m || x === 899) && a >= 0) { runs.push([a, m ? x : x - 1]); a = -1 }
+    }
+    if (!runs.length) return { w: 0 }
+    runs.sort((p, q) => Math.abs((p[0]+p[1])/2 - 640) - Math.abs((q[0]+q[1])/2 - 640))
+    return { x0: runs[0][0], x1: runs[0][1], w: runs[0][1] - runs[0][0] + 1 }
+  }
+  /*
+   * The flame ramp INCLUDING its white-hot base. An earlier version of this
+   * used `r - b > 60`, which rejects white (255,245,198) at 57 -- so it was
+   * blind to exactly the texels that say which way up the sprite is. r >= 230
+   * keeps the torch post (160,90,0) out.
+   */
+  const flame = ([r, g, b]) => r >= 230 && r >= g && g >= b
+  const post = ([r, g, b]) => r + g + b > 70 && r >= g && g >= b && r < 230
+  const grey = ([r, g, b]) => r + g + b > 150 && Math.abs(r - g) < 18 && Math.abs(g - b) < 18
+
+  if (kind === 'ruler') {
+    let best = 0
+    for (let y = 300; y < 361; y++) best = Math.max(best, centreRun(y, grey).w)
+    return { rulerPx: best }
+  }
+
+  let widest = 0, top = -1, bot = -1
+  for (let y = 200; y < 368; y++) {
+    const r = centreRun(y, flame)
+    if (r.w > 0) { if (top < 0) top = y; bot = y; widest = Math.max(widest, r.w) }
+  }
+  /*
+   * The post is measured WELL below the flame -- rows 430..480, against a
+   * flame whose base sits around 367. The band used to start at 400 and a
+   * deliberately oversized flame reached into it, so the post measured 0.19
+   * blocks and the size mutation failed on the RULER instead of on the thing
+   * it was breaking. A ruler that moves with the subject is not a ruler.
+   */
+  let postPx = 0
+  for (let y = 430; y < 480; y++) {
+    const r = centreRun(y, post)
+    if (r.w > 4 && r.w < 90) postPx = Math.max(postPx, r.w)
+  }
+  // Mean blue in the flame's top third against its bottom third.
+  let tB = 0, tN = 0, bB = 0, bN = 0
+  if (top >= 0 && bot - top >= 12) {
+    const third = (bot - top) / 3
+    for (let y = top; y <= bot; y++) for (let x = 560; x < 720; x++) {
+      const p = P(x, y)
+      if (!flame(p)) continue
+      if (y < top + third) { tB += p[2]; tN++ } else if (y > bot - third) { bB += p[2]; bN++ }
+    }
+  }
+  return { flamePx: widest, postPx, top, bot, topBlue: tN ? tB / tN : -1, botBlue: bN ? bB / bN : -1, topN: tN, botN: bN }
+}
+
+test('the flame is vanilla\'s size and burns the right way up', async ({ page, terrain }) => {
+  test.slow()
+  await terrain.keep([CX - 9, PY - 2, CZ - 9], [CX + 9, PY + 8, CZ + 9])
+  await useGamemode(page, 'creative')
+  if (!await isFlying(page)) await doubleTapFly(page)
+  await teleport(page, CX + 0.5, PY + 2, CZ + 0.5)
+  await page.waitForFunction(([x, y, z]) => {
+    const w = window.noa.world, CS = w._chunkSize
+    const c = w._storage.getChunkByIndexes(Math.floor(x/CS), Math.floor(y/CS), Math.floor(z/CS))
+    return !!c && !c.isDisposed
+  }, [CX, PY, CZ], { timeout: 20_000 })
+
+  /*
+   * Empty sky, except a 3x3 pad directly under the camera. The subject has to
+   * be the only thing in frame, and the pad has to exist: without it the
+   * player falls out of the shot during the settle, which is how the first
+   * attempt came back with the camera 3 blocks below where it was told to be.
+   */
+  await page.evaluate(([cx, cz, y, d, air, stone]) => {
+    for (let dx = -8; dx <= 8; dx++) for (let dz = -8; dz <= 8; dz++)
+      for (let dy = -2; dy <= 6; dy++) window.noa.setBlock(air, cx + dx, y + dy, cz + dz)
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++)
+      window.noa.setBlock(stone, cx + dx, y, cz + dz + d)
+  }, [CX, CZ, PY, Math.round(RULER_D), ID.air, ID.stone])
+  await waitTicks(page, 4)
+
+  const shoot = async () => {
+    await teleport(page, CX + 0.5, PY + 1, CZ + 0.5 + RULER_D)
+    await look(page, { heading: HEADING.northMinusZ, pitch: 0 })
+    await waitTicks(page, 8)
+    return pixels(page, await page.screenshot())
+  }
+
+  /*
+   * THE RULER, in DAYLIGHT. At midnight an unlit floating block is black on
+   * black and measures zero -- which it did, and the first ratio came back as
+   * a division by nothing.
+   */
+  await setBlock(page, ID.stone, CX, PY + 2, CZ)
+  await page.evaluate(() => window.game.sky.setTime(6000))
+  await waitTicks(page, 8)
+  const { rulerPx } = analyse(await shoot(), 'ruler')
+  // Non-empty before it is used as the denominator of everything below.
+  expect(rulerPx, 'the ruler block was not visible').toBeGreaterThan(100)
+  const ppbPost = PPB_AT(rulerPx, D_POST)
+  const ppbFlame = PPB_AT(rulerPx, RULER_D)
+  console.log(`  ruler: 1 block = ${rulerPx}px at d=1.5 (arithmetic says 342.8)`)
+
+  await page.evaluate(() => window.game.sky.setTime(18000))
+  await setBlock(page, ID.air, CX, PY + 2, CZ)
+  await setBlock(page, ID.stone, CX, PY + 1, CZ)
+  await waitTicks(page, 6)
+  await setBlock(page, TORCH, CX, PY + 2, CZ)
+  await waitTicks(page, 30)
+  expect(await getBlock(page, CX, PY + 2, CZ)).toBe(TORCH)
+
+  const shots = []
+  for (let i = 0; i < 6; i++) shots.push(analyse(await shoot(), 'torch'))
+
+  const seen = shots.filter(s => s.flamePx > 0)
+  // Non-empty, before any mean is taken of it.
+  expect(seen.length, 'no flame in any of the six frames').toBeGreaterThan(3)
+
+  const mean = (f) => seen.reduce((a, s) => a + f(s), 0) / seen.length
+  const flamePx = mean(s => s.flamePx)
+  const postPx = mean(s => s.postPx)
+  console.log(`  post  ${postPx.toFixed(1)}px = ${(postPx / ppbPost).toFixed(3)} blocks (vanilla: 0.125)`)
+  console.log(`  flame ${flamePx.toFixed(1)}px = ${(flamePx / ppbFlame).toFixed(3)} blocks painted (vanilla: 0.10-0.20)`)
+  console.log(`  flame/post ratio ${(flamePx / postPx).toFixed(2)} (vanilla: 0.80-1.60)`)
+
+  // The post is the in-picture ruler, so it has to measure what it is.
+  expect(postPx / ppbPost).toBeGreaterThan(0.10)
+  expect(postPx / ppbPost).toBeLessThan(0.16)
+
+  /*
+   * THE SIZE. quadSize 0.1..0.2 is a half-extent, so the quad is 0.2..0.4 and
+   * the painted half of the sprite is 0.1..0.2 blocks. The ceiling is 0.21
+   * rather than 0.20 because several flames overlap and vanilla jitters each
+   * birth by +/-0.05, so a CLUSTER is legitimately a little wider than one
+   * sprite -- correct builds measure 0.13..0.16 here across runs.
+   *
+   * The margin is what makes this worth asserting: treating quadSize as the
+   * full edge rather than the half-extent -- the obvious way to get this
+   * wrong, and the first thing suspected when the flame was called too big --
+   * measures 0.24, which is outside by a third.
+   */
+  expect(flamePx / ppbFlame).toBeGreaterThan(0.06)
+  expect(flamePx / ppbFlame).toBeLessThan(0.21)
+
+  /*
+   * THE ORIENTATION, which is what was actually broken.
+   *
+   * vanilla's particle/flame.png is red (255,0,0) at the TOP and white-hot
+   * (255,245,198) at the BOTTOM, because a flame is hottest where it meets
+   * what is burning. Mean blue over the flame's bottom third must therefore
+   * beat its top third. Shipped with invertY false it read top 29.7 / bottom
+   * 1.1; corrected it reads top 0.0 / bottom 37.2.
+   */
+  const topBlue = mean(s => Math.max(0, s.topBlue))
+  const botBlue = mean(s => Math.max(0, s.botBlue))
+  console.log(`  white-hot end: mean blue top third ${topBlue.toFixed(1)}, bottom third ${botBlue.toFixed(1)}`)
+  expect(mean(s => s.topN) + mean(s => s.botN), 'no flame pixels to orient').toBeGreaterThan(50)
+  expect(botBlue, 'the flame is burning upside down').toBeGreaterThan(topBlue + 10)
+
+  /*
+   * And no gap: vanilla spawns at y+0.7 with a quad 0.2..0.4 tall, so its
+   * bottom reaches 0.5..0.6 against a post whose top is at 0.625. They
+   * OVERLAP. A flame hovering above its torch would show as a negative here.
+   */
+  const overlap = mean(s => s.bot) - 330
+  console.log(`  flame base overlaps the post top by ${overlap.toFixed(0)}px`)
+  expect(overlap).toBeGreaterThan(0)
+})
+
+/* ------------------------------------------------------------------ *
  * 4. All five ids, and where a wall torch puts its flame
  * ------------------------------------------------------------------ */
 
@@ -576,10 +805,10 @@ test('the block-break burst is undisturbed', async ({ page, terrain }) => {
    * flame added a second physics spec to the per-frame loop, and this is the
    * line that says the first one still runs.
    */
-  const before = await live(page)
+  const before = await blockParticles(page)
   await page.evaluate(([x, y, z, id]) => {
     window.game.particles.burst(id, [x, y, z])
   }, [CX, PY, CZ, ID.stone])
-  const after = await live(page)
+  const after = await blockParticles(page)
   expect(after - before).toBe(24)
 })
