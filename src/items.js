@@ -775,6 +775,20 @@ const DROP_RULES = [
    */
   [/^oak_sign(_r\d+)?$|^oak_wall_sign_(north|south|east|west)$/, self,
     'a sign drops itself from the ground or off a wall, and forgets what it said'],
+  /*
+   * Paintings, and `self` again for the torch's and the sign's reason: the
+   * three non-canonical facings point their `drops` at `painting`, so taking
+   * one off a wall gives you a Painting rather than a Painting (West).
+   *
+   * IT ALSO FORGETS WHICH PICTURE IT WAS, which is vanilla exactly.
+   * `Painting.dropItem` spawns a bare `Items.PAINTING` with no
+   * `painting_variant` component on it, so the art is discarded and the next
+   * wall you click rolls a fresh one. Hanging a SPECIFIC painting -- which is
+   * what every custom one is -- is a build's job, not an item's:
+   * `hangPainting` in src/paintingArt.js.
+   */
+  [/^painting$|^painting_wall_(north|south|east|west)$/, self,
+    'a painting drops itself off a wall, and forgets which picture it was'],
   [/^planks$|_planks$|_log$|_wood$|_stem$|_hyphae$|^bamboo_(planks|mosaic|block)$|^stripped_bamboo_block$/, self,
     'every wood: logs, planks, stems, hyphae and the bamboo set'],
   [/_wool$|_concrete$|_concrete_powder$|terracotta$/, self,

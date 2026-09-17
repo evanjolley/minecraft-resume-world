@@ -167,6 +167,22 @@ const RULES = [
   [/^\w+_sign$/, 'functional_blocks',
     'Functional Blocks, where vanilla lists signs -- next to the torch, and for '
     + 'the same reason: it is a block you place to do a job rather than to build with'],
+  /*
+   * The painting, which vanilla files under FUNCTIONAL BLOCKS -- not under
+   * Colored Blocks and not under Building Blocks, despite being decoration.
+   * It sits in the same group as the sign, the torch and the ladder, which is
+   * the group of "things you attach to a build rather than build out of".
+   *
+   * Only the canonical `painting` reaches this table: the other three facings
+   * are orientation variants and items.js filters them out before the
+   * creative menu ever sees them, the same way it filters the sign's
+   * nineteen. That is why this is an anchored exact match rather than a
+   * prefix -- `painting_wall_west` should never arrive, and a rule loose
+   * enough to catch it would be a rule that hides the bug if it did.
+   */
+  [/^painting$/, 'functional_blocks',
+    'Functional Blocks, where vanilla lists the painting -- beside the sign, '
+    + 'the torch and the ladder, which are the other things you hang ON a build'],
   [/^(torch|ladder)$/, 'functional_blocks',
     'Functional Blocks, which is where vanilla lists both. The torch is a real '
     + 'block now and places one; the ladder is still unplaceable (no block mesh, '
