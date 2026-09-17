@@ -435,6 +435,15 @@ test.describe('sign text', () => {
      * so it is asked as a ratio.
      */
     const before = await measureFps(page, 1500)
+    /*
+     * COUNT THE DELTA, NOT THE TOTAL. signTextStats is global and the island
+     * itself carries signs, so a hundred more is a hundred and one -- which
+     * is what this assertion started reporting the day a build put a label on
+     * something. The claim was never "there are exactly a hundred signs in
+     * the world", it was "the hundred this test placed all landed", and that
+     * is a difference.
+     */
+    const already = (await stats(page)).signs
     await page.evaluate(([cx, cz, y, id, text]) => {
       for (let i = 0; i < 100; i++) {
         const x = cx - 5 + (i % 10), z = cz - 5 + Math.floor(i / 10)
@@ -445,10 +454,18 @@ test.describe('sign text', () => {
     await waitTicks(page, 4)
 
     const s = await stats(page)
-    expect(s.signs, 'a hundred signs really are in the world').toBe(100)
+    expect(s.signs - already, 'a hundred signs really are in the world').toBe(100)
     expect(s.textures).toBe(1)
-    // 768 x 432 RGBA, once, for the whole world.
-    expect(s.atlasBytes).toBe(768 * 432 * 4)
+    /*
+     * 128 x 66 RGBA, once, for the whole world: 16 x 6 cells of one texel per
+     * font pixel, each padded by one. It was 768 x 432 while the atlas held
+     * the 8x rasterisation itself, and shrank when that turned out to be the
+     * cause of the reported graininess -- see THE GRAIN in signText.js and
+     * test/90-sign-crispness.spec.js. The literal stays a literal: what it is
+     * guarding is "one texture for the world", and a change to either number
+     * should be somebody's decision rather than a silent follow.
+     */
+    expect(s.atlasBytes).toBe(128 * 66 * 4)
     // 4 lines of at most 15 characters, four vertices each, per sign.
     expect(s.vertices).toBeGreaterThan(100 * 4)
     expect(s.vertices).toBeLessThan(100 * 60 * 4 + 1)

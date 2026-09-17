@@ -30,12 +30,16 @@ import { isSignId, isWallSign, signNormal } from './blocks.js'
  *   pictures of the same 95 glyphs in different orders.
  *
  * So the glyphs are rasterised ONCE into a shared atlas and every sign is a
- * quad per character with UVs into it. The atlas is 768 x 432 = 1.27 MB, and
- * it is 1.27 MB whether there is one sign in the world or a thousand. A
- * sign's own cost drops to its vertex buffer: 60 characters is 240 vertices,
- * about 7.7 KB. A hundred signs is 770 KB of geometry and ONE texture -- a
+ * quad per character with UVs into it. The atlas is 128 x 66 = 33 KB, and it
+ * is 33 KB whether there is one sign in the world or a thousand. A sign's own
+ * cost drops to its vertex buffer: 60 characters is 240 vertices, about
+ * 7.7 KB. A hundred signs is 770 KB of geometry and ONE texture -- a
  * hundredfold saving that is not a micro-optimisation, it is the difference
  * between "label every plot" being free and being a memory budget.
+ *
+ * (It was 768 x 432 = 1.27 MB until the atlas was snapped to the font's own
+ * pixel grid -- see THE GRAIN below, which is a legibility fix that happens
+ * to take a factor of 38 off this paragraph.)
  *
  * Draw calls are the same either way (one mesh per sign), because all the
  * per-sign textures would have forced separate calls too. What the atlas adds
@@ -96,8 +100,28 @@ const TEXT_INSET = 0.046666667 - (SIGN_GEOMETRY.BOARD_THICKNESS / 2) / 16
 /** A wall sign's pivot drops 0.3125 blocks; translateSign's magic number. */
 const WALL_PIVOT_DROP = 0.3125
 
-/** Canvas pixels per font pixel in the atlas. nametag.js's reasoning exactly. */
+/*
+ * Canvas pixels per font pixel WHILE RASTERISING. Not in the atlas -- see
+ * THE GRAIN below. This is how finely the vector font is sampled before it is
+ * reduced to the pixel grid it was drawn on, and 8 is enough that a 50%
+ * coverage rule has 64 samples to decide each pixel from.
+ */
 const SUPERSAMPLE = 8
+
+
+/*
+ * One transparent font pixel of gutter around each cell in the atlas.
+ *
+ * Only needed because the atlas is now ONE texel per font pixel. At eight it
+ * did not matter what a sampler did at a cell boundary, because being one
+ * texel out is an eighth of a pixel; at one, being one texel out is a whole
+ * pixel of the NEIGHBOURING GLYPH -- and this file has already shipped that
+ * bug once, when v ran up the canvas and every letter came out as one from
+ * the wrong row. A gutter makes the worst case a blank pixel instead.
+ */
+const PAD = 1
+const CELL_W = GLYPH_W + 2 * PAD
+const CELL_H = GLYPH_H + 2 * PAD
 
 /** Printable ASCII, and a 16-wide grid because 95 glyphs want six rows. */
 const FIRST_CHAR = 32
@@ -105,24 +129,150 @@ const LAST_CHAR = 126
 const COLUMNS = 16
 const ROWS = Math.ceil((LAST_CHAR - FIRST_CHAR + 1) / COLUMNS)
 
+/** The atlas itself: 128 x 66 texels, 33 KB, one for the whole world. */
+const ATLAS_W = COLUMNS * CELL_W
+const ATLAS_H = ROWS * CELL_H
+
 /** Vanilla's default sign text is DyeColor.BLACK, whose textColor is 0. */
 const DEFAULT_COLOUR = '#000000'
 
 const fontSpec = () => `${GLYPH_H * SUPERSAMPLE}px Monocraft, monospace`
+
+/* ------------------------------------------------------------------ *
+ * THE GRAIN, reported from play as "texture of text on sign is a liitle
+ * cooked/grainy" and measured in test/90-sign-crispness.spec.js.
+ *
+ * The atlas used to BE the 8x rasterisation: 768 x 432 texels, eight per font
+ * pixel, sampled NEAREST. That sounds harmless -- eight copies of a pixel is
+ * still that pixel -- and it is not, because a browser does not put a vector
+ * font's edges on an eight-texel grid. A dump of the old atlas found:
+ *
+ *   alphas 0, 55, 102, 117, 207, 238, 249, 255
+ *   16,000 texels at partial coverage, one in five of the ink
+ *
+ * Every glyph edge carried a one-texel fringe at 0.46 and 0.81 coverage, and
+ * the glyph sat 7.25 texels down a cell whose grid starts at 0. The
+ * alpha-test cutoff is 0.4, so those fringes PASSED it -- a stem was eight
+ * texels of ink or nine, depending on the fringe.
+ *
+ * Then the quad presents that atlas at about 2.6 screen pixels per font
+ * pixel, which is 3 texels per screen pixel of MINIFICATION, and NEAREST
+ * minification is point sampling: each screen pixel picks one texel out of
+ * three and whether it picks a fringe is a matter of phase. Stroke weight
+ * came out uneven down a single stem. That is the whole bug, and 1/96 of a
+ * block per font pixel is why it can never be tuned away -- the ratio is not
+ * a power of two, so no supersample makes the phase come out even.
+ *
+ * SO THE ATLAS IS SNAPPED BACK TO THE GRID THE FONT WAS DRAWN ON. Rasterise
+ * at 8x as before, then reduce each 8x8 block to one texel by area coverage
+ * with a 50% rule. Two alpha values, one texel per font pixel, 128 x 66. A
+ * screen pixel now samples a pixel of the font, not a guess at one, and at
+ * 2.6 screen pixels per font pixel the sampler is MAGNIFYING, which NEAREST
+ * is exact at.
+ *
+ * The 50% rule survives the 7.25-texel misalignment without being told about
+ * it: a destination texel overlapping its source pixel by 90% and the next
+ * one by 10% resolves to the 90%. The net shift is a tenth of a font pixel.
+ *
+ *
+ * WHAT WAS REJECTED.
+ *
+ * MIPMAPS AND A LINEAR MINIFICATION FILTER, which is the textbook answer to
+ * NEAREST aliasing and is the wrong one here for a reason specific to this
+ * material: sign text is ALPHA TESTED, and a mip chain averages alpha, so a
+ * black stroke at distance falls under the 0.4 cutoff and is DISCARDED. The
+ * text would not soften with distance, it would erode and then vanish --
+ * which is the classic foliage bug, and 86-leaves has it written up. Taking
+ * mipmaps would mean taking blending too, and blending is what the top of
+ * this file argues against (and what the painting z-fighting work is
+ * currently paying for elsewhere). Not worth it for a surface whose whole
+ * job is to be read.
+ *
+ * KEEPING THE 8x ATLAS AND JUST FLATTENING ITS FRINGES to 0 or 255 in place.
+ * Same picture, 64x the texture memory, and it leaves 768 x 432 of texels
+ * that carry no information that 128 x 66 does not. The saving is not the
+ * point -- the point is that a texel being a font pixel is a thing this file
+ * can now assert.
+ *
+ * DIVERGING FROM nametag.js, deliberately, and it keeps its 8x. A nametag is
+ * 0.025 blocks per font pixel against a sign's 1/96, so its glyphs are two
+ * and a half times larger on screen at the same distance, and it BLENDS
+ * rather than alpha-tests -- a fringe there is a slightly soft edge, not a
+ * texel that flips between ink and nothing. Its own note says why it also
+ * turns mipmaps off. Left alone rather than made uniform: the two paths
+ * diverge because the numbers do.
+ * ------------------------------------------------------------------ */
+
+/**
+ * WHERE THE FONT'S PIXEL GRID ACTUALLY IS, in the rasterisation, per axis.
+ *
+ * ASKED RATHER THAN ASSUMED, and that is the second half of this fix. The
+ * arithmetic says a font pixel starts every 8 texels from the cell's corner.
+ * It does not. Chromium lands Monocraft's rows on 7, 15, 23 and WebKit lands
+ * them on 3, 11, 19 -- half a font pixel apart, on the same font at the same
+ * size with the same reported metrics (both say actualBoundingBoxAscent 56).
+ * The first version of this reduction assumed the grid, which meant it was
+ * right on Chromium and catastrophic on WebKit: every 8x8 block straddled two
+ * of the font's rows, the 50% rule took whichever had four of them, and A, B,
+ * D and O came out as SOLID BLOCKS with their counters filled. The 8x
+ * rasterisation was perfect in both engines; only the reduction was wrong.
+ *
+ * So the phase is measured off the rasterisation itself. Sum the alpha along
+ * each row and each column of the whole 8x canvas, and a font-pixel boundary
+ * is a place where that sum JUMPS. Every boundary in the canvas is at the
+ * same offset modulo 8, so adding the jumps up by offset and taking the
+ * largest bucket finds it in one pass, with 95 glyphs voting.
+ *
+ * Rejected: reading only the middle 4x4 of each block and hoping the slack
+ * covered it. Tried, measured, still blobbed -- WebKit's grid is four texels
+ * out, and no amount of margin fixes being half a pixel wrong.
+ *
+ * Rejected: a per-engine constant. It is the same class of mistake one level
+ * up, and the next font rasteriser gets it wrong again.
+ */
+function gridPhase(src, hiW, hiH) {
+  const rows = new Float64Array(hiH), cols = new Float64Array(hiW)
+  for (let y = 0; y < hiH; y++) {
+    for (let x = 0; x < hiW; x++) {
+      const a = src[(y * hiW + x) * 4 + 3]
+      rows[y] += a
+      cols[x] += a
+    }
+  }
+  const phaseOf = (profile) => {
+    const jump = new Float64Array(SUPERSAMPLE)
+    for (let i = 1; i < profile.length; i++) {
+      jump[i % SUPERSAMPLE] += Math.abs(profile[i] - profile[i - 1])
+    }
+    let best = 0
+    for (let i = 1; i < SUPERSAMPLE; i++) if (jump[i] > jump[best]) best = i
+    return best
+  }
+  return [phaseOf(cols), phaseOf(rows)]
+}
 
 /**
  * Every printable glyph, once, in a grid. Drawn white so a material can tint
  * it: the alpha channel is the glyph and the colour is the sign's.
  */
 function drawGlyphAtlas(texture) {
-  const w = COLUMNS * GLYPH_W * SUPERSAMPLE
-  const h = ROWS * GLYPH_H * SUPERSAMPLE
-  const ctx = texture.getContext()
-  ctx.clearRect(0, 0, w, h)
-  ctx.font = fontSpec()
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillStyle = 'rgb(255, 255, 255)'
+  const hiW = COLUMNS * GLYPH_W * SUPERSAMPLE
+  const hiH = ROWS * GLYPH_H * SUPERSAMPLE
+
+  /*
+   * A THROWAWAY CANVAS for the rasterisation, because the texture's own is
+   * now 1:1 and 36 times smaller than the rendering needs. Same trick
+   * nametag.js uses to measure text before it sizes its canvas.
+   */
+  const hi = document.createElement('canvas')
+  hi.width = hiW
+  hi.height = hiH
+  const hiCtx = hi.getContext('2d', { willReadFrequently: true })
+  hiCtx.clearRect(0, 0, hiW, hiH)
+  hiCtx.font = fontSpec()
+  hiCtx.textAlign = 'center'
+  hiCtx.textBaseline = 'middle'
+  hiCtx.fillStyle = 'rgb(255, 255, 255)'
   for (let code = FIRST_CHAR; code <= LAST_CHAR; code++) {
     const i = code - FIRST_CHAR
     const cx = (i % COLUMNS) * GLYPH_W * SUPERSAMPLE
@@ -134,9 +284,40 @@ function drawGlyphAtlas(texture) {
      * glyph in the world by the same amount, which reads as "the font is
      * slightly low" rather than as a bug.
      */
-    ctx.fillText(String.fromCharCode(code),
+    hiCtx.fillText(String.fromCharCode(code),
       cx + (GLYPH_W * SUPERSAMPLE) / 2, cy + 4.5 * SUPERSAMPLE)
   }
+
+  const src = hiCtx.getImageData(0, 0, hiW, hiH).data
+  const [phaseX, phaseY] = gridPhase(src, hiW, hiH)
+  const ctx = texture.getContext()
+  const out = ctx.createImageData(ATLAS_W, ATLAS_H)
+  const dst = out.data
+  const half = (SUPERSAMPLE * SUPERSAMPLE) / 2
+
+  for (let i = 0; i <= LAST_CHAR - FIRST_CHAR; i++) {
+    const col = i % COLUMNS, row = Math.floor(i / COLUMNS)
+    for (let py = 0; py < GLYPH_H; py++) {
+      for (let px = 0; px < GLYPH_W; px++) {
+        // Coverage of one font pixel, as a count of its 64 subsamples.
+        let covered = 0
+        const sx = (col * GLYPH_W + px) * SUPERSAMPLE + phaseX
+        const sy = (row * GLYPH_H + py) * SUPERSAMPLE + phaseY
+        for (let y = 0; y < SUPERSAMPLE; y++) {
+          const gy = Math.min(hiH - 1, sy + y)
+          for (let x = 0; x < SUPERSAMPLE; x++) {
+            covered += src[(gy * hiW + Math.min(hiW - 1, sx + x)) * 4 + 3] / 255
+          }
+        }
+        if (covered < half) continue           // background, and it stays 0
+        const dx = col * CELL_W + PAD + px
+        const dy = row * CELL_H + PAD + py
+        const d = (dy * ATLAS_W + dx) * 4
+        dst[d] = dst[d + 1] = dst[d + 2] = dst[d + 3] = 255
+      }
+    }
+  }
+  ctx.putImageData(out, 0, 0)
   texture.update(false)
 }
 
@@ -266,8 +447,10 @@ function textVertexData(lines, right) {
        * address the canvas in the canvas's own frame, so v is canvasY / H and
        * the top of a cell has the SMALLER v.
        */
-      const uMin = col / COLUMNS, uMax = (col + 1) / COLUMNS
-      const vTop = row / ROWS, vBottom = (row + 1) / ROWS
+      const uMin = (col * CELL_W + PAD) / ATLAS_W
+      const uMax = (col * CELL_W + PAD + GLYPH_W) / ATLAS_W
+      const vTop = (row * CELL_H + PAD) / ATLAS_H
+      const vBottom = (row * CELL_H + PAD + GLYPH_H) / ATLAS_H
       uvs.push(uMin, vTop, uMax, vTop, uMax, vBottom, uMin, vBottom)
       indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
       // Unlit, so these are decoration -- supplied anyway because Babylon
@@ -357,8 +540,7 @@ export function signTextStats() {
     signs: live.size,
     /** One shared atlas, whatever the sign count. */
     textures: ctx ? 1 : 0,
-    atlasBytes: ctx
-      ? COLUMNS * GLYPH_W * SUPERSAMPLE * ROWS * GLYPH_H * SUPERSAMPLE * 4 : 0,
+    atlasBytes: ctx ? ATLAS_W * ATLAS_H * 4 : 0,
     vertices: [...live.values()].reduce((n, s) => n + s.mesh.getTotalVertices(), 0),
   }
 }
@@ -443,9 +625,13 @@ function renderSign(x, y, z, entry) {
  */
 export function installSignText(noa) {
   const scene = noa.rendering.getScene()
+  /*
+   * generateMipMaps FALSE (the fourth argument) and NEAREST, both stated
+   * rather than inherited. See THE GRAIN above for why a mip chain is the
+   * wrong medicine for a surface that is alpha tested.
+   */
   const atlas = new DynamicTexture('sign-glyph-atlas', {
-    width: COLUMNS * GLYPH_W * SUPERSAMPLE,
-    height: ROWS * GLYPH_H * SUPERSAMPLE,
+    width: ATLAS_W, height: ATLAS_H,
   }, scene, false, Texture.NEAREST_SAMPLINGMODE)
   atlas.hasAlpha = true
   atlas.wrapU = atlas.wrapV = Texture.CLAMP_ADDRESSMODE
