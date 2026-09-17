@@ -37,22 +37,36 @@ const underfoot = (page) => page.evaluate(() => {
   return window.game.blockKey(noa.getBlock(x, y - 1, z))
 })
 
-/** Look north (up the timeline, in the world that has one) and take one. */
-async function frame(page, name) {
-  await look(page, { heading: Math.PI, pitch: 0.05 })
+/** Look up the timeline and take one. The two worlds run OPPOSITE WAYS --
+ *  claude-opus-5-1 spawns at the south end of its road and walks north, the
+ *  overworld spawns at the north end of its path and walks south -- so the
+ *  heading is per world rather than a constant. */
+async function frame(page, name, heading = Math.PI) {
+  await look(page, { heading, pitch: 0.05 })
   await waitFrames(page, 8)
   await page.screenshot({ path: path.join(SHOTS, `${name}.png`) })
 }
 
 test.afterEach(async ({ page }) => { await leaveWorld(page) })
 
-test('the default overworld: flat ground to the barrier, nothing on it',
+test('the default overworld: the path running south into the landscape',
   async ({ page }) => {
     await waitTicks(page, 10)
     const [, y] = await position(page)
     expect(y).toBeCloseTo(SURFACE_Y, 1)
-    expect(await underfoot(page)).toBe('grass')
-    await frame(page, '74-overworld-spawn')
+    /*
+     * IT WAS 'grass' HERE FOR A DAY, when the default world was the bare
+     * superflat the owner asked to build in himself. He then asked for a
+     * landscape to build IN, so spawn is the head of the path: the block
+     * under your feet is worn ground, at the same height the grass was.
+     * Which key exactly is a coordinate hash's business -- src/builds/land.js
+     * mixes seven of them -- so this asserts the two things that are
+     * properties of the world rather than of the noise.
+     */
+    const under = await underfoot(page)
+    expect(under).not.toBe('grass')
+    expect(under).not.toBe('air')
+    await frame(page, '74-overworld-spawn', 0)
   })
 
 test(`${BUILT_WORLD}: the road running north with the timeline on it`,
@@ -70,8 +84,9 @@ test('both of them again, after switching back and forth in one session',
     await enterWorld(page, BUILT_WORLD)
     await leaveWorld(page)
     // Home, with the built world's chunks having been meshed a second ago.
-    expect(await underfoot(page)).toBe('grass')
-    await frame(page, '74-overworld-after-switch')
+    expect(await underfoot(page)).not.toBe('grass')
+    expect(await underfoot(page)).not.toBe('air')
+    await frame(page, '74-overworld-after-switch', 0)
 
     await enterWorld(page, BUILT_WORLD)
     expect(['polished_andesite', 'smooth_quartz']).toContain(await underfoot(page))

@@ -3,6 +3,31 @@
 Eight stages of one life, four to a side of one road, in a 128x128 world. This
 is how you build yours.
 
+> **THERE ARE TWO WORLDS NOW, AND THIS DOCUMENT IS ABOUT THE OLD ONE.**
+>
+> Everything below describes **`claude-opus-5-1`**: a 128x128 patch, eight
+> plots, a straight paved road, spawn at the south end, north through time.
+> It is the archive and it is frozen.
+>
+> The **overworld** is a different place and a different survey: 256x256,
+> origin 128/16, a winding path instead of a road, a river with a bridge, a
+> forest, and **seven** chapter plots on alternating sides that are
+> deliberately EMPTY — the owner is building those himself. Its table is the
+> second half of `src/builds/plots.js` (`CHAPTERS`, `LAND`, `LAND_SIZE`), its
+> builder is `src/builds/land.js`, and the visitor walks **south** with z
+> counting up through the years.
+>
+> **What carries over unchanged:** the stamper and its whole API, `GROUND_Y`,
+> plot-local coordinates, the block keys, the lighting rules, and — read it
+> twice — the mirrored-text warning. What does NOT carry over is any
+> coordinate: a patch index in this document is an index into the 128 patch.
+>
+> **What is new in the stamper:** `forbid`, a list of no-go rectangles in
+> PATCH coordinates. The landscape's plot is the entire 256 square, because a
+> winding path has no smaller honest bounding box, so the seven chapters are
+> handed to it as rectangles it must not write into. The guard that means
+> "stay inside your plot" for you means "stay out of theirs" for it.
+
 **Which world.** These plots are **`claude-opus-5-1`**, not the overworld. They
 were the overworld for a day; the owner kept the built world under a name and
 took his default back as bare superflat to build in himself. Reach it in game
