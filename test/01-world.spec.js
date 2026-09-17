@@ -342,13 +342,23 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
     expect(s.grass).toBeGreaterThan(30_000)
 
     /*
-     * THE SEVEN PLOTS ARE EMPTY, which is the deliverable the owner actually
-     * asked for: "no building within the plots other than maybe a sign".
+     * THE PLOTS ARE EMPTY -- ALL OF THEM EXCEPT THE ONES SOMEBODY HAS BUILT.
+     *
+     * This started life as "no building within the plots other than maybe a
+     * sign", which was the landscape pass's deliverable, and it stays the
+     * right assertion for every chapter nobody has started: a plot that fills
+     * up on its own is a landscape pass that has taken ground the owner was
+     * going to build on, and that is exactly what this counts.
+     *
+     * CHAPTER 1 IS BUILT NOW -- Millard North High School, see
+     * src/builds/ch1-millard-north.js -- so it moved from "must be zero" to
+     * "must be a building", with a floor rather than an exact count. An exact
+     * count would fail on every tweak to a window and would be measuring
+     * nothing; a floor catches the failure that matters, which is the build
+     * silently not being stamped at all.
      *
      * Read from the plot table rather than typed here, and counted INSIDE the
-     * border ring and behind the marker wall -- the two things this pass is
-     * allowed to put in a plot. Anything else above the grass in there is a
-     * build nobody asked for.
+     * border ring and behind the marker wall.
      */
     const inside = await page.evaluate(([y0, plots]) => {
       const v = window.game.voxelAt
@@ -368,8 +378,11 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
     }, [SURFACE_Y, CHAPTERS.map(c => ({ id: c.id, x0: c.x0, x1: c.x1, z0: c.z0, z1: c.z1 }))])
 
     expect(inside.sampled).toBeGreaterThan(50_000)
+    /* The one built chapter. Thousands of blocks, not eight and not zero. */
+    expect(inside.above.ch1).toBeGreaterThan(4_000)
+    delete inside.above.ch1
     expect(inside.above).toEqual({
-      ch1: 0, ch2: 0, ch3: 0, ch4: 0, ch5: 0, ch6: 0,
+      ch2: 0, ch3: 0, ch4: 0, ch5: 0, ch6: 0,
       /*
        * EXCEPT CHAPTER 7, WHICH IS ALLOWED EXACTLY EIGHT BLOCKS. It is the
        * parkour going up, and the brief for it is "reserve the footprint and

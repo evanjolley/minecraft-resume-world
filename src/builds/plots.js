@@ -243,7 +243,8 @@ export const LAND = {
  * THE SEVEN CHAPTERS, north to south, alternating sides of the path.
  *
  * 52 x 24 each -- a touch smaller than the archive's 56 x 28, which is what
- * the owner asked for -- and MUCH further apart. In the archive the plots
+ * the owner asked for -- and MUCH further apart. (ch1 is the exception and
+ * is now 66 x 63; see its row.) In the archive the plots
  * tiled: stage 3 began on the row stage 1 ended on, so the walk between two
  * chapters was zero blocks long and the world read as a street. Here the
  * nearest edges of two consecutive chapters are 8 or 9 blocks apart in z AND
@@ -275,7 +276,29 @@ export const LAND = {
  * written down so that whoever plants a tree near it knows what is coming.
  */
 export const CHAPTERS = [
-  { n: 1, id: 'ch1', label: 'Omaha, Nebraska',       marker: 'OMAHA',         side: 'LEFT',  x0: 28,  x1: 79,  z0: 22,  z1: 45 },
+  /*
+   * CHAPTER 1 IS THE ONE PLOT THAT IS NOT 52 x 24, and it is 66 x 63.
+   *
+   * It holds Millard North High School, and a high school for 2,534 students
+   * does not fit in a 52 x 24 rectangle at any scale that still lets you walk
+   * down a corridor. The owner's brief said so in as many words -- "feel free
+   * to change the size of the plot if you need it to be bigger" -- so this
+   * row grew WEST (x0 28 -> 14) and SOUTH (z1 45 -> 84).
+   *
+   * WHY THOSE TWO DIRECTIONS AND NOT THE OTHER TWO. East is where the path
+   * is: the spine swings to x = 104 at z = 44 (src/builds/spine.js) and
+   * drawPath THROWS if the path touches a plot, so x1 did not move by a
+   * single block. North is spawn: the visitor lands at patch (128, 16) and
+   * the first fifteen blocks of the walk are not this chapter's to take. West
+   * is empty to the world edge and south is empty for sixty-three rows
+   * before ch3 begins at z = 86, so both were free.
+   *
+   * THE GAP TO ch3 IS ONE BLOCK AT z = 85, deliberately not zero. The two
+   * rectangles must not share a row, or the landscape's `forbid` guard --
+   * which is what keeps a tree out of somebody's chapter -- would have to
+   * answer for a column that is in two plots at once.
+   */
+  { n: 1, id: 'ch1', label: 'Omaha, Nebraska',       marker: 'OMAHA',         side: 'LEFT',  x0: 14,  x1: 79,  z0: 22,  z1: 84 },
   { n: 2, id: 'ch2', label: 'Harvard',               marker: 'HARVARD',       side: 'RIGHT', x0: 176, x1: 227, z0: 54,  z1: 77 },
   { n: 3, id: 'ch3', label: 'School work',           marker: 'SCHOOL WORK',   side: 'LEFT',  x0: 28,  x1: 79,  z0: 86,  z1: 109 },
   { n: 4, id: 'ch4', label: 'Bilibili',              marker: 'BILIBILI',      side: 'RIGHT', x0: 176, x1: 227, z0: 118, z1: 141 },

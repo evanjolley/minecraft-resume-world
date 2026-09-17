@@ -57,6 +57,29 @@ import { stamper } from './stamp.js'
 import { CHAPTERS } from './plots.js'
 import { textRows, textWidth } from './font.js'
 import { hash } from './land.js'
+import { build as ch1 } from './ch1-millard-north.js'
+
+/*
+ * CHAPTER ID -> THE FILE THAT FILLS IT, and the same shape as BUILDS in
+ * src/builds/index.js for the archive world's eight stages: every chapter
+ * gets a row from the day it exists, pointing at a file that may be empty, so
+ * registering a finished build is never the merge conflict seven agents all
+ * have to resolve.
+ *
+ * WHY THE DISPATCH IS HERE and not in land.js. This file's header says it is
+ * "the ONLY thing that writes inside a chapter", and that sentence is the
+ * only reason a reader can trust the plot table -- one place to look to find
+ * out what is allowed to touch a plot. A second call site in land.js would
+ * cost that sentence for nothing.
+ *
+ * THE FRAME IS DRAWN FIRST AND THE BUILD SECOND, per chapter, so a chapter
+ * may pave over its own border and its own survey posts where it wants a
+ * plaza. It may not touch anybody else's: each build gets a stamper bound to
+ * its own rectangle and the ordinary bounds check does the ordinary job.
+ */
+const CHAPTER_BUILDS = {
+  ch1,
+}
 
 /*
  * WHETHER THE LETTERS COME OUT BACKWARDS, and the honest way to hold this.
@@ -169,6 +192,10 @@ export function markChapters(world, model) {
      * and four two-block posts around it -- enough that the place is obviously
      * the bottom of something, with not one block of the climb decided.
      */
+    /* And the chapter's own build, if it has one yet. */
+    const fill = CHAPTER_BUILDS[c.id]
+    if (fill) fill(stamper(world, c, { label: `${c.id}/build` }))
+
     if (c.id === 'ch7') {
       const px = lowX ? w - 12 : 8
       s.rect([px - 2, doorZ + 4], [px + 2, doorZ + 8], -1, 'polished_andesite')

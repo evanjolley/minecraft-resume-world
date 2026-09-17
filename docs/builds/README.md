@@ -232,6 +232,27 @@ down. Stand where the visitor stands before you decide a height.
 
 ## House rules
 
+**YOUR PLOT IS YOURS TO RESIZE. NOBODY ELSE'S IS.** From the owner, and it
+applies to every build in this repo from now on:
+
+> "you can change the size of a plot, you can change the path up a little, you
+> can make the island bigger, but you cannot change anything else inside any of
+> the other plots while working on what."
+
+So the things you may do while building your chapter are: **widen or move your
+own row** in `src/builds/plots.js`, **nudge a control point** in
+`src/builds/spine.js` if the path is in your way, and **grow the world**. The
+things you may not do are everything else: another chapter's row, another
+chapter's build file, another chapter's blocks. Chapter 1 took this rule up
+immediately and grew from 52x24 to 66x63 — west and south only, because east is
+the path and north is spawn.
+
+The guard that enforces it is the stamper's bounds check, and it only works if
+your row is honest. **Widening your plot to cover ground you then do not build
+on is how the guard stops being a guard**: it turns the landscape's `forbid`
+list into a no-go zone over empty grass, and the next agent reads the table and
+believes you. Take the ground you need and no more.
+
 **Fail loudly, and it already does.** An unknown block key throws. A write
 outside your plot throws. A pattern character that is not in the legend throws.
 A build that throws takes the page down, on purpose: a silently missing wall is
