@@ -190,10 +190,29 @@ test.describe('the sign block', () => {
     await setBlock(page, SIGN.north, CX, PY + 1, CZ)
     expect(await getBlock(page, CX, PY + 1, CZ)).toBe(SIGN.north)
 
-    // Pass-through: the physics resolver never sees the sign's boxes, so a
-    // body dropped into its cell falls to the floor rather than resting on
-    // the board. This is the assertion that fails if PASS_THROUGH_SHAPES
-    // stops naming signs.
+    /*
+     * THE TABLE FIRST, because the behaviour below does not discriminate and
+     * finding that out is the reason this assertion exists. Taking signs out
+     * of PASS_THROUGH_SHAPES and re-running the walk-through test below left
+     * it PASSING -- verified against the module the dev server was actually
+     * serving, not assumed. Something else in the resolver is already
+     * declining to stop a body on a sign, so the physics half is evidence
+     * that the feature works and proof of nothing about how.
+     *
+     * These two lookups are the collision view and the targeting view of the
+     * one box table, and the opt-out is exactly the difference between them:
+     * no boxes to collide with, real boxes to aim at.
+     */
+    const views = await page.evaluate((id) => ({
+      collide: window.game.shapes.shapeBoxesFor(id) ?? null,
+      target: window.game.shapes.targetShapeBoxesFor(id) ?? null,
+    }), SIGN.north)
+    expect(views.collide, 'a sign has no collision boxes at all').toBeNull()
+    expect(views.target, 'and is still a thing you can aim at').not.toBeNull()
+    expect(views.target.length).toBeGreaterThan(0)
+
+    // Pass-through, as the player experiences it: a body dropped into a
+    // sign's cell falls to the floor rather than resting on the board.
     await useGamemode(page, 'survival')
     await teleport(page, CX + 0.5, PY + 4, CZ + 0.5)
     await waitTicks(page, 40)

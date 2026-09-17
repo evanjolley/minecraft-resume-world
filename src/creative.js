@@ -156,6 +156,17 @@ const RULES = [
   [/^(sugar_cane|bamboo)$/, 'ingredients',
     'vanilla has these as Natural Blocks because they ARE blocks there; here they '
     + 'are items with no block, and an item in a block tab would be a lie about what it places'],
+  /*
+   * Signs, which vanilla files under Functional Blocks beside the torch and
+   * the ladder. Only the canonical `oak_sign` reaches this table at all --
+   * the other seven ids carry `drops`, so items.js never makes them items --
+   * but the pattern is written to match the family rather than the one key,
+   * for the same reason the stair rule is: the second wood's signs should
+   * land here the day they exist, not fall off the end into the report.
+   */
+  [/^\w+_sign$/, 'functional_blocks',
+    'Functional Blocks, where vanilla lists signs -- next to the torch, and for '
+    + 'the same reason: it is a block you place to do a job rather than to build with'],
   [/^(torch|ladder)$/, 'functional_blocks',
     'Functional Blocks, which is where vanilla lists both. The torch is a real '
     + 'block now and places one; the ladder is still unplaceable (no block mesh, '

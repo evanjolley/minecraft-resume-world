@@ -206,40 +206,73 @@ because "shipped work moves up and loses its section" is this file's own rule.
 Roughly ascending in how much they depend on a decision from Evan rather than
 on effort.
 
-1. **There is no way to put text in the world.** No signs, no wall signs, no
-   written books, no lecterns. Both `blocks.js` and `items.js` were searched:
-   `bookshelf` is an ordinary full cube and `book` is a crafting ingredient,
-   and neither a sign block nor a writable book item exists anywhere in the
-   palette. That is a bigger hole than it looks, because **content is this
-   project's only real blocker and a sign is the cheapest delivery surface
-   there is** — and vanilla already answers the question, so nothing has to be
-   invented.
+1. **SHIPPED, mostly — signs exist and a build can label a plot.** This
+   entry used to open "there is no way to put text in the world" and cost
+   itself as the highest value-per-effort item on the list. It was. What is
+   left of it is small enough to read in a paragraph, so the argument has
+   been replaced by the outcome and the remainder.
 
-   **A sign is a non-cube**, which puts it in `blockMeshes.js` alongside slabs
-   and stairs rather than in the fence problem below. The distinction is the
-   one that file already draws: noa renders every voxel of a block id as a
-   thin instance of one shared mesh, so position, rotation and scale can vary
-   per voxel and vertices cannot. A fence with two arms is not a transform of
-   a fence with three; a sign facing east IS a transform of a sign facing
-   south. `installPlacementOrientation` already resolves a canonical id into a
-   facing variant on placement, over the four compass facings
-   `headingToFacing` returns — vanilla's standing sign has sixteen rotations,
-   so either four is accepted or that helper gets a finer version. And signs
-   are non-solid, so the sub-voxel collision half of that file — which is the
-   expensive half — does not apply at all.
+   **What shipped.** Eight block ids (660–667): a standing oak sign in four
+   facings and an oak wall sign in four, craftable from six planks and a
+   stick, placeable on the ground or on a wall, mineable, and dropping one
+   `oak_sign` whichever of the eight you break. The geometry is transcribed
+   from 1.21 source rather than remembered — `models/block/oak_sign.json` is
+   a decoy carrying nothing but a particle texture, and every visible pixel
+   comes from `SignRenderer`, read out of `Yeet-Masta/MCP-1.21` and
+   `sis1cat/minecraftsodium-1.21.8`, which agree byte for byte. Board
+   24x12x2 model px at `RENDER_SCALE` 0.6666667, so exactly one block wide
+   and half a block tall on a 4/3-pixel post, poking 4/3 of a pixel out of
+   the top of its own cell exactly as vanilla's does.
 
-   **The text is the actual new work.** A sign face is four lines of
-   Minecraft's bitmap font drawn into a texture, and `nametag.js` already does
-   exactly that: Monocraft at 8x supersample, NEAREST sampling, mipmaps off,
-   because a mipped nametag turns to grey mush at twenty blocks and so would a
-   sign. The difference is quantity. A nametag is one billboard per character;
-   signs are a canvas and a `DynamicTexture` per placed sign, which is a
-   budget nobody has counted yet. A written book is a screen instead, and
-   `menu.js` plus `inputLock.js` are already the shape for one.
+   **Four rotations, not sixteen**, as this entry allowed. The reason turned
+   out to be better than "`headingToFacing` only has four": all four shapes
+   stay axis-aligned, so none needs `SHAPE_ROTATION` — and a rotated shape is
+   the one thing in `blockMeshes.js` whose collision and hitbox must be
+   declared separately from its mesh. Sixteen rotations is twelve shapes
+   drawn one way and aimed at another.
 
-   Plausibly the highest value-per-effort item on this entire list. Everything
-   else here makes the world more elaborate. This is the first thing that lets
-   it say anything. It absorbs "spawn signage" from "Also worth building".
+   **The text budget this entry flagged has been counted, and the answer was
+   not the obvious one.** A canvas per sign at `nametag.js`'s 8x supersample
+   is 899 KB of uncompressed RGBA; a hundred signs is **88 MB** of texture
+   memory for a hundred pictures of the same 95 glyphs in different orders.
+   So the glyphs are rasterised **once** into a shared atlas and a sign is a
+   quad per character with UVs into it. Measured with a hundred real signs in
+   the world: **one texture at 1.33 MB regardless of count**, 13,600
+   vertices, and 8.59 → 5.54 fps under swiftshader — a hundred extra draw
+   calls on a CPU rasteriser, not a hundred textures. The atlas also puts
+   every sign on one material, which is the precondition for merging them if
+   a thousand signs ever becomes a real number.
+
+   **How a build sets one**, which is the call the path and the plots want:
+
+   ```js
+   import { setSignText } from '../signText.js'
+   setSignText(x, y, z, ['Stage 7', 'Patronus AI', 'RL environments', '2026'])
+   ```
+
+   World coordinates, up to four lines, each cut at vanilla's 90-pixel line
+   width (15 Monocraft characters), centred, black. An optional
+   `{ colour }` fourth argument exists because vanilla dyes sign text. Order
+   does not matter: text set before its block is kept and drawn when the sign
+   appears, and dropped when the coordinate stops being one.
+
+   **What is still open**, in the order it would be worth doing:
+
+   - **The text-entry screen.** A player cannot write on a sign; only a build
+     can. That needs `inputLock.js` and `menu.js` and is a second feature,
+     still paired with written books below.
+   - **The board does not take block light.** A sign in a sealed dark room
+     photographs at full brightness, because a non-cube object mesh is not
+     lit by `blockLight.js` at all. That is a happy accident for legibility
+     and a divergence from vanilla, and it is the same gap the torch has.
+     Fixing it means lighting object meshes, which is its own item.
+   - **One wood, no back text, no glow ink, no waxing, no hanging signs.**
+     All deliberate; each is a row in the block table plus, for glowing text,
+     the cream `#F0EBCC` outline colour `SignRenderer` already names.
+   - **Signs do not survive a world switch.** The registry is keyed by
+     coordinate with no dimension in the key, so `/world` shows another
+     world's labels. Nothing places signs outside `claude-opus-5-1` yet.
+
 2. **The light engine is half built, and sky light is the missing half.**
    This entry used to read "there is no light engine" and cost it at two to
    four days. **The block half now ships** — `src/blockLight.js` — so what

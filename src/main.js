@@ -1,7 +1,9 @@
 import { Engine } from 'noa-engine'
 
 import { registerBlocks, BLOCK_TYPES, BLOCK_SUPPORT } from './blocks.js'
-import { installAttachment } from './blockMeshes.js'
+import {
+  installAttachment, shapeBoxesFor, targetShapeBoxesFor,
+} from './blockMeshes.js'
 import { installSignText, setSignText, clearSignText, signTextStats } from './signText.js'
 import { getVoxelID, terrainInfo, SPAWN } from './island.js'
 import { installPhysics, installSpeedModes, MC } from './physics.js'
@@ -29,6 +31,7 @@ import { installUnderwater } from './underwater.js'
 import { installTerrainAnimation } from './terrainAnimation.js'
 import { installBlockLight } from './blockLight.js'
 import { createArmorReduction } from './armor.js'
+import { createEffects } from './effects.js'
 import { itemName, itemId, dropFor, rollDrops, unmappedDrops } from './items.js'
 import { itemModelStats } from './itemModel.js'
 import { installSounds } from './sounds.js'
@@ -303,6 +306,24 @@ const fluids = createFluids(noa, move)
 // changed order; this is the only new dependency between the two.
 const inventory = createInventory()
 
+/*
+ * ARMOR FIRST, THEN RESISTANCE, and the order is not a style choice.
+ *
+ * LivingEntity.actuallyHurt is two consecutive lines:
+ *     f = this.getDamageAfterArmorAbsorb(damageSource, f);
+ *     f = this.getDamageAfterMagicAbsorb(damageSource, f);
+ * and Resistance lives in the second. armor.js's formula subtracts
+ * `damage / f` from your armor points before counting them, so it is not a
+ * flat percentage -- shrink the hit before armor sees it and armor's points
+ * count for proportionally MORE, and a resisted player in iron ends up taking
+ * less than vanilla gives them. Composing the other way round is a silent
+ * buff, not an error.
+ *
+ * armor.js stays pure and untouched; the composition is here because this is
+ * the file that knows both halves exist.
+ */
+const armorReduction = createArmorReduction(inventory)
+
 const survival = createSurvival(noa, {
   allowDamage: (cause) => {
     if (!authority.caps().damage) return false
@@ -310,9 +331,52 @@ const survival = createSurvival(noa, {
     return true
   },
   allowRegen: () => authority.gamerule('naturalRegeneration'),
-  damageReduction: createArmorReduction(inventory),
+  damageReduction: (amount, cause) =>
+    effects.damageTaken(noa.playerEntity, armorReduction(amount, cause), cause),
+  /*
+   * The three effect gates, as forward closures for the same reason the two
+   * authority ones above are: survival.js must not import effects.js, and
+   * effects.js already calls into survival to heal and hurt. An arrow reads
+   * its binding when it runs, and none of these run before the first tick.
+   */
+  safeFallBlocks: () => effects.safeFallBlocks(noa.playerEntity),
+  canBreathe: () => effects.breathes(noa.playerEntity),
+  fireproof: () => effects.fireproof(noa.playerEntity),
 })
+
+/*
+ * WHOSE HEALTH IS WHOSE.
+ *
+ * effects.js never touches health directly -- it asks for a vitals adapter and
+ * gets survival.js for the player. Everything that flows through here
+ * (poison, regeneration, instant damage, absorption) therefore passes
+ * survival's ONE GATE, so a creative player is immune to poison for exactly
+ * the same reason they are immune to lava, in exactly the same line of code.
+ *
+ * EVAN GETS NULL, and that is the right answer rather than a gap: he is a body
+ * with no health model at all, so there is nothing for poison to reduce. He
+ * still gets Speed, Jump Boost, Slow Falling, Levitation and the particle
+ * swirl, all of which are properties of a BODY and all of which work on him
+ * today -- see the report. The day npc.js grows health, this is one more case
+ * in this switch and nothing in effects.js changes.
+ */
+const effects = createEffects(noa, {
+  vitalsFor: (entity) => (entity === noa.playerEntity ? {
+    get health() { return survival.health },
+    get maxHealth() { return survival.maxHealth },
+    get absorption() { return survival.absorption },
+    heal: (n) => survival.heal(n),
+    damage: (n, cause) => survival.damage(n, cause),
+    setAbsorption: (n) => survival.setAbsorption(n),
+    setBonusMaxHealth: (n) => survival.setBonusMaxHealth(n),
+  } : null),
+})
+
 const movement = installSpeedModes(noa, move, survival, fluids)
+// Speed, Slowness, Jump Boost, Slow Falling and Levitation, handed to the
+// movement system rather than reached for from inside it -- see the seam at
+// the top of installSpeedModes.
+movement.setEffects(effects)
 installFluids(noa, { blockIds: ids, fluids, survival })
 
 /*
@@ -419,6 +483,16 @@ const authority = createAuthority({
     give: (id, count) => inventory.add(id, count),
     blockName: (id) => itemName(id),
     kill: () => survival.kill(),
+    /*
+     * /effect's two verbs, as the authority's window on the status system.
+     * They sit in the apply half next to kill() and give() for the same
+     * reason: the DECISION (are you an operator, is that a real effect) is
+     * made in authority.js, and this is only how it reaches the world.
+     */
+    giveEffect: (entity, key, seconds, amplifier, hidden) =>
+      effects.give(entity, key, seconds, amplifier, hidden),
+    clearEffect: (entity, key) => effects.clear(entity, key),
+    playerEntity: () => noa.playerEntity,
   },
 })
 
@@ -909,6 +983,15 @@ window.game = {
    */
   signs: { setSignText, clearSignText, signTextStats },
   /*
+   * The two views of the non-cube box table, for the test suite. Exposed
+   * because the BEHAVIOUR they produce cannot always tell them apart: a spec
+   * that proved "you walk through a sign" by dropping a player on one passed
+   * unchanged when signs were taken OUT of PASS_THROUGH_SHAPES, which makes
+   * it evidence and not an assertion. Asking the table directly is the only
+   * check that discriminates.
+   */
+  shapes: { shapeBoxesFor, targetShapeBoxesFor },
+  /*
    * Buckets, for the console and for the test suite: `ray` is the fluid pick
    * on its own, which is how a spec proves flowing water is refused without
    * owning a bucket, and fill/pour are the two actions with the input layer
@@ -922,6 +1005,13 @@ window.game = {
    */
   debug, tabList,
   authority, gamemode, commands, interaction, flight: movement.flight,
+  /*
+   * Status effects, for the console and for the test suite. The specs measure
+   * against vanilla's numbers -- a Speed I walk speed, a Regeneration
+   * interval -- and every one of those needs to hand an effect to an entity
+   * without typing a command, which is what `give` is here for.
+   */
+  effects,
   /*
    * The container screens and the creative picker's tab rules, for the
    * console and for the test suite. `creative` is the RULES -- which tab
