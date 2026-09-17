@@ -1,6 +1,6 @@
 /*
  * The stamping system: the guard that makes eight parallel builds safe, and
- * the proof that stage 1 is actually in the world.
+ * the proof that all eight stages are actually in the world.
  *
  * ------------------------------------------------------------------------
  * HALF OF THIS SPEC RUNS IN NODE AND HALF IN THE BROWSER, on purpose.
@@ -11,7 +11,7 @@
  * engine, and -- the part that matters -- it can assert on the THROWN ERROR,
  * which a browser-side probe cannot see at all.
  *
- * Whether the house is really standing in the world is the opposite kind of
+ * Whether the houses are really standing in the world is the opposite kind of
  * question, and it is asked of the running game.
  *
  * ASSERT THE SAMPLE IS NON-EMPTY BEFORE ASSERTING ANYTHING ABOUT IT. This
@@ -19,9 +19,24 @@
  * below is checked for being greater than zero before it is checked for
  * being anything in particular, and the plot census prints its own totals so
  * a future reader can see the numbers rather than trust the comparison.
+ * ------------------------------------------------------------------------
+ *
+ * WHAT THIS FILE IS FOR, now that all eight plots are built. For a long time
+ * it asserted stage 1 and nothing else, which meant a refactor could have
+ * emptied seven plots and left the suite green. The four claims it makes
+ * today are the four that a census can actually make:
+ *
+ *   1. EVERY allocation is non-empty, and roughly as full as it was when it
+ *      was written (see MIN_BLOCKS).
+ *   2. NOTHING is anywhere else. The eight plots plus the road account for
+ *      every non-air block above the grass; the complement is exactly zero.
+ *   3. The margin frame is empty on all four sides, which other specs now
+ *      depend on -- see the note on DROP_X / DROP_Z below.
+ *   4. The two things a census cannot see are asked of the running game: a
+ *      doorway you can walk through, and a photograph.
  */
 import { test, expect } from './fixtures.js'
-import { SURFACE_Y, getBlock, ID, teleport } from './helpers/world.js'
+import { SURFACE_Y, getBlock, ID, teleport, DROP_X, DROP_Z } from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 import { stamper } from '../src/builds/stamp.js'
 import { flatPatch, FLAT_PRESETS } from '../src/flatworld.js'
@@ -52,6 +67,43 @@ function census(w, x0, x1, z0, z1) {
     }
   }
   return n
+}
+
+/** The census of one allocation row, plot or road. */
+const censusOf = (w, p) => census(w, p.x0, p.x1, p.z0, p.z1)
+
+/*
+ * THE FLOOR UNDER EACH STAGE, and how these numbers were chosen.
+ *
+ * Every figure in the comment column was MEASURED, by censusing the built
+ * patch and printing the totals (the same `census` above, run out of a
+ * throwaway node script). The threshold beside it is about half of that,
+ * rounded down to something a person would say out loud.
+ *
+ * Half, and not ninety per cent, on purpose. This is a tripwire for "the
+ * plot is empty or gutted", not a lock on the block count: a build that
+ * swaps a solid wall for a colonnade legitimately loses hundreds of blocks
+ * and should not have to come and edit this table to do it. A threshold that
+ * fails on ordinary editing gets raised by the next person in thirty seconds
+ * without being read, and then it is protecting nothing.
+ *
+ * Harvard's agent asked for `> 1500` here. Measured, Harvard is 7184: at
+ * 1500 you could delete Widener, Mass Hall, the church AND the yard wall and
+ * this spec would still pass, so it is 3500 instead.
+ *
+ * If one of these fails, look at the number in the message before you touch
+ * the number in this table. The message prints the real census.
+ */
+const MIN_BLOCKS = {
+  omaha: 1500,       // measured 3768 -- the original threshold, and left alone
+  harvard: 3500,     // measured 7184
+  perplexity: 1900,  // measured 3854
+  arize: 1800,       // measured 3795
+  bilibili: 1900,    // measured 3939
+  nologo: 3500,      // measured 7105
+  patronus: 1300,    // measured 2723
+  // stage 8 is deliberately absent. See the note in the census test.
+  road: 250,         // measured 554
 }
 
 test.describe('the stamper refuses to leave its plot', () => {
@@ -114,7 +166,7 @@ test.describe('the stamper refuses to leave its plot', () => {
   })
 })
 
-test.describe('stage 1 is in the world', () => {
+test.describe('all eight stages are in the world', () => {
   test('the plot table and the world agree about the ground', () => {
     // GROUND_Y is a deliberate copy of island.js's SURFACE_Y -- see the note
     // in plots.js about why plots.js may not import it. A copy that nothing
@@ -122,18 +174,70 @@ test.describe('stage 1 is in the world', () => {
     expect(GROUND_Y).toBe(SURFACE_Y)
   })
 
-  test('Omaha is not empty, the road is paved, and the margins are still grass', () => {
+  test('every plot is built, and the road is paved', () => {
     const w = builtPatch()
-    const omaha = plot('omaha')
 
-    const inOmaha = census(w, omaha.x0, omaha.x1, omaha.z0, omaha.z1)
-    // Non-empty FIRST, and loudly, before any claim about what is in there.
-    expect(inOmaha, 'stage 1 placed nothing at all').toBeGreaterThan(0)
-    expect(inOmaha, `stage 1 census: ${inOmaha} blocks above ground`).toBeGreaterThan(1500)
+    /*
+     * ONE LOOP, EIGHT STAGES, and the numbers go in the log whether it
+     * passes or not. The failure this is really guarding is a refactor of
+     * src/builds/index.js that drops a row from the registry: before this
+     * loop existed, seven of the eight plots could have gone silently empty
+     * and the only red in the suite would have been a screenshot nobody
+     * diffs. So the loop is over PLOTS itself, which means a stage removed
+     * from the table cannot take its assertion with it -- MIN_BLOCKS is
+     * checked for completeness at the bottom.
+     */
+    const counts = {}
+    for (const p of PLOTS) {
+      const n = censusOf(w, p)
+      counts[p.id] = n
 
-    // The road: every column of the paving has something at ground level,
-    // over its whole length. A road with a hole in it is the one defect a
-    // visitor is guaranteed to walk into.
+      // Non-empty FIRST, and loudly, before any claim about what is in
+      // there. An empty plot and a thin plot are different bugs and they
+      // deserve different messages.
+      expect(n, `stage ${p.n} (${p.id}) placed nothing at all`).toBeGreaterThan(0)
+
+      /*
+       * STAGE 8 IS MEASURED SOMEWHERE ELSE, on purpose and not by accident.
+       * test/71-parkour.spec.js owns San Francisco: its census (> 3771), its
+       * "nothing escaped the plot" margin check and -- the one that matters
+       * -- the water-leak tripwire that would otherwise flood the road and
+       * seven other stages. See `test.describe('stage 8 is in the world')`
+       * in that file. Duplicating a weaker version of it here would mean two
+       * numbers to update and one of them going stale.
+       */
+      if (p.id === 'parkour') continue
+
+      const floor = MIN_BLOCKS[p.id]
+      expect(floor, `no MIN_BLOCKS row for stage ${p.n} (${p.id})`).toBeGreaterThan(0)
+      expect(n, `stage ${p.n} (${p.id}) census: ${n} blocks above ground, floor ${floor}`)
+        .toBeGreaterThan(floor)
+    }
+
+    const road = censusOf(w, ROAD)
+    counts.road = road
+    expect(road, 'the road placed nothing at all').toBeGreaterThan(0)
+    expect(road, `road census: ${road} blocks above ground, floor ${MIN_BLOCKS.road}`)
+      .toBeGreaterThan(MIN_BLOCKS.road)
+
+    // Printed, not just asserted, so a reader can see the shape of the world
+    // rather than trust nine comparisons. A stage that has halved since the
+    // table was written shows up here long before it trips a threshold.
+    console.log('the census: ' + Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(' '))
+
+    // And the table has no rows for stages that no longer exist, which is the
+    // other way this guard rots.
+    const ids = new Set([...PLOTS.map(p => p.id), 'road'])
+    for (const id of Object.keys(MIN_BLOCKS)) {
+      expect(ids.has(id), `MIN_BLOCKS has a row for ${id}, which is not an allocation`).toBe(true)
+    }
+
+    /*
+     * THE ROAD, column by column rather than by total. Every column of the
+     * paving has something at ground level, over its whole length. A road
+     * with a hole in it is the one defect a visitor is guaranteed to walk
+     * into, and it is invisible to a block count.
+     */
     for (let z = ROAD.z0; z <= ROAD.z1; z++) {
       for (let x = ROAD.paving.x0; x <= ROAD.paving.x1; x++) {
         const key = w.palette[w.cols[z * 128 + x][GROUND_Y - 1 - w.yMin]]
@@ -141,18 +245,127 @@ test.describe('stage 1 is in the world', () => {
         expect(key).not.toBe('air')
       }
     }
-
-    // The seven unbuilt stages are empty, which is what makes this spec
-    // meaningful today and what will make it fail informatively tomorrow.
-    const built = PLOTS.filter(p => census(w, p.x0, p.x1, p.z0, p.z1) > 0).map(p => p.id)
-    expect(built).toContain('omaha')
-
-    // And nothing has escaped into the margin outside every allocation.
-    expect(census(w, 0, 3, 0, 127), 'the west margin').toBe(0)
-    expect(census(w, 124, 127, 0, 127), 'the east margin').toBe(0)
   })
 
-  test('the house is standing, and you can walk into it', async ({ page }) => {
+  test('no build wrote outside its allocation', () => {
+    /*
+     * THE COMPLEMENT IS ZERO, which is a stronger claim than any list of
+     * margins and is the one that cannot go stale when the plot table moves.
+     *
+     * The stamper already throws on an out-of-plot write, so in principle
+     * this cannot fail. In practice the ways round it are real and have all
+     * been tried in this repo: a build that touches `world.cols` directly, a
+     * generator step that runs after stampBuilds, a plot row edited to
+     * overlap its neighbour, or a future feature that writes decoration
+     * "between" the plots. Any of those lands here.
+     *
+     * Asserted two ways, because they fail differently. The sum-versus-whole
+     * comparison catches OVERLAPPING allocations (a block inside two plots is
+     * counted twice and the sum exceeds the whole); the complement walk
+     * catches blocks that belong to nobody, and names the columns.
+     */
+    const w = builtPatch()
+    const allocations = [ROAD, ...PLOTS]
+
+    const whole = census(w, 0, 127, 0, 127)
+    const sum = allocations.reduce((n, p) => n + censusOf(w, p), 0)
+    expect(whole, 'the patch is empty, so this test is measuring nothing').toBeGreaterThan(0)
+    expect(sum, `allocations sum to ${sum}, whole patch holds ${whole}`).toBe(whole)
+
+    const inside = (x, z) =>
+      allocations.some(p => x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1)
+
+    const stray = []
+    for (let z = 0; z < 128; z++) {
+      for (let x = 0; x < 128; x++) {
+        if (inside(x, z)) continue
+        const n = census(w, x, x, z, z)
+        if (n) stray.push(`(${x}, ${z}) x${n}`)
+      }
+    }
+    // The message carries the coordinates, because "1 !== 0" on a 128x128
+    // patch is a morning of bisecting builds.
+    expect(stray.slice(0, 8).join('; '),
+      `${stray.length} patch columns outside every allocation hold blocks`).toBe('')
+  })
+
+  test('the margin frame is still grass on all four sides', () => {
+    /*
+     * THIS ASSERTION IS LOAD-BEARING FOR HALF THE SUITE, which is not
+     * obvious from here.
+     *
+     * DROP_X / DROP_Z in test/helpers/world.js is world (-14.5, 66.5), which
+     * is patch column (72, 122) -- south of every plot (they stop at z=117)
+     * and east of the road's verge (it stops at x=67). Every "teleport up and
+     * fall" spec in the suite drops down that column and expects grass at
+     * SURFACE_Y - 1 with clear sky above it. It used to be patch (82, 56),
+     * which is the middle of Arize's plot, and it moved here precisely
+     * BECAUSE this spec guarantees the margin is empty. So a build that
+     * spills south does not fail one test, it fails every fall, jump and
+     * fluid spec that uses the drop column, for a reason none of them can
+     * explain. That is what this test is for, and it is why the drop column
+     * is asserted by name at the bottom.
+     *
+     * THE BANDS ARE THE COMPLEMENT OF THE ALLOCATIONS, not the ranges quoted
+     * in docs/builds/README.md, and the difference is the road. The road's
+     * plot runs z = 4..124, so at x = 60..67 the margin is only z = 0..3 and
+     * z = 125..127; everywhere else it is z = 0..5 and z = 118..127. Quoting
+     * the README's "z 0-3, 118-127" for all x would assert that the road's
+     * own north and south ends are empty, which is not the claim and would
+     * break the day somebody puts a bollard at the end of the road.
+     */
+    const w = builtPatch()
+    const LEFT = [0, 59], RIGHT = [68, 127], VERGE = [ROAD.x0, ROAD.x1]
+
+    const bands = [
+      ['the west margin, x 0..3', 0, 3, 0, 127],
+      ['the east margin, x 124..127', 124, 127, 0, 127],
+      ['the north margin, west of the road', ...LEFT, 0, ROAD.z0 + 1],
+      ['the north margin, east of the road', ...RIGHT, 0, ROAD.z0 + 1],
+      ['the north margin, off the end of the road', ...VERGE, 0, ROAD.z0 - 1],
+      ['the south margin, west of the road', ...LEFT, 118, 127],
+      ['the south margin, east of the road', ...RIGHT, 118, 127],
+      ['the south margin, off the end of the road', ...VERGE, ROAD.z1 + 1, 127],
+    ]
+    for (const [what, x0, x1, z0, z1] of bands) {
+      const n = census(w, x0, x1, z0, z1)
+      expect(n, `${what} (patch x ${x0}..${x1}, z ${z0}..${z1}) holds ${n} blocks`).toBe(0)
+    }
+
+    /*
+     * AND THE GUTTERS BETWEEN ALLOCATIONS, which is a shorter list than it
+     * sounds: there are none. The eight plots tile x 4..59 and x 68..123
+     * exactly, in four bands of z 6..33, 34..61, 62..89 and 90..117 with no
+     * space between them, and the only thing standing between the two
+     * columns of plots is the road's verge at x 60..67 -- which is an
+     * allocation with an owner and carries the lamps, so it is emphatically
+     * not empty. The claim "nothing lives between the allocations" is
+     * therefore made by the complement test above and not by a band here.
+     *
+     * What IS worth asserting by hand is the seam: the last column of a plot
+     * and the first column of the next one belong to different owners, and a
+     * build that overran would have been caught by the stamper. So the rows
+     * below assert only the thing no other test says out loud -- that the
+     * specific columns other specs stand in are clear.
+     */
+    const dropX = Math.floor(DROP_X + ORIGIN_X)
+    const dropZ = Math.floor(DROP_Z + ORIGIN_Z)
+    expect([dropX, dropZ], 'DROP_X / DROP_Z has moved out of the south margin')
+      .toEqual([72, 122])
+    expect(census(w, dropX, dropX, dropZ, dropZ),
+      `the drop column, patch (${dropX}, ${dropZ}), is not clear -- see DROP_X in test/helpers/world.js`)
+      .toBe(0)
+    expect(w.palette[w.cols[dropZ * 128 + dropX][GROUND_Y - 1 - w.yMin]],
+      'the drop column lands on grass').toBe('grass')
+
+    // The Classic Flat ladder test/01-world.spec.js reads lives at patch
+    // (1, 1), in the west margin, and is the other column with a reader.
+    expect(census(w, 1, 1, 1, 1), 'the ladder column at patch (1, 1)').toBe(0)
+  })
+})
+
+test.describe('the stages are standing in the running game', () => {
+  test('Omaha: the house is standing, and you can walk into it', async ({ page }) => {
     /*
      * Asked of the running game rather than of the generator, because the
      * question is "did the stamped world survive getVoxelID, the palette
@@ -174,6 +387,66 @@ test.describe('stage 1 is in the world', () => {
 
     // The cellar, two blocks under the house's floorboards, is really hollow.
     expect(await getBlock(page, 40 - ORIGIN_X, SURFACE_Y - 2, 17 - ORIGIN_Z)).toBe(ID.air)
+  })
+
+  test('Harvard: Widener\'s front door is a hole you can walk through', async ({ page }) => {
+    /*
+     * THE SECOND BROWSER PROBE, and the reason it exists is in
+     * src/builds/02-harvard.js: Widener's doorway is CUT after the wall is
+     * built (`w.clear([9, 4, 11], [9, 6, 12])` inside `widener`). A cut that
+     * runs before the wall, or a wall rebuilt after the cut, gives you a
+     * library with a brick face and no way in -- and the comment on that
+     * clear says an earlier version of the doorway "survived every check
+     * except a screenshot". This is that screenshot, as an assertion.
+     *
+     * WHERE THE DOOR IS, because the number that was handed over was mixed.
+     * Widener is stamped at `s.at(21, 0, 2)`, so its local (9, 4..6, 11..12)
+     * is HARVARD-local (30, 4..6, 13..14) and patch (98, 19..20) via the plot
+     * table. The "(30, 19)" it was reported as is x in plot coordinates and z
+     * in patch coordinates, which is exactly the mix-up plots.js opens with a
+     * warning about: read literally as plot-local it is patch (98, 25), which
+     * is solid brick nine columns down the wall and would have made this test
+     * fail for the wrong reason.
+     *
+     * The door sits four blocks up because you reach it off the portico deck,
+     * which is why the probe is at SURFACE_Y + 4, +5 and +6 rather than at
+     * the ground.
+     */
+    const h = plot('harvard')
+    const px = (x) => h.x0 + x - ORIGIN_X          // harvard-local x -> world x
+    const pz = (z) => h.z0 + z - ORIGIN_Z          // harvard-local z -> world z
+
+    /*
+     * TELEPORT FIRST, and it is not politeness. noa answers 0 for a chunk it
+     * has not loaded and 0 is also ID.air, so every `toBe(ID.air)` below
+     * passes vacuously on an unloaded chunk -- which is what this whole plot
+     * is, since the player spawns a hundred blocks south of it. Standing on
+     * the portico deck at local (28, 13) puts the door two blocks away and
+     * the chunk in memory.
+     */
+    await teleport(page, px(28) + 0.5, SURFACE_Y + 4, pz(13) + 0.5)
+    await page.waitForTimeout(800)
+
+    // The jambs first. If these are air the chunk is not loaded and the air
+    // assertions below prove nothing, so this is the guard that stops this
+    // test joining the ones that passed by measuring nothing.
+    for (const z of [12, 15]) {
+      expect(await getBlock(page, px(30), SURFACE_Y + 5, pz(z)),
+        `the jamb beside Widener's door at harvard-local (30, 5, ${z})`).not.toBe(ID.air)
+    }
+
+    // And the doorway itself: two columns wide, three blocks of headroom.
+    for (const z of [13, 14]) {
+      for (const dy of [4, 5, 6]) {
+        expect(await getBlock(page, px(30), SURFACE_Y + dy, pz(z)),
+          `Widener's doorway at harvard-local (30, ${dy}, ${z}), patch (${h.x0 + 30}, ${h.z0 + z})`)
+          .toBe(ID.air)
+      }
+    }
+
+    // A lintel over it, so the hole is a door and not a missing wall.
+    expect(await getBlock(page, px(30), SURFACE_Y + 7, pz(13)),
+      'the lintel over Widener\'s door').not.toBe(ID.air)
   })
 
   test('what stage 1 looks like from the road', async ({ page }) => {
