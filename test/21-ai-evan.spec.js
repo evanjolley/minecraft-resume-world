@@ -14,10 +14,12 @@ import { shot } from './helpers/shots.js'
  * would be expensive to discover was fake later.
  */
 
-/** Where Evan stands, and a spot inside his greeting radius. One block west
- *  of him -- he is at x = -4.5, which moved with the terrain when the asset
- *  stopped being mirrored in X. Same column, other side of spawn. */
-const NEAR_EVAN = [-3.5, SURFACE_Y, 0.5]
+/** Where Evan stands, and a spot inside his greeting radius. One lane of the
+ *  road west of him -- he moved to world (-21.5, 61.5), three blocks up the
+ *  road from spawn, when the old world origin became the middle of stage 4's
+ *  plot (EVAN_XZ in src/main.js). Paving both sides, so this is still flat
+ *  ground a teleport lands on. */
+const NEAR_EVAN = [-22.5, SURFACE_Y, 61.5]
 
 /**
  * Say something in chat the way a player does -- T, type, Enter -- rather

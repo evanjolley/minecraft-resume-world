@@ -18,17 +18,20 @@ import { shot } from './helpers/shots.js'
  */
 
 /*
- * Evan stands at x -4.5, z 0.5. Four blocks WEST of him, looking east.
+ * Evan stands on the road at world (-21.5, 61.5) -- three blocks north of
+ * spawn, see EVAN_XZ in src/main.js. This is four blocks further NORTH up the
+ * same lane, looking back south at him.
  *
- * Both numbers moved with the terrain, which stopped being mirrored in X
- * (scripts/terrain/extract.mjs, MIRROR_X): Evan's column negated, and so did
- * the camera's. The heading is the half worth looking at twice -- it is still
- * the direction that faces him, and it is still the one this file calls west,
- * because west is +X in this engine. The constant was named for the mirrored
- * world and only now means what it says.
+ * It used to be four blocks west of him at the old world origin, which the
+ * plot table has since given to stage 4. The direction changed with the
+ * address: the road runs north-south, so the only four-block sightline that
+ * is flat paving rather than a kerb, a verge or somebody's front wall is
+ * along it. Which way the camera looks barely matters to what this file
+ * asserts -- he TURNS TO FACE YOU (src/npc.js, bodyYaw), so the front of the
+ * skin is whatever side the camera is on.
  */
-const IN_FRONT = [-8.5, 0.5]
-const LOOK_WEST = Math.atan2(1, 0)
+const IN_FRONT = [-21.5, 57.5]
+const LOOK_SOUTH = 0
 
 /** Read an image the page can fetch back out as pixels. */
 const sheetProbe = async (page, url) => page.evaluate(async (src) => {
@@ -90,7 +93,7 @@ const modelState = (page) => page.evaluate(() => {
 async function standInFront(page) {
   await teleport(page, IN_FRONT[0], 140, IN_FRONT[1])
   await settleOnGround(page)
-  await look(page, { heading: LOOK_WEST, pitch: 0.18 })
+  await look(page, { heading: LOOK_SOUTH, pitch: 0.18 })
   await waitFrames(page, 2)
 }
 
@@ -154,11 +157,14 @@ test('he looks like Evan from the front, and like a cape from behind',
      * that shows his back. The yaw is overridden per frame instead -- after
      * the tick that sets it, because a beforeRender handler registered later
      * runs later. Evidence only; nothing is asserted on this.
+     *
+     * Yaw 0 is facing +Z in npc.js's convention (atan2(dx, dz)), and the
+     * camera is now NORTH of him, so 0 is the yaw that turns his back to it.
      */
     await page.evaluate((yaw) => {
       window.__faceAway = () => { window.game.aiEvan.model.root.rotation.y = yaw }
       window.noa.on('beforeRender', window.__faceAway)
-    }, LOOK_WEST)
+    }, LOOK_SOUTH)
     await waitFrames(page, 3)
     await shot(page, 'evan-back')
     await page.evaluate(() => {

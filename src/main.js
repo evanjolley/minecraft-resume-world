@@ -216,6 +216,24 @@ noa.world.on('worldDataNeeded', (id, data, x, y, z) => {
  */
 noa.camera.zoomDistance = 0
 
+/*
+ * WHICH WAY A VISITOR IS FACING ON THEIR FIRST FRAME, and it is not a detail.
+ *
+ * noa's default heading is 0, which in this world is SOUTH (+Z; see the
+ * compass note in debugScreen.js). Spawn is the south end of the road and the
+ * timeline runs NORTH from it, so a default heading spawned every visitor
+ * looking at the patch edge behind them with the entire world at their back.
+ * Math.PI is north: you arrive under the arch looking up the road, with the
+ * stage markers and the guide ahead of you.
+ *
+ * Set here rather than passed to the Engine because noa takes no such option
+ * -- playerStart places the body, the camera is its own object -- and it is
+ * one assignment at boot rather than a system. test/helpers/world.js resets
+ * the camera to heading 0 between specs on purpose: the suite measures the
+ * renderer, which did not move, and every spec that cares sets its own.
+ */
+noa.camera.heading = Math.PI
+
 /* ---- systems ---- */
 
 /*
@@ -614,21 +632,29 @@ const commands = installCommands(chat, authority, { noa })
  * ------------------------------------------------------------------ */
 
 /*
- * Where he stands. Four blocks east of spawn, which is the nearest column
- * with open sky -- spawn itself is under a dark forest canopy, and a
- * character standing inside a leaf block is not a good first impression.
- * The ground is found by scanning rather than hardcoded, because the terrain
- * asset is a real Minecraft chunk import and "the surface is at 135" is a
- * fact about today's asset rather than about the code.
+ * Where he stands: THREE BLOCKS UP THE ROAD FROM WHERE YOU LAND.
  *
- * He was at x = +4.5 until the terrain asset stopped being mirrored in X
- * (scripts/terrain/extract.mjs, MIRROR_X). Same column of the same Minecraft
- * world, and still four blocks east -- east is -X in this engine, so the
- * sentence above did not have to change, only the sign. The scan caught it
- * the way it was meant to: at +4.5 the ground is now six blocks higher, so
- * Evan stood at y=142 with his feet in a treetop.
+ * He is the guide to a timeline now, and a guide is a person you meet at the
+ * door. Spawn is the south end of the road -- patch (63, 120), under the
+ * arch, see SPAWN_PATCH_X/Z in src/builds/plots.js -- so he stands at patch
+ * (65, 117): the far lane of the paving, three blocks north and two across,
+ * which puts him in frame the moment you arrive without standing in the lane
+ * you walk up. He is the first thing you can talk to and he is facing the
+ * eight stages he is there to explain.
+ *
+ * He was at world (-4.5, 0.5) -- the old world origin, which used to be
+ * spawn and is now the MIDDLE OF STAGE 4'S PLOT, sixty-seven blocks from
+ * where anybody arrives and soon to be indoors. A guide you meet a minute
+ * after you needed him is not a guide, and one standing inside somebody's
+ * wall is a bug. Moved for the first reason; the second is why it could not
+ * wait.
+ *
+ * The ground is still found by SCANNING rather than hardcoded, and the scan
+ * still earns its place: the road is a build now (src/builds/road.js), the
+ * builds are stamped after the terrain is generated, and the column he
+ * stands in is therefore one somebody else may repave. Ask the world.
  */
-const EVAN_XZ = [-4.5, 0.5]
+const EVAN_XZ = [-21.5, 61.5]
 
 /*
  * LEAVES ARE NOT A FLOOR, and this is the one thing the scan below has to

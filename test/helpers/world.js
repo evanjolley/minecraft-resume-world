@@ -45,24 +45,26 @@ export const MIN_Z = -56
 export const MAX_Z = 71
 
 /*
- * A column with grass at SURFACE_Y - 1 and NOTHING above it, four blocks east
- * of spawn.
+ * A column with grass at SURFACE_Y - 1 and NOTHING above it, nine blocks east
+ * of spawn and two south of it, out in the margin.
  *
- * Every "teleport up and fall" test used to drop down the spawn column,
- * because the old island had open sky over all of it. Spawn is now under a
- * dark forest canopy -- there are leaves at y=139 and y=140 directly overhead
- * -- and a player dropped from SURFACE_Y + 10 would land on a leaf, or worse
- * materialise inside one. x=-4 is the nearest column that is clear all the way
- * up, and its ground is at exactly the same height as spawn's, so every
- * `SURFACE_Y + n` distance in those tests still means what it said.
+ * Every "teleport up and fall" test drops down this column, so all it has to
+ * be is grass at the same height as spawn with clear sky over it -- and all
+ * it has to STAY is nobody's. It used to be world (-4.5, 0.5), the old world
+ * origin, which the plot table (src/builds/plots.js) has since handed to
+ * stage 4: patch (82, 56), the middle of the Arize plot, where there is now a
+ * building. A drop column inside somebody's roof is a spec that fails for a
+ * reason that has nothing to do with what it was testing.
  *
- * It was +4 until the terrain asset stopped being mirrored in X. Same column
- * of the same Minecraft world, reached from the other side: the flip pivots on
- * spawn, so a world coordinate simply negates. Nothing about the drop tests
- * changed except which side of spawn they happen on.
+ * Patch (72, 122) instead -- world (-15, 66). That is MARGIN: south of every
+ * plot (they stop at z = 117), east of the road's verge (it stops at x = 67),
+ * and test/70-builds.spec.js asserts the margins are empty, which turns "this
+ * column is clear" from a thing this comment claims into a thing the suite
+ * checks. It is nine blocks from spawn, so it is inside the chunks a booted
+ * world already has meshed.
  */
-export const DROP_X = -4.5
-export const DROP_Z = 0.5
+export const DROP_X = -14.5
+export const DROP_Z = 66.5
 
 /** Block ids, mirroring blocks.js. Duplicated on purpose: if someone
  *  renumbers the table, these tests should fail rather than follow along. */
