@@ -215,6 +215,37 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
     handItem.setEnabled(handItemReady)
   })
 
+  /*
+   * YOUR OWN SHADOW, which you should never see.
+   *
+   * Minecraft does draw a shadow under every entity, including you -- but you
+   * never see your own in first person, and not because of a shadow rule. The
+   * renderer simply skips the camera's own entity, and the shadow is drawn
+   * inside that same per-entity call, so skipping the body skips the shadow
+   * with it. Third person renders you like any other entity, shadow included.
+   *
+   * noa has no such rule: its shadow component is attached to the player at
+   * construction and drawn unconditionally, so a dark disc has been sitting
+   * under the camera in first person, visible whenever you looked down.
+   *
+   * This is add/remove of the component, NOT `setEnabled(false)` on its mesh.
+   * The component's own system calls `mesh.setEnabled(true)` on every tick
+   * that finds ground below the entity (see noa's components/shadow.js), so
+   * anything that only disables the mesh is undone within one tick. Removing
+   * the component stops the system from seeing the entity at all, and its
+   * onRemove disposes the instance.
+   *
+   * Cheap because it runs on F5 presses, not per frame.
+   */
+  const shadowComponent = noa.ents.names.shadow
+  const setShadow = (on) => {
+    if (on === noa.ents.hasComponent(player, shadowComponent)) return
+    // `size` is the entity width, which is what noa passes when it creates
+    // the component itself -- the disc scales off it.
+    if (on) noa.ents.addComponent(player, shadowComponent, { size: MC.PLAYER_WIDTH })
+    else noa.ents.removeComponent(player, shadowComponent)
+  }
+
   const apply = () => {
     const third = mode !== 0
     noa.camera.zoomDistance = third ? THIRD_PERSON_DISTANCE : 0
@@ -224,6 +255,9 @@ export function installPerspective(noa, { skinMaterial, inputLock, inventory, sw
     // person is a dark box directly above your eyeline.
     model.root.setEnabled(third)
     nametag?.setEnabled(third)
+    // Same list, same reason: it belongs to the body, and in first person the
+    // body is not drawn.
+    setShadow(third)
   }
 
   document.addEventListener('keydown', (e) => {
