@@ -49,9 +49,31 @@
  * explicit that the first version ships without a Durable Object.
  */
 
-import { SYSTEM_PROMPT, CHUNKS, WITHHELD_TERMS, COMP_PATTERNS, GATE_LINE }
-  from './prompt.generated.js'
+/*
+ * A NAMESPACE IMPORT, WHICH IS THE ONE ODD-LOOKING LINE IN THIS FILE.
+ *
+ * prompt.generated.js is gitignored and rebuilt from corpus/, so the copy on
+ * any given machine can be older than this file. Named imports are checked at
+ * link time in ESM, so `import { IS_STUB }` against a prompt built before
+ * IS_STUB existed is a SyntaxError that takes the whole Worker down -- for a
+ * flag whose entire job is to be safe when things are missing. A namespace
+ * import cannot fail that way: an absent export reads as undefined, which
+ * lands on "not a stub", which is the old behaviour exactly.
+ */
+import * as PROMPT from './prompt.generated.js'
 import { createGate } from './allowlist.js'
+
+const { SYSTEM_PROMPT, CHUNKS, WITHHELD_TERMS, COMP_PATTERNS, GATE_LINE } = PROMPT
+
+/*
+ * True only for the fake prompt scripts/build-prompt.mjs --allow-stub writes
+ * when corpus/ is absent -- which is every CI runner, since the corpus is
+ * Evan's personal data and this repo is public. See that script's header.
+ *
+ * Exported so test/55-ai-evan-brain.spec.js can tell which prompt it loaded
+ * and assert the right thing about it.
+ */
+export const PROMPT_IS_STUB = PROMPT.IS_STUB === true
 
 /* ------------------------------------------------------------------ *
  * The ceilings
@@ -282,6 +304,26 @@ export async function handleAgent(request, env, deps = {}) {
     return refuse(
       'No brain wired up on this deploy yet. Ask the real Evan at evanjjolley@gmail.com.',
       503)
+  }
+
+  /*
+   * THE STUB NEVER TALKS TO ANYONE, AND THAT IS WHAT MAKES A STUB ALLOWABLE.
+   *
+   * scripts/build-prompt.mjs argues, correctly, that a placeholder prompt
+   * would deploy an Evan who confidently knows nothing. This is the line that
+   * answers it: a build that reached production without the corpus declines
+   * every request rather than improvising from an empty prompt. The failure
+   * is then visible and boring instead of confident and wrong.
+   *
+   * Gated on `!deps.upstream` for the same reason the key check above is: an
+   * injected upstream means a test, and the caps, the loop and the gate are
+   * all worth running against a fake prompt. It is the REAL upstream -- a
+   * billable call whose answer a visitor reads -- that must not happen.
+   */
+  if (PROMPT_IS_STUB && !deps.upstream) {
+    return refuse(
+      'This build went out without my corpus, so I genuinely know nothing. '
+      + 'Email the real Evan at evanjjolley@gmail.com.', 503)
   }
 
   /* Client tools arrive from the browser, which is correct: it owns them and

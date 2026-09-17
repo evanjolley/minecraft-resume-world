@@ -17,8 +17,47 @@
  * emitting a stub, because a stub would deploy an Evan who confidently knows
  * nothing, and that is worse than a deploy that stops.
  *
- *   node scripts/build-prompt.mjs        # write it
- *   node scripts/build-prompt.mjs --check # report sizes, write nothing
+ * --allow-stub IS THE ONE EXCEPTION, AND IT EXISTS BECAUSE OF CI
+ * -------------------------------------------------------------
+ * worker/index.js imports this file's output at MODULE LOAD, so a checkout
+ * without corpus/ cannot even load the Worker. That is why every CI run since
+ * the Worker landed died four seconds in: test/55-ai-evan-brain.spec.js
+ * imports worker/index.js, so Playwright could not collect the spec, let
+ * alone run it. corpus/ is never going to be on a runner -- it is Evan's
+ * personal data and this repo is public -- so the real choice was between
+ * testing the Worker against something fake and not testing it at all.
+ *
+ * --allow-stub writes an obviously-fake prompt when, AND ONLY WHEN, corpus/
+ * is absent. With the corpus present the flag does nothing and you get the
+ * real build, which is what lets CI pass the flag unconditionally without
+ * making a developer's run any worse.
+ *
+ * The original objection above is not waived, it is answered. A stub must
+ * never be what a visitor talks to, and three separate things enforce that:
+ *
+ *   1. The stub sets IS_STUB, and worker/index.js refuses to answer at all
+ *      when it sees it. A stub that somehow reached production would say "I
+ *      was built without my corpus", not invent an Evan.
+ *   2. `npm run prompt` -- which is the first step of `npm run deploy` -- has
+ *      no flag and still dies. Only jobs that publish nothing pass it.
+ *   3. SYSTEM_PROMPT says it is a stub in its first line, so a human reading
+ *      a bundle or a response sees it immediately.
+ *
+ * Rejected: skipping test/55 when the generated file is absent. Honest, one
+ * line, and it tests nothing -- the spend caps and the output gate are the
+ * two most expensive things in this repo to get wrong and that spec is the
+ * only place either is checked. A green CI that quietly stopped covering
+ * them is the "red build everybody ignores" problem wearing a disguise.
+ * Rejected: a try/catch or a dynamic import in worker/index.js so a missing
+ * prompt is survivable. That converts a bundle-time failure into a runtime
+ * one, which is the version where production really does serve an empty Evan.
+ * Rejected: committing a small redacted corpus to build from. Any such file
+ * is corpus content rearranged, which is the exact line this script exists
+ * to hold.
+ *
+ *   node scripts/build-prompt.mjs              # write it
+ *   node scripts/build-prompt.mjs --check      # report sizes, write nothing
+ *   node scripts/build-prompt.mjs --allow-stub # ...or a fake one, if no corpus
  *
  * WHAT GOES RESIDENT AND WHAT GOES BEHIND THE LOOKUP TOOL
  * ------------------------------------------------------
@@ -620,6 +659,90 @@ export const WITHHELD_TERMS = ${j(withheld)}
 export const COMP_PATTERNS = ${j(COMP_PATTERNS)}
 
 export const GATE_LINE = ${j(GATE_LINE)}
+
+/* The real thing. See IS_STUB in emitStub() below for what false rules out. */
+export const IS_STUB = false
+`
+}
+
+/*
+ * THE STUB: the same five exports, with structure where the facts go.
+ *
+ * Every string below is invented and there is no way to reach corpus/ from
+ * here -- this function takes no arguments and reads no files. That is the
+ * property that makes a stub safe to write at all: it cannot leak what it
+ * cannot see.
+ *
+ * What it is FOR is that worker/index.js loads, createGate() compiles against
+ * real shapes, and test/55-ai-evan-brain.spec.js exercises the caps, the
+ * server-side loop and the gate for real. Those behaviours do not care whose
+ * life is in the prompt, which is exactly why they are the ones worth running
+ * on a machine that will never have it.
+ *
+ * COMP_PATTERNS and GATE_LINE are the genuine article rather than fakes: both
+ * are generic, both are already committed a few hundred lines up, and neither
+ * is derived from anything. So CI tests the real compensation gate.
+ */
+function emitStub() {
+  const system = [
+    'THIS IS A STUB PROMPT, generated without corpus/ by',
+    'scripts/build-prompt.mjs --allow-stub. It contains no facts about Evan',
+    'or about anyone else, and it is not what the live site runs on. If you',
+    'are reading this in a deployed Worker, that Worker was built wrong: run',
+    '`npm run prompt` on a machine that has corpus/ and deploy again.',
+    '',
+    'You are a placeholder standing where AI Evan goes. You know nothing',
+    'about anybody. Whatever you are asked, say that you were built without',
+    'your corpus and cannot answer.',
+  ].join('\n')
+
+  const chunks = [
+    {
+      id: 'stub-one',
+      label: 'Placeholder',
+      text: 'A stub chunk. It exists so corpus_lookup has something to score '
+        + 'and rank, and it says nothing true about anyone.',
+    },
+    {
+      id: 'stub-two',
+      label: 'Second Placeholder',
+      text: 'A second stub chunk, so ranking between two candidates is a real '
+        + 'operation rather than a list of one.',
+    },
+  ]
+
+  /* Invented, and shaped like a real one -- a capitalised pair -- so the gate
+   * is compiled and exercised rather than handed an empty list. */
+  const withheld = ['Zzyzx Placeholder']
+
+  return `/*
+ * GENERATED by scripts/build-prompt.mjs --allow-stub, WITHOUT corpus/.
+ *
+ * NONE OF THIS IS TRUE. It is a placeholder that lets worker/index.js load on
+ * a machine that does not have Evan's corpus, which is every CI runner. The
+ * Worker checks IS_STUB below and refuses to answer rather than serving it.
+ *
+ * Replace it with the real thing by running "npm run prompt" where corpus/
+ * exists. DO NOT COMMIT -- .gitignore has this path and the repo is public.
+ */
+
+export const SYSTEM_PROMPT = ${j(system)}
+
+export const CHUNKS = ${j(chunks)}
+
+export const WITHHELD_TERMS = ${j(withheld)}
+
+/* Real, not invented: generic patterns that are committed in the builder. */
+export const COMP_PATTERNS = ${j(COMP_PATTERNS)}
+
+export const GATE_LINE = ${j(GATE_LINE)}
+
+/*
+ * The flag worker/index.js reads. It is the whole reason a stub is allowed to
+ * exist: with it set, the Worker declines every request instead of answering
+ * from the nothing above.
+ */
+export const IS_STUB = true
 `
 }
 
@@ -629,11 +752,31 @@ export const GATE_LINE = ${j(GATE_LINE)}
 
 function main() {
   const profilePath = join(CORPUS, 'profile.md')
+
+  /*
+   * The corpus decides which build this is, not the flag. --allow-stub is
+   * permission to fall back, never an instruction to -- so a developer who
+   * copies the CI command still gets the real prompt and the real tests.
+   */
   if (!existsSync(profilePath)) {
-    die('corpus/profile.md not found.\n'
-      + 'The prompt is built from corpus/ at deploy time and there is no fallback:\n'
-      + 'a stub prompt would deploy an Evan who confidently knows nothing.\n'
-      + 'See corpus/README.md for where the canonical copy lives.')
+    if (!process.argv.includes('--allow-stub')) {
+      die('corpus/profile.md not found.\n'
+        + 'The prompt is built from corpus/ at deploy time and there is no fallback:\n'
+        + 'a stub prompt would deploy an Evan who confidently knows nothing.\n'
+        + 'See corpus/README.md for where the canonical copy lives.\n'
+        + '\n'
+        + 'If you are CI and only need the Worker to LOAD, pass --allow-stub\n'
+        + '(`npm run prompt:ci`). Anything that publishes must not.')
+    }
+    if (process.argv.includes('--check')) {
+      console.log('--check: no corpus/, a stub is what --allow-stub would write')
+      return
+    }
+    writeFileSync(OUT, emitStub())
+    console.log('build-prompt: no corpus/ here, so worker/prompt.generated.js is a STUB.')
+    console.log('build-prompt: it holds no facts and the Worker refuses to answer from it.')
+    console.log('build-prompt: run `npm run prompt` where corpus/ lives before deploying.')
+    return
   }
   const profile = readFileSync(profilePath, 'utf8')
   const answersPath = join(CORPUS, 'answers.json')

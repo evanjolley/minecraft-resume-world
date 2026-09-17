@@ -81,9 +81,9 @@ Cloudflare account has been touched, and no DNS record has been created.
   about "a binding, not a re-platform" can be checked rather than believed.
 - `deploy/_headers` and `deploy/.assetsignore` — cache policy and an upload
   blocklist, copied into `dist/` by the deploy build.
-- `.github/workflows/deploy.yml` — install, textures, tests, build, verify,
-  validate the config on every push to `main`, and deploy only if a secret
-  that does not exist yet is present.
+- `.github/workflows/deploy.yml` — a fast build-and-smoke job on every push to
+  `main`, and the full pipeline (package, whole suite, then deploy) on a tag or
+  a manual dispatch. See "What CI actually runs, and when" below.
 - `npm run deploy:dry-run` — proves the config parses and `dist/` resolves,
   without an account.
 
@@ -411,11 +411,76 @@ repository secret** on `evanjolley/minecraft-resume-world`:
 - `CLOUDFLARE_ACCOUNT_ID` — on the right-hand side of the Workers & Pages
   overview page.
 
-Until `CLOUDFLARE_API_TOKEN` is non-empty, the workflow runs everything up to
-and including `wrangler deploy --dry-run` and then logs a notice saying it
-skipped the deploy. That ordering is deliberate: the pipeline gets exercised
-on every push for as long as it takes Evan to decide, so the first real deploy
-is not also the first time any of it ran.
+Until `CLOUDFLARE_API_TOKEN` is non-empty, a dispatch runs everything up to and
+including `wrangler deploy --dry-run` and then logs a notice saying it skipped
+the deploy. That ordering is deliberate: the pipeline gets exercised before
+anything is published, so the first real deploy is not also the first time any
+of it ran.
+
+**The secret alone is not enough, and this is the one surprise in here.** The
+`publish` job runs `npm run prompt`, not `npm run prompt:ci`, so it needs
+`corpus/` — which is gitignored and will never be on a runner, because it is
+Evan's personal data and this repo is public. So a deploy *from CI* fails at
+that step even with the token in place, deliberately and with a message
+pointing at `corpus/README.md`.
+
+The path that works today is `npm run deploy` from Evan's machine, where
+`corpus/` lives. Three ways to change that, in increasing order of how much
+they give away:
+
+1. Leave it. CI proves the pipeline; Evan runs the one command that publishes.
+2. Put the corpus in a repository secret and write it out in `publish`. It
+   never lands in the repo, but GitHub then holds it.
+3. Deploy the Worker without a corpus. The stub prompt already makes this
+   safe rather than embarrassing — `worker/index.js` refuses to answer when it
+   sees `IS_STUB` — but the site ships with AI Evan turned off.
+
+## What CI actually runs, and when
+
+`.github/workflows/deploy.yml` used to run all of it on every push. That was
+right when pushes were rare and wrong once they were not: the whole ~900-test
+suite across two engines is a two-hour answer to an eight-second question, and
+`cancel-in-progress` meant most runs were killed by the next commit before
+producing any answer at all.
+
+| Trigger | Jobs | Roughly |
+| --- | --- | --- |
+| push to `main` | `smoke` — `npm run build` + `npm run smoke` | minutes |
+| tag `v*`, or manual dispatch | `package` ∥ `suite`, then `publish` | hours |
+
+`npm run smoke` is `test/01-world.spec.js` + `test/43-browsers.spec.js` on
+chromium. That pair exists because a shader that failed to compile once
+shipped an invisible world past three agents reporting green — it catches the
+failure that is both catastrophic and invisible in a diff, and it is the one
+worth paying for on every commit.
+
+`package` and `suite` run in parallel and neither needs the other, so
+`build:deploy` breakage now surfaces in about three minutes rather than behind
+two hours of tests. Nothing publishes unless both are green.
+
+### Why CI could never pass at all until now
+
+Worth recording, because the fix looks like a workaround and is not. Every run
+since the AI Evan worker landed failed about four seconds in:
+
+```
+Error: Cannot find module '.../worker/prompt.generated.js'
+  imported from .../worker/index.js
+```
+
+`worker/index.js` imports the generated prompt at module load;
+`test/55-ai-evan-brain.spec.js` imports the Worker; the generated prompt is
+built from `corpus/` and both are gitignored. So Playwright could not collect
+the spec, and no arrangement of the workflow was ever going to fix that — it
+was structural, not flaky.
+
+CI now runs `npm run prompt:ci` (`build-prompt.mjs --allow-stub`), which
+writes an obviously-fake prompt **only** when `corpus/` is absent. With the
+corpus present the flag does nothing and you get the real prompt and the real
+tests, so a developer's run is unchanged. The stub sets `IS_STUB`, and
+`worker/index.js` declines every request when it sees it, which is what keeps
+"a stub must never reach a visitor" true rather than hoped for. The header of
+`scripts/build-prompt.mjs` carries the full argument and what was rejected.
 
 Rejected: `cloudflare/wrangler-action`. It is maintained and fine, but its
 only real convenience is installing wrangler, which `npx` does anyway, and it

@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-import { handleAgent, CAPS, lookupCorpus } from '../worker/index.js'
+import { handleAgent, CAPS, lookupCorpus, PROMPT_IS_STUB } from '../worker/index.js'
 import { createGate } from '../worker/allowlist.js'
 import { buildPrompt } from '../scripts/build-prompt.mjs'
 
@@ -23,6 +23,19 @@ import { buildPrompt } from '../scripts/build-prompt.mjs'
  *
  * The upstreams are written to be HOSTILE. A cooperative fake model proves
  * nothing about a gate whose whole job is to survive an uncooperative one.
+ *
+ * AND NO CORPUS, ON A RUNNER. worker/index.js imports prompt.generated.js at
+ * module load, and that file is built from corpus/, which is gitignored and
+ * will never be on CI. So CI builds a stub instead
+ * (`scripts/build-prompt.mjs --allow-stub`) and everything above still runs:
+ * none of it reads the prompt, because none of those behaviours depend on
+ * whose life is in it.
+ *
+ * What the stub cannot do is stand in for the real corpus in the last section
+ * of this file, which asserts things ABOUT the corpus -- that no withheld
+ * term survives into the prompt, that no private answer is quoted. Asserting
+ * those against invented data would be a test that passes by construction and
+ * says nothing, so those skip, loudly, with `haveCorpus`.
  */
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -191,6 +204,25 @@ test('with no key and no injected upstream it declines instead of throwing', asy
   expect(res.status).toBe(503)
   const body = await res.json()
   expect(body.stop_reason).toBe('end_turn')
+})
+
+test('a stub prompt refuses the model outright rather than improvising', async () => {
+  test.skip(!PROMPT_IS_STUB, 'this checkout built the real prompt from corpus/')
+  /*
+   * The objection to letting a stub exist at all was that it would deploy an
+   * Evan who confidently knows nothing. This is the assertion that the
+   * objection is answered: with a key present -- so the key check above is
+   * NOT what stops it -- and a real upstream, the Worker still declines.
+   *
+   * Only meaningful on a machine that has no corpus, which is why it skips
+   * rather than faking one. On CI it is the test that runs.
+   */
+  const res = await handleAgent(
+    post({ sessionId: 's', messages: [say('who are you?')] }),
+    { ANTHROPIC_API_KEY: 'sk-not-used' })
+  expect(res.status).toBe(503)
+  const body = await res.json()
+  expect(body.content[0].text).toMatch(/without my corpus/i)
 })
 
 /* ------------------------------------------------------------------ *

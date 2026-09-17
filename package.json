@@ -28,6 +28,7 @@
     "postinstall": "node scripts/build-textures.mjs --ensure && node scripts/build-sounds.mjs --ensure",
     "prompt": "node scripts/build-prompt.mjs",
     "prompt:check": "node scripts/build-prompt.mjs --check",
+    "prompt:ci": "node scripts/build-prompt.mjs --allow-stub",
     "test": "playwright test -c test/playwright.config.js",
     "smoke": "playwright test -c test/playwright.config.js test/01-world.spec.js test/43-browsers.spec.js --project=chromium",
     "build:deploy": "rm -rf dist && node scripts/build-textures.mjs --source=ce --no-cape && npm run sounds:free && vite build && rm -rf dist/terrain && cp deploy/_headers deploy/.assetsignore dist/ && node scripts/check-deploy-assets.mjs",

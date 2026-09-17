@@ -3,40 +3,71 @@
 # THE DEPLOY STEP CANNOT FIRE TODAY. It is guarded on CLOUDFLARE_API_TOKEN
 # being non-empty, and that secret does not exist in this repository. Until
 # someone adds it this workflow is a CI job that happens to end in a skipped
-# step, which is the point: the pipeline gets exercised on every push long
-# before anything is published, so going live is not also the first time any of
-# this ran.
+# step, which is the point: the pipeline gets exercised long before anything is
+# published, so going live is not also the first time any of this ran.
 #
 # Adding the secret is the switch. docs/DEPLOYMENT.md says where it goes and
 # what scopes the token needs.
+#
+# WHY THIS IS FOUR JOBS AND NOT ONE, WHICH IS THE ONLY STRUCTURAL CHANGE HERE
+# --------------------------------------------------------------------------
+# The rationale above was written when a push to main was a rare event. It
+# stopped being one: a dozen agents push in a day, every push ran npm ci, a
+# forced texture build, a Playwright install, the WHOLE ~900-test suite across
+# two engines, a full build:deploy and a wrangler dry run -- and then
+# cancel-in-progress killed most of them part-way through, so the common
+# outcome of all that work was no answer at all. Two hours is also long enough
+# after a commit that nobody is still looking.
+#
+# So the pipeline is split by what it is worth paying for and when:
+#
+#   smoke    every push to main. Build the site, then run the 8-second spec
+#            pair. Fast enough to be read.
+#   package  dispatch and tags. Everything that turns a checkout into a
+#            deployable dist/, and the redistribution check over it.
+#   suite    dispatch and tags. The whole ~900-test suite, both engines.
+#   publish  dispatch and tags, and only if package AND suite are green.
+#
+# package and suite run in PARALLEL and neither needs the other, which is new
+# and matters: build:deploy breakage is now known in about three minutes
+# instead of behind two hours of tests. It was broken for hours today, and the
+# reason nobody knew is that nothing ever got far enough to say so.
+#
+# The intent above is intact. Nothing publishes until both halves have run, so
+# going live is still not the first time any of it ran. What changed is that
+# the repo stops paying for the full rehearsal on every commit.
 
 name: deploy
 
 on:
   push:
     branches: [main]
-  # So Evan can trigger the first real deploy from the Actions tab the moment
-  # he adds the secret, without having to invent a commit.
+    # A tag is the deliberate "this one matters" signal, and it gets the whole
+    # pipeline. GitHub matches one filter or the other, never both, so a
+    # branch push runs smoke and a tag push runs the full three.
+    tags: ['v*']
+  # So Evan can run the whole thing on demand -- to prove a change to this
+  # file, or to trigger the first real deploy the moment he adds the secret,
+  # without having to invent a commit.
   workflow_dispatch:
 
-# A deploy is a mutation of one live site, so two of them racing is never what
-# anyone wanted. An in-flight run for an older commit is cancelled rather than
-# queued -- the newer commit is about to overwrite it anyway.
-concurrency:
-  group: deploy
-  cancel-in-progress: true
-
 jobs:
-  deploy:
+  # ------------------------------------------------------------------ #
+  # Every push. The fast half.
+  # ------------------------------------------------------------------ #
+  smoke:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
     runs-on: ubuntu-latest
 
-    # Mapped to job env rather than read inline in the `if:`, because the
-    # secrets context is not reliably available in a step-level condition and
-    # the env context always is. An absent secret becomes an empty string here,
-    # which is exactly the test we want.
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    # Keyed on the COMMIT, not on a shared name. The old workflow-wide
+    # `group: deploy` with cancel-in-progress was right for a deploy -- two
+    # mutating one live site is never what anyone wanted -- and wrong here,
+    # where it meant the twelfth push of the day was the only one that ever
+    # got an answer. A per-sha group cancels nothing except a re-run of the
+    # same commit, so every commit gets its own result.
+    concurrency:
+      group: smoke-${{ github.sha }}
+      cancel-in-progress: true
 
     steps:
       - uses: actions/checkout@v5
@@ -54,47 +85,57 @@ jobs:
       # them. That is load-bearing, not incidental.
       - run: npm ci
 
-      # Belt and braces over that postinstall. --ensure is a no-op when a build
-      # already looks complete, and "looks complete" is a heuristic; a forced
-      # build costs about a second and removes the class of failure where the
-      # site deploys with missing-texture checkerboard everywhere.
-      #
-      # `:ce` rather than plain `textures`, which now means "rebuild whatever
-      # is installed". A clean runner has nothing installed and would fall back
-      # to CE anyway; naming it is how this step stays a forced build rather
-      # than a no-op that happens to be right.
-      - run: npm run textures:ce
+      # Cheap, and it proves the thing that broke CI in the first place: that a
+      # checkout WITHOUT corpus/ can still produce a Worker that loads. See the
+      # long note on the same step in `suite` below.
+      - run: npm run prompt:ci
 
-      # --with-deps installs the system libraries Chromium needs on a bare
-      # ubuntu runner. Only chromium: the suite runs one browser, and the
-      # other two are a two-minute download for nothing.
       - run: npx playwright install --with-deps chromium
 
-      # The WHOLE suite, including test/12-sounds.spec.js. That spec used to be
-      # excluded because it arms an audio harness against a manifest only a
-      # local Minecraft install could produce. The committed CC0/CC-BY set is
-      # what a runner builds, so it gets real audio and the exclusion is gone
-      # along with its reason.
-      #
-      # This exclusion and the silent deployed site are the same root cause,
-      # and both disappear the day a redistributable sound set is committed.
-      # Until then the honest choice is a green CI that is explicit about what
-      # it skipped, rather than a red one everybody learns to ignore.
-      #
-      # Matched on the filename rather than the describe titles because
-      # Playwright's --grep runs against the whole title path, filename
-      # included, and a filename is the stabler half of that.
-      #
-      # CI is what tells playwright.config.js not to reuse an existing dev
-      # server. The runner has none, but a config that behaves differently in
-      # CI should be given the flag it is looking for.
-      - run: npm run test
+      - run: npm run build
+
+      # test/01-world.spec.js and test/43-browsers.spec.js, chromium only.
+      # This pair exists because a shader that failed to compile once shipped
+      # an invisible world past three agents reporting green -- it is the one
+      # class of failure that is both catastrophic and invisible to a diff,
+      # and it costs eight seconds to rule out.
+      - run: npm run smoke
         env:
           CI: 'true'
 
+  # ------------------------------------------------------------------ #
+  # Dispatch and tags. Can this checkout be turned into a deployable dist/?
+  # ------------------------------------------------------------------ #
+  package:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: package-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      # `wrangler deploy --dry-run` BUNDLES worker/index.js, which imports
+      # worker/prompt.generated.js, which is gitignored. Without this step the
+      # dry run below fails for exactly the reason the test suite used to.
+      # Nothing here is published, so the stub is allowed; see the header of
+      # scripts/build-prompt.mjs and the strict build in `publish`.
+      - run: npm run prompt:ci
+
       # NOT `npm run build`. build:deploy also builds textures and the free
       # sound set into public/ (both are gitignored, so a clean checkout has
-      # neither) and copies deploy/_headers and deploy/.assetsignore in.
+      # neither) and copies deploy/_headers and deploy/.assetsignore in. It
+      # ends in scripts/check-deploy-assets.mjs, which is the assertion that
+      # only redistributable art is about to ship.
       - run: npm run build:deploy
 
       # The real check that dist/ is whole, running on the machine that would
@@ -117,13 +158,138 @@ jobs:
           # the rule to keep in step with the first.
           echo "dist: $(find dist -type f | wc -l) files, $(du -sh dist | cut -f1)"
 
-      # Runs on every push, including today's, so the config is proven to parse
-      # and dist/ is proven to resolve whether or not the deploy below fires.
+      # Proves the config parses and dist/ resolves, without an account.
       - name: Validate wrangler config
         run: npx --yes wrangler@4 deploy --dry-run
 
-      # The switch. Skipped, loudly, until the secret exists.
+  # ------------------------------------------------------------------ #
+  # Dispatch and tags. The whole suite, both engines.
+  # ------------------------------------------------------------------ #
+  suite:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    # The suite is ~900 tests across two engines under software GL. The
+    # default is six hours; this is a bound that means something.
+    timeout-minutes: 180
+
+    concurrency:
+      group: suite-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      # THE STEP THAT WAS MISSING, AND THE WHOLE REASON CI HAD NEVER PASSED.
       #
+      # test/55-ai-evan-brain.spec.js imports worker/index.js, which imports
+      # worker/prompt.generated.js AT MODULE LOAD. That file is built from
+      # corpus/ and both are gitignored, because the corpus is Evan's personal
+      # data and this repo is public -- so a runner has neither and Playwright
+      # could not even collect the spec. Every run since the Worker landed
+      # died four seconds in, on every commit, structurally.
+      #
+      # `prompt:ci` is `build-prompt.mjs --allow-stub`: with corpus/ present it
+      # builds the real prompt, and without it writes an obviously-fake one so
+      # the Worker loads and the spec can exercise the caps, the loop and the
+      # output gate for real. The tests that assert things ABOUT the corpus
+      # skip, by name, with a stated reason. Same argument as the sound set
+      # below: a green CI explicit about what it skipped beats a red one
+      # everybody learns to ignore.
+      - run: npm run prompt:ci
+
+      # Belt and braces over npm ci's postinstall. --ensure is a no-op when a
+      # build already looks complete, and "looks complete" is a heuristic; a
+      # forced build costs about a second and removes the class of failure
+      # where the site deploys with missing-texture checkerboard everywhere.
+      #
+      # `:ce` rather than plain `textures`, which now means "rebuild whatever
+      # is installed". A clean runner has nothing installed and would fall back
+      # to CE anyway; naming it is how this step stays a forced build rather
+      # than a no-op that happens to be right.
+      #
+      # Note it is NOT `--no-cape`, which is what build:deploy uses. That is
+      # also why build:deploy lives in its own job rather than earlier in this
+      # one: test/22-evan-skin.spec.js reads the cape, and a build:deploy run
+      # before the suite would quietly pull it out from under that spec.
+      - run: npm run textures:ce
+
+      # --with-deps installs the system libraries the browsers need on a bare
+      # ubuntu runner. Both engines, because the suite runs both.
+      - run: npx playwright install --with-deps chromium webkit
+
+      # The WHOLE suite, including test/12-sounds.spec.js. That spec used to be
+      # excluded because it arms an audio harness against a manifest only a
+      # local Minecraft install could produce. The committed CC0/CC-BY set is
+      # what a runner builds, so it gets real audio and the exclusion is gone
+      # along with its reason.
+      #
+      # CI is what tells playwright.config.js not to reuse an existing dev
+      # server. The runner has none, but a config that behaves differently in
+      # CI should be given the flag it is looking for.
+      - run: npm run test
+        env:
+          CI: 'true'
+
+  # ------------------------------------------------------------------ #
+  # The switch. Skipped, loudly, until the secret exists.
+  # ------------------------------------------------------------------ #
+  publish:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    needs: [package, suite]
+    runs-on: ubuntu-latest
+
+    # A deploy is a mutation of one live site, so two of them racing is never
+    # what anyone wanted. This is the group that keeps the original rule.
+    concurrency:
+      group: deploy
+      cancel-in-progress: true
+
+    # Mapped to job env rather than read inline in the `if:`, because the
+    # secrets context is not reliably available in a step-level condition and
+    # the env context always is. An absent secret becomes an empty string here,
+    # which is exactly the test we want.
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - uses: actions/checkout@v5
+        if: env.CLOUDFLARE_API_TOKEN != ''
+
+      - uses: actions/setup-node@v5
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+        if: env.CLOUDFLARE_API_TOKEN != ''
+
+      # `prompt`, NOT `prompt:ci`. THE DIFFERENCE IS THE POINT.
+      #
+      # This is the only job that puts something in front of a visitor, and it
+      # is therefore the one job that may not settle for a stub. Without
+      # corpus/ this step dies with a message naming corpus/README.md, which
+      # is the correct failure: a runner cannot build Evan's brain, because
+      # his brain is deliberately not in this repository.
+      #
+      # That is worth saying plainly rather than discovering: a deploy FROM CI
+      # cannot work today even once the Cloudflare secret exists. The path
+      # that works is `npm run deploy` on Evan's machine, where corpus/ lives.
+      # docs/DEPLOYMENT.md carries the options for changing that.
+      - run: npm run prompt
+        if: env.CLOUDFLARE_API_TOKEN != ''
+
+      - run: npm run build:deploy
+        if: env.CLOUDFLARE_API_TOKEN != ''
+
       # Plain npx rather than cloudflare/wrangler-action: one fewer third party
       # holding a token that can publish to Evan's account, and the action's
       # only real convenience is installing wrangler, which npx does anyway.
@@ -134,5 +300,5 @@ jobs:
       - name: Deploy skipped
         if: env.CLOUDFLARE_API_TOKEN == ''
         run: |
-          echo "::notice::Built and verified, not deployed."
+          echo "::notice::Built, packaged and tested. Not deployed."
           echo "::notice::Add repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to go live. See docs/DEPLOYMENT.md."
