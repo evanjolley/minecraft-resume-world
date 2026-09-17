@@ -49,6 +49,7 @@
 import { Mesh } from '@babylonjs/core/Meshes/mesh.js'
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData.js'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js'
+import { installShapeTargeting } from './targeting.js'
 
 /* ------------------------------------------------------------------ *
  * Shapes.
@@ -860,6 +861,111 @@ let shapeLookup = []
  */
 export const shapeBoxesFor = (id) => shapeLookup[id]
 
+/* ------------------------------------------------------------------ *
+ * The THIRD view of the one table: what the crosshair aims at.
+ *
+ * Collision has read these boxes since non-cube blocks landed; targeting did
+ * not, and that is the entire bug src/targeting.js exists to close -- you
+ * could break a slab by clicking the air above it, because noa's picker only
+ * ever asked whether a voxel's id was targetable. Both halves read this file
+ * now, which is the only arrangement in which they cannot disagree.
+ *
+ * WHICH IS ALSO WHAT VANILLA DOES, and it is worth knowing that vanilla has
+ * THREE shapes per block, not two. `ClipContext.Block.OUTLINE` picks against
+ * `getShape`, `COLLIDER` collides against `getCollisionShape`, and they are
+ * different functions -- a torch is `noCollission()`, so its collision shape
+ * is `Shapes.empty()` while its outline shape is a real box you must aim at.
+ * Read in 1.21.8: `world/level/ClipContext.java` and
+ * `world/level/block/state/BlockBehaviour.java`.
+ *
+ * So this view differs from the collision one in exactly two ways.
+ *
+ * 1. PASS-THROUGH SHAPES ARE IN IT. You walk through a torch and you still
+ *    have to be able to mine one, so the collision view's holes are filled
+ *    back in here. This is the distinction the PASS_THROUGH_SHAPES note
+ *    above is about, and it is vanilla's `getShape` vs `getCollisionShape`
+ *    split exactly: opting out of collision is not opting out of existing.
+ *
+ * 2. A ROTATED SHAPE DECLARES ITS OWN. A wall torch's boxes are the
+ *    PRE-ROTATION post -- a 2/16 sliver pressed flat against the wall --
+ *    because buildShapeMesh turns the finished vertices rather than the boxes
+ *    (a box list cannot hold a rotation; that is what axis-aligned means).
+ *    Aim at the torch you can SEE, leaning out into the room, and that sliver
+ *    is not where you are pointing.
+ *
+ *    Vanilla has the same mismatch and does not solve it by deriving anything
+ *    from the model: `WallTorchBlock` simply declares an AABB. That is what
+ *    TARGET_BOXES below is. The rule is enforced rather than remembered --
+ *    see the throw under the table.
+ * ------------------------------------------------------------------ */
+
+/*
+ * Vanilla's own outline boxes, which are NOT the model and are deliberately
+ * fatter than it. 1.21.8 `BaseTorchBlock.java` is
+ *
+ *     Block.column(4, 0, 10)   ==   box(6, 0, 6, 10, 10, 10)
+ *
+ * while the model is a 2-pixel post from [7,0,7] to [9,10,9]. Four pixels
+ * wide to aim at, two pixels wide to look at: a torch you can actually click
+ * across a room. Reproducing the model here instead would have been the
+ * obvious thing and would have made torches HARDER to hit than vanilla.
+ *
+ * Keyed by shape key, in the same block-local 0..1 coordinates as SHAPE_BOXES.
+ */
+const TARGET_BOXES = {
+  torch: [[6 / 16, 0, 6 / 16, 10 / 16, 10 / 16, 10 / 16]],
+}
+
+/*
+ * 1.21.8 `WallTorchBlock.java`:
+ *
+ *     Shapes.rotateHorizontal(Block.boxZ(5, 3, 13, 11, 16))
+ *
+ * which expands for facing=north to box(5.5, 3, 11, 10.5, 13, 16): five
+ * pixels wide, ten tall starting at y=3, and five DEEP measured inward from
+ * the wall. That depth is the tilt's reach written down as a box.
+ *
+ * Derived from the FACINGS vector rather than from the facing's NAME, for the
+ * same reason wallTorch() above is: this world's east is -x, so a table typed
+ * out per name would be mirrored the moment anyone trusted it.
+ */
+for (const facing of Object.keys(FACINGS)) {
+  const d = FACINGS[facing]
+  const a = d[0] ? 0 : 2       // the axis the torch points along
+  const s = d[a]               // and which way along it
+  const p = a === 0 ? 2 : 0    // the other horizontal axis
+  const wall = (1 - s) / 2     // 1 when it points -axis, 0 when it points +
+  const lo = [0, 0, 0], hi = [0, 0, 0]
+  // Five pixels inward from the wall, whichever wall that is.
+  lo[a] = wall ? 11 / 16 : 0
+  hi[a] = wall ? 1 : 5 / 16
+  lo[1] = 3 / 16; hi[1] = 13 / 16
+  lo[p] = 5.5 / 16; hi[p] = 10.5 / 16
+  TARGET_BOXES[`torch_wall_${facing}`] = [[...lo, ...hi]]
+}
+
+/*
+ * The invariant, checked at load rather than remembered. A rotated shape's
+ * box list describes a shape that is not where it is drawn, so targeting it
+ * by that list would put the crosshair somewhere the player cannot see. The
+ * next rotated shape to land in this file gets a stack trace instead of a
+ * hitbox glued to a wall.
+ */
+for (const key of Object.keys(SHAPE_ROTATION)) {
+  if (!TARGET_BOXES[key]) {
+    throw new Error(`rotated shape "${key}" must declare TARGET_BOXES, or its hitbox is a lie`)
+  }
+}
+
+/** @type {any[]} sparse: block id -> the boxes the crosshair tests against. */
+let targetLookup = []
+
+/**
+ * The sub-boxes a block id is TARGETED as: undefined for anything that fills
+ * its whole cell, which the picker treats as a plain voxel.
+ */
+export const targetShapeBoxesFor = (id) => targetLookup[id]
+
 /**
  * @param {*} noa
  * @param {any[]} shapeById sparse array: block id -> boxes, or undefined
@@ -874,6 +980,21 @@ export function installNonCubeCollision(noa, shapeById, passThrough = new Set())
    */
   const collideById = shapeById.map((boxes, id) => (passThrough.has(id) ? undefined : boxes))
   shapeLookup = collideById
+
+  /*
+   * The targeting view, built from the same array. Every id keeps its boxes
+   * -- including the pass-through ones, which is the point -- unless its
+   * shape declared a target box of its own.
+   *
+   * Joined by the boxes ARRAY INSTANCE rather than by shape key, which is
+   * what lets this happen here with no help from blocks.js: shapeById stores
+   * the very arrays SHAPE_BOXES holds, so identity is a free join that cannot
+   * drift out of step with a renamed key.
+   */
+  const targetOf = new Map()
+  for (const key of Object.keys(TARGET_BOXES)) targetOf.set(SHAPE_BOXES[key], TARGET_BOXES[key])
+  targetLookup = shapeById.map((boxes) => targetOf.get(boxes) ?? boxes)
+  installShapeTargeting(noa, targetShapeBoxesFor)
   const physics = noa.physics
   const originalTick = physics.tick.bind(physics)
 
