@@ -41,9 +41,16 @@
  *     path, not into a bend, and the spawn clearing has to stay flat for the
  *     test rigs (see SPAWN_FLAT in land.js).
  *   - `h` is the height in blocks above the grass, and it is the other half
- *     of "it rises and falls". It runs -1 to +2 and it changes on a different
+ *     of "it rises and falls". It runs -1 to +1 and it changes on a different
  *     schedule from the bends, so the path does not conveniently crest on
  *     every corner.
+ *
+ *     IT RAN TO +2 AND THAT WAS TOO MUCH. A column is either at a height or
+ *     it is not -- there are no half blocks -- so a two-block rise with a
+ *     four-block feather is two visible terraces with a dirt cliff between
+ *     them, and at eye level you are walking in a trench with a wall beside
+ *     you. One block, feathered over six, is a rise you notice underfoot and
+ *     do not see the edges of.
  * ------------------------------------------------------------------------
  * CATMULL-ROM, specifically, and not a Bezier or a linear run.
  *
@@ -68,7 +75,7 @@ export const SPINE = [
   [154, 84, 0],
   [138, 92, 1],
   [114, 98, 1],
-  [106, 108, 2],  // west, for the school years (z=97) -- peaks late, highest
+  [106, 108, 1],  // west, for the school years (z=97) -- peaks late, highest
   [116, 118, 1],
   [140, 126, 0],
   [158, 134, 0],  // east, for Bilibili (z=129) -- the biggest swing
@@ -77,8 +84,8 @@ export const SPINE = [
   [138, 166, 0],
   [120, 176, 1],
   [110, 186, 1],  // west, for New York (z=183) -- peaks late and stays west
-  [124, 198, 2],
-  [148, 208, 2],
+  [124, 198, 1],
+  [148, 208, 1],
   [152, 220, 1],  // east, for San Francisco (z=215) -- peaks late, high
   [132, 232, 1],
   [114, 242, 0],  // west, for the climb (z=241)

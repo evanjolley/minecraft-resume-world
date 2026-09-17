@@ -151,12 +151,16 @@ function emptyModel() {
  * raised or sunken path takes a fraction of its height, falling off linearly,
  * and the result is a low mound the path runs over the top of.
  *
- * FOUR BLOCKS, not ten. A gentler falloff looks better in a screenshot from
- * above and costs four times the columns; at eye level you cannot tell, and
- * this pass has 65,536 columns and a copy-on-write clone for each one it
- * touches.
+ * SIX BLOCKS, and it was four until a screenshot at the top of the rise
+ * showed the difference. The feather rounds to whole blocks, so its width
+ * decides how many TERRACES a rise has: four blocks of falloff on a one-block
+ * rise is one step and reads as a mound, four on a two-block rise is two
+ * steps and reads as a staircase somebody built. Six is gentle enough that a
+ * one-block rise has no visible edge at all from the path. Not ten, because
+ * every column it touches is a column cloned out of the shared superflat
+ * array, and this pass already walks 65,536 of them.
  */
-const FEATHER = 4
+const FEATHER = 6
 function feather(model) {
   const src = []
   for (let i = 0; i < model.h.length; i++) if (model.h[i] !== 0) src.push(i)
@@ -195,18 +199,23 @@ function feather(model) {
  * Two noise fields at different scales, so the answer is neither a checker
  * nor a gradient: a slow one picks the region's character, a fast one breaks
  * it up inside the region.
+ *
+ * THE THRESHOLDS MOVED ONCE, after the first screenshot from spawn: stone and
+ * andesite together held a quarter of the surface and the path read as a
+ * PAVED ROAD -- which is the thing it is replacing. Stone is down to a
+ * sliver, and the ground the walker mostly sees is worn dirt.
  */
 function pathSurface(x, z) {
   const slow = smoothNoise(x, z, 17, 101)
   const fast = smoothNoise(x, z, 4.5, 202)
   const v = slow * 0.65 + fast * 0.35
-  if (v < 0.30) return 'coarse_dirt'
-  if (v < 0.44) return 'rooted_dirt'
-  if (v < 0.56) return 'gravel'
-  if (v < 0.66) return 'dirt'
-  if (v < 0.76) return 'andesite'
-  if (v < 0.86) return 'coarse_dirt'
-  if (v < 0.93) return 'stone'
+  if (v < 0.32) return 'coarse_dirt'
+  if (v < 0.47) return 'rooted_dirt'
+  if (v < 0.58) return 'dirt'
+  if (v < 0.70) return 'gravel'
+  if (v < 0.80) return 'coarse_dirt'
+  if (v < 0.88) return 'andesite'
+  if (v < 0.94) return 'podzol'
   return 'moss_block'
 }
 

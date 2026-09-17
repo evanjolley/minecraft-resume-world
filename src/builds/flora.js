@@ -40,7 +40,15 @@ import { KIND, at, onMap, hash, smoothNoise, nearSpawn, SPAWN_CLEAR } from './la
 /** How far from the path anything may grow. Two blocks of clear shoulder
  *  everywhere, and up to five where the noise thins the wood out. */
 function margin(x, z) {
-  return 2 + Math.round(3 * smoothNoise(x, z, 33, 313))
+  /*
+   * FOUR TO EIGHT, and it was two to five until the first screenshot from
+   * spawn. Trees at two blocks are a palisade: the canopy closes overhead,
+   * the path becomes a tunnel, and "less cramped than the previous build" is
+   * exactly what it is not. The number that matters is not the gap to the
+   * trunk, it is the gap to the CANOPY, which is another two or three blocks
+   * in on every tree.
+   */
+  return 4 + Math.round(4 * smoothNoise(x, z, 33, 313))
 }
 
 /** Distance in columns to the nearest path, spur or bridge, capped -- a
@@ -173,7 +181,10 @@ export function plantForest(s, model) {
 
       // Nothing may lean over a plot or into the water: a canopy is 4 blocks
       // across and the stamper's forbid guard would (correctly) throw.
-      if (!clearOfReserved(model, x, z, 4)) continue
+      /* SIX, not four. Four is the canopy radius, which cleared the plot
+       * boundary and then stood a tree directly in front of a marker -- the
+       * one thing in a plot that has to be legible from the path. */
+      if (!clearOfReserved(model, x, z, 6)) continue
 
       tree(s, x, z, model.h[j], species(x, z), 0)
     }

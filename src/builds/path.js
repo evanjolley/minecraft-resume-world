@@ -145,9 +145,14 @@ export function drawPath(model, samples, surfaceOf) {
  */
 export function drawSpurs(model, samples, surfaceOf) {
   for (const c of CHAPTERS) {
-    const west = c.side === 'LEFT'          // LEFT is west; see plots.js
+    /* LEFT is the LOW-x side, which in this engine is EAST: Babylon is
+     * left-handed, facing +z puts +x on your right, and the visitor walks
+     * south. See HEADING in test/helpers/world.js, measured in
+     * test/25-orientation.spec.js. The variable is named for the axis rather
+     * than the compass because every coordinate below is an index. */
+    const lowX = c.side === 'LEFT'
     const zTarget = c.z0 + 6                // beside the marker, near the north edge
-    const edgeX = west ? c.x1 + 1 : c.x0 - 1
+    const edgeX = lowX ? c.x1 + 1 : c.x0 - 1
 
     // The point on the path nearest the plot's entrance, which is what makes
     // the spur the SHORT way in rather than a diagonal across the field.
@@ -218,7 +223,16 @@ export function lampPosts(s, model, samples) {
     if (!onMap(x, z)) return
     const j = at(x, z)
     const k = model.kind[j]
-    if (k === KIND.PLOT || k === KIND.WATER || k === KIND.SHALLOW || k === KIND.BRIDGE) return
+    /*
+     * AND NOT ON THE PATH ITSELF, which the first version got wrong in the
+     * most visible place there is: the offset puts the post outside the
+     * measured width, but the SPILL pass widens the path a block or two at
+     * random, so a post landed dead centre of the path four blocks from
+     * spawn -- the first thing any visitor saw, and a thing you had to walk
+     * around. The offset is where a post WANTS to be; this is the check that
+     * it ended up somewhere a post can stand.
+     */
+    if (k !== KIND.FIELD && k !== KIND.BANK) return
     if (nearSpawn(x, z, 9)) return
     since = 0
     side = -side

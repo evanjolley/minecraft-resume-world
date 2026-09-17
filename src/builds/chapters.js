@@ -94,9 +94,11 @@ export function markChapters(world, model) {
   for (const c of CHAPTERS) {
     const s = stamper(world, c, { label: `${c.id}/${c.marker}` })
     const w = c.x1 - c.x0, d = c.z1 - c.z0      // last local index on each axis
-    const west = c.side === 'LEFT'               // LEFT is west; see plots.js
+    /* LEFT is the LOW-x side of the path, which is EAST in this engine --
+     * +x is west here. See the note in src/builds/path.js. */
+    const lowX = c.side === 'LEFT'
     const doorZ = 6                              // where drawSpurs aims: z0 + 6
-    const doorX = west ? w : 0                   // the edge the path is on
+    const doorX = lowX ? w : 0                   // the edge the path is on
 
     /* 1. The border: one ring at ground level, with the entrance left out. */
     for (let x = 0; x <= w; x++) {
@@ -111,8 +113,17 @@ export function markChapters(world, model) {
 
     /* 2. The posts. Every seventh block, skipping the entrance, and skipped
      *    again at random so the line is not a rhythm. */
+    const tw0 = textWidth(c.marker)
+    const mx0 = lowX ? Math.max(0, w - tw0) : 0
     const post = (x, z) => {
       if (x === doorX && Math.abs(z - doorZ) <= 2) return
+      /*
+       * AND NOT IN FRONT OF THE WORD. The border runs along z = 0 and the
+       * marker stands at z = 2, so a post on the north edge is two blocks in
+       * front of the letters and from the path it lands in the middle of
+       * them. The first screenshot had one through the second A of OMAHA.
+       */
+      if (z === 0 && x >= mx0 - 1 && x <= mx0 + tw0) return
       if (hash(c.x0 + x, c.z0 + z, 307) < 0.2) return
       s.pillar(x, z, 0, 1, POST)
     }
@@ -124,7 +135,7 @@ export function markChapters(world, model) {
      *    z the spur was aimed at, so stepping off the spur is stepping in. */
     for (let z = doorZ - 1; z <= doorZ + 1; z++) {
       s.set(doorX, -1, z, 'gravel')
-      s.set(west ? w - 1 : 1, -1, z, 'gravel')
+      s.set(lowX ? w - 1 : 1, -1, z, 'gravel')
     }
 
     /* 4. The marker. */
@@ -136,7 +147,7 @@ export function markChapters(world, model) {
     }
     /* Pushed to the end of the plot NEAREST THE PATH, so it is the first
      * thing in the plot that comes into view rather than the last. */
-    const x0 = west ? Math.max(0, w - tw) : 0
+    const x0 = lowX ? Math.max(0, w - tw) : 0
     /* Two rows in from the north edge: clear of the border ring, and far
      * enough forward that the backing wall does not eat the corner post. */
     const zBack = 3, zFace = 2
@@ -159,7 +170,7 @@ export function markChapters(world, model) {
      * the bottom of something, with not one block of the climb decided.
      */
     if (c.id === 'ch7') {
-      const px = west ? w - 12 : 8
+      const px = lowX ? w - 12 : 8
       s.rect([px - 2, doorZ + 4], [px + 2, doorZ + 8], -1, 'polished_andesite')
       for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) {
         s.pillar(px + dx, doorZ + 6 + dz, 0, 1, POST)

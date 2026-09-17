@@ -251,10 +251,14 @@ export const LAND = {
  * them, so the walk from one spur mouth to the next is 45 to 60 blocks of
  * path. The walk between chapters is the point.
  *
- * `side` is which hand the plot falls on as you walk SOUTH: LEFT is east,
- * RIGHT is west. (In the archive you walked north and LEFT was west. The
- * words follow the visitor, not the compass -- which is why `side` is a
- * label and every coordinate below is an index.)
+ * `side` is which hand the plot falls on as you walk SOUTH, and the compass
+ * here is not the one you expect: +x is WEST in this engine (Babylon is
+ * left-handed, so facing +z puts +x on your right -- see HEADING in
+ * test/helpers/world.js, measured in test/25-orientation.spec.js). So LEFT is
+ * the low-x side, which is EAST, and RIGHT is high-x, which is west. In the
+ * archive you walked north and the hands were the other way round. The words
+ * follow the visitor, not the compass, which is why `side` is a label and
+ * every coordinate below is an index.
  *
  * THE GAP AT z 142..171 IS THE RIVER, and it is the widest gap on the map by
  * 20 blocks. It falls between Bilibili and New York on purpose: the crossing
