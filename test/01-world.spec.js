@@ -382,16 +382,22 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
     expect(inside.above.ch1).toBeGreaterThan(4_000)
     delete inside.above.ch1
     expect(inside.above).toEqual({
-      ch2: 0, ch3: 0, ch4: 0, ch5: 0, ch6: 0,
+      ch2: 0, ch3: 0, ch4: 0, ch5: 0,
       /*
-       * EXCEPT CHAPTER 7, WHICH IS ALLOWED EXACTLY EIGHT BLOCKS. It is the
+       * EXCEPT THE CLIMB, WHICH IS ALLOWED EXACTLY EIGHT BLOCKS. It is the
        * parkour going up, and the brief for it is "reserve the footprint and
        * the start, build none of it" -- so it has a five by five pad (ground
        * level, invisible to this count) and four two-block posts around it,
        * which is what these eight are. A ninth would mean somebody started
        * building the climb.
+       *
+       * IT IS ch6 NOW, not ch7: Harvard and the school work merged into one
+       * chapter and everything after them moved up a number. The ids are read
+       * out of the plot table above, so this list is the only place the count
+       * is written down twice -- deliberately, because a spec that derives
+       * the answer from the table cannot catch the table losing a row.
        */
-      ch7: 8,
+      ch6: 8,
     })
   })
 

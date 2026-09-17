@@ -1,5 +1,5 @@
 /*
- * THE SEVEN PLOTS, SKETCHED AND LEFT EMPTY.
+ * THE SIX PLOTS, SKETCHED AND LEFT EMPTY.
  *
  * ------------------------------------------------------------------------
  * "Just build the path and sketch out the plots, no building within the plots
@@ -22,9 +22,10 @@
  *      two blocks.
  *
  * Nothing else. Every chapter is 52 x 24 of flat grass with a frame around
- * it, which is the deliverable.
+ * it, which is the deliverable -- except ch1, which is 66 x 63 and has a
+ * school on it.
  * ------------------------------------------------------------------------
- * WHY THE MARKER FACES NORTH, all seven of them, on both sides of the path.
+ * WHY THE MARKER FACES NORTH, all six of them, on both sides of the path.
  *
  * The visitor walks SOUTH. Everything ahead of them is +z, so a wall standing
  * on a plot's NORTH edge faces the oncoming walk -- and it does so whether
@@ -37,8 +38,8 @@
  *
  * It also makes the mirroring ONE question instead of two. Babylon is
  * left-handed and a row of pattern characters can run right-to-left for the
- * reader; with all seven markers in the same plane facing the same way, one
- * screenshot settles it for all seven. See MIRROR below.
+ * reader; with all six markers in the same plane facing the same way, one
+ * screenshot settles it for all six. See MIRROR below.
  * ------------------------------------------------------------------------
  * THE MARKER IS ITS OWN LIGHT. docs/builds/README.md: "a sign, a chart or a
  * plaque has to be its own light, or carry a lit valance" -- Harvard
@@ -88,7 +89,7 @@ const CHAPTER_BUILDS = {
  * right for somebody facing the wall depends on which way the wall faces, and
  * Babylon's handedness makes the answer non-obvious -- the README's own
  * warning says a spot check that happens to pass proves nothing about the
- * next wall, which is why all seven of these are the same wall.
+ * next wall, which is why all six of these are the same wall.
  *
  * FALSE was verified by screenshot: docs/land/marker-omaha.png reads OMAHA
  * from the path, left to right. If a future marker faces the other way, it
@@ -103,7 +104,7 @@ const BACKING = 'stone_bricks'
 const LETTER = 'glowstone'
 
 /**
- * Frame and label all seven chapters.
+ * Frame and label all six chapters.
  *
  * Each gets its own stamper bound to its own rectangle, so the ordinary
  * bounds check does its ordinary job: chapter 3 cannot write into chapter 5
@@ -184,7 +185,7 @@ export function markChapters(world, model) {
     })
 
     /*
-     * CHAPTER 7 RESERVES ITS START AND NOTHING ELSE.
+     * THE CLIMB RESERVES ITS START AND NOTHING ELSE.
      *
      * It is a parkour going UP, visiting his other interests on the way, and
      * the brief is explicit: reserve the footprint and the start, build none
@@ -196,7 +197,7 @@ export function markChapters(world, model) {
     const fill = CHAPTER_BUILDS[c.id]
     if (fill) fill(stamper(world, c, { label: `${c.id}/build` }))
 
-    if (c.id === 'ch7') {
+    if (c.id === 'ch6') {
       const px = lowX ? w - 12 : 8
       s.rect([px - 2, doorZ + 4], [px + 2, doorZ + 8], -1, 'polished_andesite')
       for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) {

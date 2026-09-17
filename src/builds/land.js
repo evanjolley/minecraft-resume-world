@@ -1,5 +1,5 @@
 /*
- * THE LANDSCAPE: one winding path, one river, one bridge, and seven plots
+ * THE LANDSCAPE: one winding path, one river, one bridge, and six plots
  * that are deliberately empty.
  *
  * ------------------------------------------------------------------------
@@ -10,8 +10,8 @@
  * more space between them than previously... just build the path and sketch
  * out the plots, no building within the plots other than maybe a sign."
  *
- * So this module builds EVERYTHING EXCEPT the seven chapters, and the
- * stamper it uses is handed those seven rectangles as no-go zones (see
+ * So this module builds EVERYTHING EXCEPT the six chapters, and the
+ * stamper it uses is handed those six rectangles as no-go zones (see
  * `forbid` in src/builds/stamp.js). If a tree ever lands in Omaha, the world
  * fails to boot rather than quietly taking ground the owner was going to
  * build on.
@@ -317,7 +317,7 @@ export function stampLand(world, surfaceY) {
   /*
    * THE LANDSCAPE'S STAMPER, and the `forbid` list is the whole reason the
    * stamper grew the feature. Its plot is the entire 256 square -- a winding
-   * path has no smaller honest bounding box -- so the seven chapters are
+   * path has no smaller honest bounding box -- so the six chapters are
    * passed as rectangles it must not write into, and the guard that used to
    * mean "stay inside your plot" now means "stay out of theirs".
    */

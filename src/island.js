@@ -58,7 +58,7 @@
  * about download size and it has not been one since flatworld.js started
  * generating the ground. What decides it now is what has to fit. 128 was
  * "enough that the far side is a walk rather than a glance", which was true
- * of an empty field and false of seven plots on alternating sides of a
+ * of an empty field and false of six plots on alternating sides of a
  * winding path -- see the overworld row below for the arithmetic. The
  * barrier, the chunk callback and every spec read the size out of WORLDS, so
  * the number is a row in a table rather than a constant in a comment.

@@ -175,7 +175,7 @@ export const SPAWN_PATCH_Z = 120
  * grew. That world is the owner's archive and its coordinates are frozen.
  *
  * What follows is the survey of the world he is actually walking: a winding
- * path through a living landscape with seven chapter plots on alternating
+ * path through a living landscape with six chapter plots on alternating
  * sides, laid out across 256 blocks instead of 128. Same file, because this
  * is what the file is FOR -- the one place you look to find out what you are
  * allowed to write to -- and because both surveys share GROUND_Y, `plot()`,
@@ -227,9 +227,9 @@ export const LAND_SPAWN_Z = LAND_ORIGIN_Z
  * WHICH WOULD MAKE THE STAMPER'S BOUNDS CHECK MEANINGLESS, and that is the
  * problem this pass had to solve rather than shrug at. The check is what
  * stops one build writing into another's plot, and it is the only thing that
- * will protect the owner's seven chapters from a landscape pass that decides
+ * will protect the owner's six chapters from a landscape pass that decides
  * to plant a forest. So the stamper grew `forbid` (see src/builds/stamp.js):
- * the landscape's stamper is handed the seven chapter footprints as NO-GO
+ * the landscape's stamper is handed the six chapter footprints as NO-GO
  * rectangles and throws if a tree, a lamp or a spill of gravel lands in one.
  * The guard is inverted -- "everywhere except there" instead of "only here"
  * -- and it is exactly as loud.
@@ -240,7 +240,10 @@ export const LAND = {
 }
 
 /*
- * THE SEVEN CHAPTERS, north to south, alternating sides of the path.
+ * THE SIX CHAPTERS, north to south. There were seven until Harvard and the
+ * school work became one chapter, which is what the owner asked for -- they
+ * are the same years and the same subject, and two plots made a walk out of
+ * one stage of a life.
  *
  * 52 x 24 each -- a touch smaller than the archive's 56 x 28, which is what
  * the owner asked for -- and MUCH further apart. (ch1 is the exception and
@@ -269,11 +272,38 @@ export const LAND = {
  * is the move to the city, and a bridge means more when what it separates is
  * two chapters rather than two fields.
  *
- * CHAPTER 7 CLAIMS THE AIR, which no other plot does. It is a parkour going
+ * CHAPTER 6 CLAIMS THE AIR, which no other plot does. It is a parkour going
  * UP, so its allocation is the same 52 x 24 footprint and the full build
  * height above it -- local y 0..+60, the ceiling being GROUND_Y + 64. Nothing
  * enforces the vertical claim because nothing else builds up there; it is
  * written down so that whoever plants a tree near it knows what is coming.
+ *
+ * ------------------------------------------------------------------------
+ * THE MERGE, and the one thing about it that did not come out as promised.
+ *
+ * Harvard (old ch2, RIGHT) and School work (old ch3, LEFT) are now one
+ * chapter. The merged row keeps HARVARD'S rectangle and HARVARD'S side, and
+ * old ch3's 52 x 24 at z 86..109 goes back to being landscape -- which is
+ * where the birch forest between the two chapters now has room to be a
+ * forest instead of a verge.
+ *
+ * WHY THE MERGED ROW TOOK THE NORTHERN RECTANGLE AND NOT THE SOUTHERN ONE:
+ * chapter 1 is 63 rows deep and ends at z = 84. A merged chapter at z 86 is
+ * one block south of the chapter before it, on the other side of a path that
+ * has no room to swing between them. At z 54 it overlaps ch1 in z and sits
+ * across the path from it, which is what every other pair on this walk does.
+ *
+ * AND THE SIDES NO LONGER ALTERNATE PERFECTLY, which is arithmetic and not a
+ * choice. Seven plots alternating L R L R L R L lose one from the middle;
+ * whichever of the pair survives, its two neighbours were on opposite sides
+ * of it and one of them now matches it. The sequence is L R R L R L. The
+ * doubled hand is the merged chapter and Bilibili, 33 rows apart in z with
+ * the path swinging from x = 154 out to x = 106 and back between them -- so
+ * it is not a hand a walker can feel. The alternative was mirroring four
+ * empty plots across the map and re-cutting the whole spine, which is a
+ * bigger change than the merge and one the owner did not ask for ("dont
+ * change the plots").
+ * ------------------------------------------------------------------------
  */
 export const CHAPTERS = [
   /*
@@ -290,21 +320,25 @@ export const CHAPTERS = [
    * drawPath THROWS if the path touches a plot, so x1 did not move by a
    * single block. North is spawn: the visitor lands at patch (128, 16) and
    * the first fifteen blocks of the walk are not this chapter's to take. West
-   * is empty to the world edge and south is empty for sixty-three rows
-   * before ch3 begins at z = 86, so both were free.
+   * is empty to the world edge and south is empty for sixty-three rows, so
+   * both were free.
    *
-   * THE GAP TO ch3 IS ONE BLOCK AT z = 85, deliberately not zero. The two
-   * rectangles must not share a row, or the landscape's `forbid` guard --
-   * which is what keeps a tree out of somebody's chapter -- would have to
-   * answer for a column that is in two plots at once.
+   * IT USED TO END ONE BLOCK SHORT OF ch3 at z = 85, deliberately, so that no
+   * column was in two plots at once and the landscape's `forbid` guard never
+   * had to answer for one. The merge took that neighbour away -- the ground
+   * from z 85 to z 117 on this side is landscape again -- but z1 stays at 84,
+   * because the school is built on it and nothing inside this plot moves.
    */
   { n: 1, id: 'ch1', label: 'Omaha, Nebraska',       marker: 'OMAHA',         side: 'LEFT',  x0: 14,  x1: 79,  z0: 22,  z1: 84 },
-  { n: 2, id: 'ch2', label: 'Harvard',               marker: 'HARVARD',       side: 'RIGHT', x0: 176, x1: 227, z0: 54,  z1: 77 },
-  { n: 3, id: 'ch3', label: 'School work',           marker: 'SCHOOL WORK',   side: 'LEFT',  x0: 28,  x1: 79,  z0: 86,  z1: 109 },
-  { n: 4, id: 'ch4', label: 'Bilibili',              marker: 'BILIBILI',      side: 'RIGHT', x0: 176, x1: 227, z0: 118, z1: 141 },
-  { n: 5, id: 'ch5', label: 'New York, No Logo',     marker: 'NEW YORK',      side: 'LEFT',  x0: 28,  x1: 79,  z0: 172, z1: 195 },
-  { n: 6, id: 'ch6', label: 'San Francisco, Patronus', marker: 'SAN FRANCISCO', side: 'RIGHT', x0: 176, x1: 227, z0: 204, z1: 227 },
-  { n: 7, id: 'ch7', label: 'The climb',             marker: 'THE CLIMB',     side: 'LEFT',  x0: 28,  x1: 79,  z0: 230, z1: 253 },
+  /* THE MERGED CHAPTER. The marker stays the one word because the font is
+   * A-Z and a space, 4 columns a character, and the plot is 52 wide: "HARVARD
+   * AND SCHOOL WORK" is 79 blocks and markChapters throws rather than
+   * truncating. The label is where both halves are written down. */
+  { n: 2, id: 'ch2', label: 'Harvard, school work',  marker: 'HARVARD',       side: 'RIGHT', x0: 176, x1: 227, z0: 54,  z1: 77 },
+  { n: 3, id: 'ch3', label: 'Bilibili',              marker: 'BILIBILI',      side: 'RIGHT', x0: 176, x1: 227, z0: 118, z1: 141 },
+  { n: 4, id: 'ch4', label: 'New York, No Logo',     marker: 'NEW YORK',      side: 'LEFT',  x0: 28,  x1: 79,  z0: 172, z1: 195 },
+  { n: 5, id: 'ch5', label: 'San Francisco, Patronus', marker: 'SAN FRANCISCO', side: 'RIGHT', x0: 176, x1: 227, z0: 204, z1: 227 },
+  { n: 6, id: 'ch6', label: 'The climb',             marker: 'THE CLIMB',     side: 'LEFT',  x0: 28,  x1: 79,  z0: 230, z1: 253 },
 ]
 
 /** Every overworld allocation by id. Separate from ALL above, because the two

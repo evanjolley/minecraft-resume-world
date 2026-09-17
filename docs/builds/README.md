@@ -11,7 +11,7 @@ is how you build yours.
 >
 > The **overworld** is a different place and a different survey: 256x256,
 > origin 128/16, a winding path instead of a road, a river with a bridge, a
-> forest, and **seven** chapter plots on alternating sides that are
+> forest, and **six** chapter plots that are
 > deliberately EMPTY — the owner is building those himself. Its table is the
 > second half of `src/builds/plots.js` (`CHAPTERS`, `LAND`, `LAND_SIZE`), its
 > builder is `src/builds/land.js`, and the visitor walks **south** with z
@@ -24,7 +24,7 @@ is how you build yours.
 >
 > **What is new in the stamper:** `forbid`, a list of no-go rectangles in
 > PATCH coordinates. The landscape's plot is the entire 256 square, because a
-> winding path has no smaller honest bounding box, so the seven chapters are
+> winding path has no smaller honest bounding box, so the six chapters are
 > handed to it as rectangles it must not write into. The guard that means
 > "stay inside your plot" for you means "stay out of theirs" for it.
 
