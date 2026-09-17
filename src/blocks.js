@@ -4,6 +4,7 @@ import {
   installPlacementOrientation, installThinInstanceUploadFix, SIGN_FACINGS,
   PAINTING_FACINGS, paintingShapeKey, PAINTING_DEPTH,
   SIGN_SEGMENTS, segmentFromHeading, segmentNormal, signShapeKey,
+  BAMBOO_VARIANTS, bambooShapeKey, BAMBOO_SAPLING_SHAPE,
 } from './blockMeshes.js'
 import { EMISSION } from './blockLight.js'
 
@@ -1368,10 +1369,156 @@ export const paintingNormal = (id) =>
 
 export { PAINTING_DEPTH }
 
+
+/* ------------------------------------------------------------------ *
+ * Bamboo, the plant. Thirteen ids, and the first plant in this world.
+ *
+ * WHAT WAS WRONG. The report was "bamboo texture is wrong" and the texture
+ * was fine. Ids 217-220 above are the 1.20 BAMBOO WOOD SET -- planks, mosaic,
+ * and `bamboo_block`, which is a solid cube of bundled canes in the same
+ * sense a hay bale is a cube of wheat. A column of seven of those is a
+ * bamboo-coloured pillar, which is what he was looking at, and it is not
+ * wrong art for the block it is. The bamboo PLANT is `minecraft:bamboo`,
+ * class `BambooStalkBlock` (not `BambooBlock` -- that name belongs to the
+ * wood-set cube), and it had never been registered here at all.
+ *
+ * THREE LEAF STATES, FOUR OFFSETS. `blockstates/bamboo.json` is a multipart
+ * that draws a cane plus, optionally, a leaf model; `LEAVES` is
+ * `BlockStateProperties.BAMBOO_LEAVES`, an enum of NONE / SMALL / LARGE
+ * (`state/properties/BambooLeaves.java`). The four offsets are this world's
+ * answer to vanilla's per-position XZ jitter -- blockMeshes.js has the
+ * derivation and the reason it has to become block ids.
+ *
+ * WHICH LEAF GOES WHERE, from `BambooStalkBlock.growBamboo`, because a
+ * generator needs it and it is not guessable: the TOP block of a stalk is
+ * LARGE, the one below it is SMALL, and everything under that is NONE. Each
+ * growth step promotes the new top to LARGE, demotes the old top to SMALL and
+ * clears the one below to NONE. So a believable stalk is
+ *
+ *     bamboo[_N]                 xN     the bare cane, from the ground up
+ *     bamboo_leaves_small[_N]    x1
+ *     bamboo_leaves_large[_N]    x1     the top
+ *
+ * all sharing ONE variant suffix, because vanilla hashes the offset from x
+ * and z only and a stalk whose segments disagree would zigzag.
+ *
+ * AGE IS NOT MODELLED, and it is the biggest thing left out. `AGE` is
+ * `AGE_1` -- 0 or 1 -- and it is stalk THICKNESS, not a growth timer: age 0
+ * is the 2-pixel cane `bamboo1_age0.json`, age 1 the 3-pixel
+ * `bamboo1_age1.json`. Vanilla thickens everything above the bottom two
+ * segments, so a mature stalk is almost all age 1, and age 1 is what is built
+ * here. The cost is that the foot of a stalk is a third too thick. The fix is
+ * three numbers in blockMeshes.js and twelve more ids, and it doubles the
+ * table to correct half a pixel per side on one block in ten.
+ *
+ * NEITHER IS GROWTH. No random ticks, no STAGE property, no bonemeal. A stalk
+ * here is placed at its full height by whatever puts it there, which is what
+ * a landscape needs; a stalk that grows while you watch is a simulation
+ * nobody asked for.
+ *
+ * HARDNESS 1 AND NO TOOL. `Blocks.java` chains `.instabreak().strength(1.0F)`
+ * on BAMBOO and the later call wins, so destroyTime is 1.0 -- the sign's
+ * number, not the torch's.
+ * ------------------------------------------------------------------ */
+const BAMBOO_ID = 684
+
+/** The three leaf states, in id order. Never reorder: these are ids. */
+const BAMBOO_LEAVES = ['none', 'small', 'large']
+
+/**
+ * Key for one cane. Variant 0 keeps the bare name `bamboo` -- the same
+ * arrangement the torch, the sign and the painting all have, where the
+ * canonical variant is the one a person would type.
+ */
+const bambooKey = (variant, leaves) =>
+  `bamboo${leaves === 'none' ? '' : `_leaves_${leaves}`}${variant ? `_${variant}` : ''}`
+
+/*
+ * ONE TEXTURE PER MESH IS THE CONSTRAINT THAT SHAPES THIS.
+ *
+ * buildShapeMesh takes a single material, so every box of a shape is cut from
+ * one 16x16 image. Vanilla's bamboo needs two: `bamboo_stalk` on the cane and
+ * `bamboo_large_leaves` on the fronds. Babylon submeshes and a MultiMaterial
+ * would express it and were rejected -- noa dedupes its instance managers by
+ * `mesh.geometry` identity and every non-cube in this world goes through that
+ * path, so a second material per mesh is a change to the shared meshing
+ * contract for one block.
+ *
+ * What is done instead is arithmetic, in scripts/build-textures.mjs: the leaf
+ * art with the cane's own columns stamped into it. It works because the two
+ * do not overlap in texture space. The mesher cuts UVs from box coordinates,
+ * the cane spans 6.5..9.5, so the cane takes columns 6..9 and the fronds
+ * (0.8..15.2) take everything either side; and the middle four columns of a
+ * frond are the part that runs THROUGH the cane and is hidden by it, in
+ * vanilla too. No pixel is asked to be two things.
+ *
+ * The two derived names are registered against MATERIAL_RECIPES further down
+ * this file, where that table is declared.
+ */
+
+/** The texture a leaf state draws from. */
+const bambooTexture = (leaves) =>
+  leaves === 'none' ? 'bamboo_stalk' : `bamboo_stalk_${leaves}_leaves`
+
+const BAMBOO = []
+for (let v = 0; v < BAMBOO_VARIANTS; v++) {
+  for (const leaves of BAMBOO_LEAVES) {
+    const id = BAMBOO_ID + v * BAMBOO_LEAVES.length + BAMBOO_LEAVES.indexOf(leaves)
+    BAMBOO.push({
+      id, key: bambooKey(v, leaves), name: 'Bamboo',
+      all: bambooTexture(leaves), shape: bambooShapeKey(v, leaves),
+      /*
+       * CUTOUT ONLY WHERE THERE IS SOMETHING TO CUT OUT, which is the whole
+       * argument for the flag being per-call. A bare cane is a 16x16 image
+       * with no transparent pixel in it (checked: `bamboo_stalk.png` is
+       * 4-bit indexed with no tRNS chunk), so it goes on the opaque page and
+       * pays nothing. The two leafy textures are fronds and are mostly
+       * nothing, so they take the torch's material.
+       */
+      ...(leaves === 'none' ? {} : { alpha: true, cutout: true }),
+      hardness: T(1, false),
+      /*
+       * `drops` points every cane at the canonical id, including the
+       * canonical id itself, and that self-reference is doing real work:
+       * items.js reads shape-plus-drops as "not an item of its own", and the
+       * bamboo ITEM already exists (items.js MATERIALS, since the crafting
+       * recipes for bamboo planks needed it before there was a block). A
+       * thirteenth entry keyed `bamboo` would be a second item with the same
+       * name placing a different thing. So the block does not mint one; the
+       * item that is already there learns to place it instead.
+       */
+      drops: BAMBOO_ID,
+    })
+  }
+}
+BAMBOO.push({
+  id: BAMBOO_ID + BAMBOO_VARIANTS * BAMBOO_LEAVES.length,
+  key: 'bamboo_sapling', name: 'Bamboo', all: 'bamboo_stage0',
+  shape: BAMBOO_SAPLING_SHAPE, alpha: true, cutout: true,
+  // `.instabreak()` with no strength after it, unlike the stalk.
+  hardness: T(0, false),
+  // Vanilla's loot table gives a bamboo item, same as the stalk, so it is a
+  // variant of the same thing for every purpose this table has.
+  drops: BAMBOO_ID,
+})
+
+/** The canonical bamboo block, for the item that places it. */
+export const BAMBOO_BLOCK_ID = BAMBOO_ID
+
+/**
+ * Every bamboo plant id, for the generator and for the specs. Exported as a
+ * lookup by (variant, leaves) rather than a flat list, because the one thing
+ * a caller always needs is "the same variant, one leaf state up".
+ */
+export const bambooId = (variant, leaves = 'none') =>
+  BAMBOO_ID + variant * BAMBOO_LEAVES.length + BAMBOO_LEAVES.indexOf(leaves)
+export const BAMBOO_SAPLING_ID = BAMBOO_ID + BAMBOO_VARIANTS * BAMBOO_LEAVES.length
+export const isBambooId = (id) => id >= BAMBOO_ID && id <= BAMBOO_SAPLING_ID
+
 export const BLOCK_TYPES = normaliseHardness(
   [...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER, ...FLUID_FLOW_BLOCKS, ...TORCHES,
     ...SIGNS,
-    ...PAINTING_BLOCKS])
+    ...PAINTING_BLOCKS, ...BAMBOO])
 
 // Ids must be contiguous from 1. noa fills any gap with a silently-registered
 // filler block that has no material, which renders as untextured white and is
@@ -1562,6 +1709,26 @@ export const MATERIAL_RECIPES = {
   // over the dirt side. Flattening it here means the block face can stay
   // opaque, which keeps grass out of the alpha atlas.
   grass_block_side: { overlay: 'grass_block_side_overlay', overlayTint: GRASS },
+}
+
+/*
+ * The two bamboo textures this build COMPOSES rather than reads, which is a
+ * third kind of recipe after tint and overlay: `base` names the art to start
+ * from and `stripe` a column range to stamp in from a second material. See
+ * the bamboo section above for why one mesh needing two textures turns into
+ * one texture holding both, and why the columns it stamps over are the ones
+ * the cane hides anyway.
+ *
+ * Road not taken: `overlay`, which is already here and does compositing. It
+ * cannot do this -- it alpha-composites the whole overlay over the whole
+ * base, and `bamboo_stalk.png` has no transparent pixel in it, so the cane
+ * would cover the fronds entirely.
+ */
+for (const leaves of ['small', 'large']) {
+  MATERIAL_RECIPES[`bamboo_stalk_${leaves}_leaves`] = {
+    base: `bamboo_${leaves}_leaves`,
+    stripe: { from: 'bamboo_stalk', x0: 6, x1: 10 },
+  }
 }
 for (const def of BLOCK_TYPES) {
   if (def.tint) MATERIAL_RECIPES[def.all] = { tint: def.tint }

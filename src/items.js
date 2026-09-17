@@ -1,4 +1,4 @@
-import { BLOCK_TYPES, BLOCK_BY_ID } from './blocks.js'
+import { BLOCK_TYPES, BLOCK_BY_ID, BAMBOO_BLOCK_ID } from './blocks.js'
 import { MC } from './physics.js'
 import { POTION_ITEMS } from './potions.js'
 
@@ -130,6 +130,33 @@ const MATERIALS = [
   'nether_brick', 'leather', 'string', 'feather', 'gunpowder', 'paper',
   'book', 'wheat', 'sugar_cane', 'bamboo', 'slime_ball',
 ].map(key => ({ key, name: titleCase(key) }))
+
+/*
+ * ...and one of them stopped being only an ingredient.
+ *
+ * `bamboo` has been in this list since the bamboo wood recipes needed
+ * something to craft FROM, back when the plant did not exist as a block. It
+ * does now (blocks.js id 684), so the item that was a dead end places it.
+ *
+ * DONE HERE RATHER THAN BY LETTING THE BLOCK MINT ITS OWN ITEM, which is the
+ * route every other block takes and is wrong for exactly one reason: there
+ * would then be two items called Bamboo, one from this list and one from
+ * BLOCK_ITEMS, with different ids, and `{ X: 'bamboo' }` in recipes.js would
+ * resolve to whichever the lookup saw first. The twelve cane ids carry
+ * `drops` so BLOCK_ITEMS skips them (isOrientationVariant), and this one line
+ * is what joins the two halves back up.
+ *
+ * MOVING IT OUT OF MATERIALS AND INTO BLOCK_ITEMS was the obvious
+ * alternative and is the one that must not happen: ids in NON_BLOCK are
+ * `ITEM_BASE + index`, so removing an entry renumbers every item after it,
+ * and item ids are in save data.
+ *
+ * `flat` because vanilla's model for it is `item/generated` over a real
+ * `item/bamboo.png` -- a cane drawn as a sprite, not a little cube of one.
+ * The same word the torch and the sign use, for the same reason.
+ */
+Object.assign(MATERIALS.find(m => m.key === 'bamboo'),
+  { places: BAMBOO_BLOCK_ID, flat: true })
 
 /*
  * Items that would be blocks in Minecraft but cannot be here.
@@ -754,6 +781,22 @@ const DROP_RULES = [
   /* ---- ores ---- */
   [ORE_PATTERN, (def) => [ORE_DROPS[def.key.replace(/^deepslate_/, '')]],
     'an ore drops its mineral, not the ore block'],
+
+  /* ---- bamboo, the plant ---- */
+  /*
+   * BEFORE the leaves rule, and that ordering is the whole reason this is
+   * here rather than three rules further down. `bamboo_leaves_small` does not
+   * end in `_leaves` so it would not match today, but the two keys are one
+   * rename apart and a bamboo cane that drops 2% sticks is the kind of wrong
+   * nobody notices for a month.
+   *
+   * `loot_table/blocks/bamboo.json` and `bamboo_sapling.json` are the same
+   * table: one `minecraft:bamboo`, one pool, one roll, no tool condition, no
+   * fortune. Every segment of a stalk you break gives you one bamboo, which
+   * is why a tall stalk is worth its height.
+   */
+  [/^bamboo(_leaves_(small|large))?(_[1-3])?$|^bamboo_sapling$/, [[one('bamboo')]],
+    'loot_table/blocks/bamboo.json: one bamboo item per segment, from the stalk and the sapling alike'],
 
   /* ---- leaves ---- */
   [/_leaves$/, (def, held) => (isShears(held) ? self(def) : LEAF_DROPS),

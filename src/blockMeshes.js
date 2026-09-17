@@ -579,6 +579,208 @@ for (const facing of PAINTING_FACINGS) {
  * the real rectangle rather than an approximation of it.
  */
 
+/* ------------------------------------------------------------------ *
+ * Bamboo, the PLANT, and the first shape in this file that is not one
+ * lump -- a thin cane with two crossed leaf planes through it.
+ *
+ * The owner's report was "bamboo texture is wrong", and it was not a
+ * texture. `bamboo_block` (blocks.js, id 219) is the 1.20 WOOD SET: a solid
+ * cube of bundled canes, a hay bale made of bamboo. Stacking seven of them
+ * gives you a chunky pillar, which is what he was looking at. The plant is a
+ * different block entirely and had never been registered.
+ *
+ * EVERY NUMBER BELOW IS READ OUT OF 1.21.8, and out of two sources that
+ * agree. The models and blockstates come from the jar on this machine
+ * (`~/Library/Application Support/minecraft/versions/1.21.8/1.21.8.jar`,
+ * the same jar `npm run textures` extracts art from); the Java constants
+ * come from `sis1cat/minecraftsodium-1.21.8`, Mojang-mapped. NOT from the
+ * 1.8.9 mirror, which has handed this repo three wrong "corrections" now.
+ *
+ * `blockstates/bamboo.json` is a MULTIPART, which is the shape of the whole
+ * problem:
+ *
+ *     when age=0 -> one of [bamboo1_age0 .. bamboo4_age0]
+ *     when age=1 -> one of [bamboo1_age1 .. bamboo4_age1]
+ *     when leaves=small -> block/bamboo_small_leaves   (as well)
+ *     when leaves=large -> block/bamboo_large_leaves   (as well)
+ *
+ * So a bamboo block is a cane PLUS, optionally, a leaf model on top of it.
+ * Two models, two textures, one cell.
+ *
+ * THE CANE, from `models/block/bamboo1_age1.json`:
+ *
+ *     from [6.5, 0, 6.5] to [9.5, 16, 9.5]
+ *
+ * Three pixels square and the FULL height of the cell -- which is the fact
+ * that makes a tall stalk a column of separate blocks rather than one tall
+ * anything. There is no height property; `BambooStalkBlock.MAX_HEIGHT = 16`
+ * counts blocks, and `getHeightAboveUpToMax` walks neighbours to find out
+ * how tall a stalk already is.
+ *
+ * THE LEAVES, from `models/block/bamboo_large_leaves.json` (the small file
+ * is byte-identical but for the texture id):
+ *
+ *     from [0.8, 0, 8] to [15.2, 16, 8]     north + south
+ *     from [8, 0, 0.8] to [8, 16, 15.2]     west + east
+ *
+ * Two crossed planes, and they are AXIS-ALIGNED -- not the 45-degree cross
+ * every other plant in Minecraft uses. Worth saying because getting that
+ * wrong is invisible in a screenshot of one stalk and obvious in a thicket,
+ * where a whole stand of 45-degree crosses moires against the block grid.
+ *
+ * `shade: false` and `ambientocclusion: false` on both leaf elements: the
+ * fronds are drawn at full brightness with no directional shading. This file
+ * has no per-face shade control, and blockLight.js lights an object mesh as
+ * a whole, so that is already how it comes out. Recorded rather than
+ * implemented.
+ * ------------------------------------------------------------------ */
+
+/** Vanilla's thick cane, `bamboo1_age1.json`: 3px square, full height. */
+const BAMBOO_CANE = [6.5 / 16, 0, 6.5 / 16, 9.5 / 16, 1, 9.5 / 16]
+
+/**
+ * Vanilla's two crossed leaf planes. Both are DEGENERATE boxes -- zero
+ * extent on one axis -- which is a first for this file and is why
+ * buildShapeMesh now skips zero-area faces.
+ */
+const BAMBOO_LEAF_PLANES = [
+  [0.8 / 16, 0, 0.5, 15.2 / 16, 1, 0.5],
+  [0.5, 0, 0.8 / 16, 0.5, 1, 15.2 / 16],
+]
+
+/*
+ * THE OFFSET, which is the single thing that decides whether a stand of
+ * bamboo reads as bamboo or as a lattice.
+ *
+ * `Blocks.java` registers BAMBOO with `.offsetType(BlockBehaviour.OffsetType.XZ)`,
+ * and `BlockBehaviour.java` spells out what that does:
+ *
+ *     long l = Mth.getSeed(pos.getX(), 0, pos.getZ());
+ *     float f = block.getMaxHorizontalOffset();            // 0.25F, not overridden
+ *     double d = Mth.clamp(((float)(l & 15L) / 15F - 0.5) * 0.5, -f, f);
+ *     double e = Mth.clamp(((float)(l >> 8 & 15L) / 15F - 0.5) * 0.5, -f, f);
+ *
+ * Sixteen steps spanning exactly +/-0.25 of a block on x and z (the clamp
+ * never bites), hashed from the column's x and z ONLY -- so every block of
+ * one stalk shifts together and the stalk next door does not. No y term.
+ *
+ * THE MODEL ITSELF IS CENTRED. All eight cane models sit on x = z = 8; every
+ * pixel of the jitter comes from this function. Worth pinning down because
+ * "bamboo is drawn off-centre in its cell" is true of what you SEE and false
+ * of the model, and only one of those is somewhere you can go and read it.
+ *
+ * A PER-POSITION HASH IS NOT EXPRESSIBLE HERE. noa gives every voxel of a
+ * block id the same vertices -- the constraint the fence note at the bottom
+ * of this file is about, and the reason stairs are eight ids. So the hash
+ * becomes what this file always turns per-position variation into: block
+ * ids. Four of vanilla's sixteen steps, spread around the cell, and the
+ * world generator picks one per stalk instead of Mth.getSeed.
+ *
+ * Four rather than sixteen because sixteen steps x three leaf states is 48
+ * block ids to break up a grid that four already breaks up, and ids are save
+ * data. If a thicket ever reads as four repeating stalks, this constant is
+ * the one-line change.
+ */
+const xzStep = (k) => (k / 15 - 0.5) * 0.5
+
+/**
+ * The four offsets, as [k_x, k_z] indices into vanilla's own 16-step ladder,
+ * so these are literally values vanilla produces rather than numbers that
+ * look like them. Variant 1 is the near-centre pair and is the canonical
+ * `bamboo` key; the other three are spread to opposite corners.
+ */
+const BAMBOO_OFFSETS = [[7, 8], [1, 12], [13, 3], [5, 14]]
+  .map(([kx, kz]) => [xzStep(kx), xzStep(kz)])
+
+/** How many stalk variants there are. blocks.js builds its ids off this. */
+export const BAMBOO_VARIANTS = BAMBOO_OFFSETS.length
+
+/** Shape key for one cane: variant index 0..3, leaves 'none'|'small'|'large'. */
+export const bambooShapeKey = (variant, leaves) =>
+  `bamboo_${variant}_${leaves}`
+
+/** ...and the sapling, which has exactly one shape. */
+export const BAMBOO_SAPLING_SHAPE = 'bamboo_sapling'
+
+/*
+ * THE TORCH'S TRAP, WITH BAMBOO'S NAME ON IT.
+ *
+ * This mesher cuts a face's UVs from the box's own coordinates -- `coordAlong`
+ * is literally `p[axis]` -- so MOVING A BOX MOVES ITS TEXTURE. That is the
+ * wall-torch bug, and an offset thin cane is the identical shape of mistake:
+ * slide the cane 4 pixels and it stops sampling columns 6.5..9.5 of
+ * `bamboo_stalk.png` and starts sampling 10.5..13.5, which on that texture is
+ * a flat filler column and the 3x3 corner the cap UV comes out of. A stand of
+ * bamboo where four stalks in sixteen are the wrong pixels.
+ *
+ * So the offset goes in `rotation.translate`, which buildShapeMesh applies
+ * AFTER the UVs are cut, exactly as the wall torch does. Zero degrees about
+ * an axis that therefore does not matter: this is a translation wearing the
+ * rotation record's coat, and the alternative -- a fifth field on
+ * SHAPE_ROTATION, or a parallel SHAPE_TRANSLATION table -- is a second place
+ * for "where a shape ends up" to live. One table, one answer.
+ */
+const bambooRotation = ([dx, dz]) => ({
+  axis: 1, deg: 0, origin: [0.5, 0, 0.5], translate: [dx, 0, dz],
+})
+
+/*
+ * WHAT THE NATURAL UV SLICE ACTUALLY LANDS ON, checked rather than hoped for,
+ * because the torch note's "it came out right without asking" is luck that
+ * has to be re-earned per texture.
+ *
+ * The cane spans 6.5..9.5, so it samples columns 6.5..9.5 of a 16-wide
+ * texture. `bamboo_stalk.png` is four cane strips side by side -- vanilla's
+ * four age=1 variants take uv [0,0,3,16], [3,..,6,..], [6,..,9,..] and
+ * [9,..,12,..] out of it -- so the natural slice is variant 3's strip shifted
+ * half a pixel. Same art, same cane, a different one of the four Mojang drew.
+ * Every column 0..11 of that file is cane; there is nothing to land wrong on.
+ *
+ * The CAP is the one face that does not match. Vanilla hand-picks
+ * uv [13, 0, 16, 3] for `up` and [13, 4, 16, 7] for `down`, a 3x3 corner with
+ * the node ring on it, while the natural slice takes rows 6.5..9.5 of the
+ * cane. Not reproduced, for the reason the torch note gives and one more:
+ * both faces carry `cullface` in vanilla, so on every block of a stalk but
+ * the very top one they are not drawn at all. A 3x3 patch on one face of the
+ * topmost segment, which in a mature stalk is under the large leaves.
+ */
+for (let v = 0; v < BAMBOO_VARIANTS; v++) {
+  const rotation = bambooRotation(BAMBOO_OFFSETS[v])
+  for (const leaves of ['none', 'small', 'large']) {
+    const key = bambooShapeKey(v, leaves)
+    SHAPE_BOXES[key] = leaves === 'none'
+      ? [BAMBOO_CANE]
+      : [BAMBOO_CANE, ...BAMBOO_LEAF_PLANES]
+    SHAPE_ROTATION[key] = rotation
+  }
+}
+
+/*
+ * The sapling: `models/block/bamboo_sapling.json` is
+ * `{"parent": "block/tinted_cross", "textures": {"cross": "block/bamboo_stage0"}}`.
+ *
+ * `block/tinted_cross` is the SAME two planes as the leaves -- 0.8..15.2 on
+ * one axis, through the centre of the other -- plus
+ * `rotation {origin:[8,8,8], axis:"y", angle:45, rescale:true}`.
+ *
+ * THE 45 DEGREES IS DROPPED, deliberately, and this is the one piece of
+ * vanilla geometry in this section that is not transcribed. `rescale: true`
+ * scales the turned element out to the cell corners by sqrt(2), and
+ * rotateVertices() turns vertices without scaling them -- so a faithful
+ * version needs a scale term this file does not have, for a sprout eleven
+ * pixels tall. Axis-aligned crossed planes are what the LEAVES use two
+ * paragraphs up, they are already in this file, and at a sapling's size the
+ * difference is which way a 5-pixel shoot faces. Named here so the next
+ * person knows it was a choice: if `rescale` ever lands, this is a one-line
+ * revert.
+ *
+ * It does not take the XZ offset variants. Vanilla gives the sapling
+ * OffsetType.XZ too, but a sapling is ground cover scattered between stalks
+ * rather than a column that has to miss its neighbours, and four more ids to
+ * jitter a sprout is not a trade worth making.
+ */
+SHAPE_BOXES[BAMBOO_SAPLING_SHAPE] = [...BAMBOO_LEAF_PLANES]
+
 /**
  * The facing name for a block face's outward normal, or null for up and down.
  * The inverse of the FACINGS table, and the thing that turns "which face did
@@ -681,6 +883,20 @@ export function buildShapeMesh(scene, name, boxes, material, rotation = null) {
   for (const box of boxes) {
     for (const face of FACES) {
       if (faceIsInterior(box, face, boxes)) continue
+      /*
+       * A DEGENERATE BOX has four faces with no area, and bamboo is the first
+       * shape in this file to have one: vanilla's leaf planes are
+       * `from [0.8, 0, 8] to [15.2, 16, 8]`, zero thick, because a plant frond
+       * in Minecraft is a plane rather than a slab. The two faces across the
+       * flat axis are the plane and are wanted (both of them -- a cutout
+       * material turns backface culling off, so a frond is visible from
+       * behind, which is the whole point of drawing a plane). The other four
+       * are zero-area quads: invisible, but four vertices and two triangles
+       * each, uploaded once per voxel of every bamboo block in a jungle.
+       */
+      const uSpan = box[axisOf(face.u) + 3] - box[axisOf(face.u)]
+      const vSpan = box[axisOf(face.v) + 3] - box[axisOf(face.v)]
+      if (uSpan === 0 || vSpan === 0) continue
 
       const a = axisOf(face.n)
       const plane = face.n[a] > 0 ? box[a + 3] : box[a]
@@ -974,6 +1190,41 @@ export const PASS_THROUGH_SHAPES = new Set([
    * through a painting in Minecraft; you walk through one here.
    */
   ...PAINTING_FACINGS.map(paintingShapeKey),
+  /*
+   * And bamboo, the fourth family -- but for a DIFFERENT reason than the
+   * three above, and the difference is worth the paragraph because the task
+   * that asked for this block asserted the opposite.
+   *
+   * BAMBOO COLLIDES IN VANILLA. `BambooStalkBlock.java` (1.21.8):
+   *
+   *     private static final VoxelShape SHAPE_COLLISION = Block.column(3, 0, 16);
+   *     protected VoxelShape getCollisionShape(...) {
+   *       return SHAPE_COLLISION.move(blockState.getOffset(blockPos));
+   *     }
+   *
+   * -- a 3x16x3 column, box(6.5, 0, 6.5, 9.5, 16, 9.5), which is the cane
+   * exactly. Only `bamboo_sapling` is registered `.noCollission()`. Walking
+   * into a bamboo stalk in Minecraft stops you, and getting stuck in a bamboo
+   * jungle is a thing people complain about.
+   *
+   * It is opted out here anyway, and the `.move(getOffset(pos))` in that
+   * snippet is why. Vanilla moves the collider WITH the jitter; this file
+   * cannot, because the jitter lives in `rotation.translate`, which moves the
+   * finished vertices and not the box list -- and the box list is what
+   * installNonCubeCollision() collides against. The choice is therefore not
+   * "collision or no collision", it is "no collision, or a 3-pixel post
+   * standing up to 4 pixels from the cane you can see". This file exists to
+   * stop exactly that drift, and blocks.js throws at registration rather than
+   * let a rotated-or-moved shape collide at all.
+   *
+   * So: recorded as a deviation, not as vanilla. The day translate reaches
+   * the box list, these twelve come out of this set and the sapling stays.
+   */
+  ...Array.from({ length: BAMBOO_VARIANTS }, (_, v) =>
+    ['none', 'small', 'large'].map((l) => bambooShapeKey(v, l))).flat(),
+  // The sapling is the one that IS vanilla: `Blocks.BAMBOO_SAPLING` carries
+  // `.noCollission()` in the same properties chain as `.offsetType(XZ)`.
+  BAMBOO_SAPLING_SHAPE,
 ])
 
 /** Minecraft's player step height: onto a slab, never onto a full block. */
@@ -1351,6 +1602,48 @@ for (const facing of SIGN_FACINGS) {
   lo[1] = 4.5 / 16; hi[1] = 12.5 / 16
   TARGET_BOXES[`sign_wall_${facing}`] = [[...lo, ...hi]]
 }
+
+/*
+ * Bamboo's outline, and vanilla gives the plant THREE of them -- a fourth
+ * distinct shape family after the torch's, the sign's and the painting's.
+ *
+ * `BambooStalkBlock.java` (1.21.8):
+ *
+ *     SHAPE_SMALL = Block.column(6, 0, 16);     // box( 5, 0,  5, 11, 16, 11)
+ *     SHAPE_LARGE = Block.column(10, 0, 16);    // box( 3, 0,  3, 13, 16, 13)
+ *     getShape(): LEAVES == LARGE ? SHAPE_LARGE : SHAPE_SMALL,
+ *                 then .move(state.getOffset(pos))
+ *
+ * (`Block.column(d, e, f)` is `box(8 - d/2, e, 8 - d/2, 8 + d/2, f, 8 + d/2)`,
+ * Block.java L173.) So the outline GROWS WITH THE LEAVES: a bare cane is
+ * aimed at through a 6-pixel column, a leafy one through a 10-pixel column,
+ * and neither is the 3-pixel cane you can see. That is the same bargain the
+ * torch's 4-pixel outline over a 2-pixel post makes -- reproducing the model
+ * here would give a thin stalk that is almost impossible to click across a
+ * clearing, which is the specific thing worth checking by hand once a thicket
+ * exists. src/targeting.js is what draws it.
+ *
+ * AND THE OFFSET MOVES IT, `.move(getOffset(pos))` in vanilla's own getShape.
+ * Declared offset here rather than centred, because unlike collision there is
+ * nothing stopping it: TARGET_BOXES is a separate declaration by design (see
+ * the sign note above), so the outline can follow the mesh even though the
+ * collider cannot.
+ */
+for (let v = 0; v < BAMBOO_VARIANTS; v++) {
+  const [dx, dz] = BAMBOO_OFFSETS[v]
+  for (const [leaves, w] of [['none', 6], ['small', 6], ['large', 10]]) {
+    const h = w / 32
+    TARGET_BOXES[bambooShapeKey(v, leaves)] =
+      [[0.5 + dx - h, 0, 0.5 + dz - h, 0.5 + dx + h, 1, 0.5 + dz + h]]
+  }
+}
+/*
+ * `BambooSaplingBlock.java`:  SHAPE = Block.column(8, 0, 12)
+ * = box(4, 0, 4, 12, 12, 12). Eight pixels square and TWELVE tall -- the one
+ * outline in this file that stops short of the top of its cell, because a
+ * sprout does.
+ */
+TARGET_BOXES[BAMBOO_SAPLING_SHAPE] = [[4 / 16, 0, 4 / 16, 12 / 16, 12 / 16, 12 / 16]]
 
 /*
  * The invariant, checked at load rather than remembered. A rotated shape's

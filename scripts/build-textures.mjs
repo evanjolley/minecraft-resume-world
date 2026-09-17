@@ -635,6 +635,37 @@ const CE_SUBSTITUTES = {
   stripped_bamboo_block: sub('stripped_birch_log', [242, 222, 142]),
   stripped_bamboo_block_top: sub('stripped_birch_log_top', [242, 222, 142]),
 
+  /*
+   * ...and the bamboo PLANT, which CE does not have either, in a way worth
+   * writing down because the pack is a 1.16 pack and bamboo landed in 1.14.
+   * It is not a version gap, it is the 89-file subset: CE ships no plant
+   * cross-sprites at all here -- no vine, no sapling, no sugar cane -- so
+   * there is nothing in the right SHAPE to borrow, only the right colour.
+   *
+   * The cane borrows the same stripped birch log the bamboo wood set above
+   * borrows, pushed further green: a vertical-grained pale wood is the right
+   * family for a cane, and it is already the substitution this pack makes for
+   * `bamboo_block`, so the plant and the block stay related under CE the way
+   * they are under vanilla.
+   *
+   * THE LEAVES ARE THE ONE THAT DOES NOT COME OUT RIGHT, and it should be
+   * said plainly rather than discovered. Vanilla's frond is a sparse spray of
+   * leaves on a mostly-transparent sprite; CE's jungle leaf is a dense square
+   * with a few holes. Stamped onto the crossed planes, CE bamboo has fat
+   * bushy tops instead of thin fronds. Right family, wrong pack -- the rule
+   * the substitutions above already follow -- and the alternative is drawing
+   * a bamboo frond by hand at 16x16, which is new art pretending to be a
+   * derivative and is the thing the torch flame's note refuses.
+   *
+   * The sapling borrows the leaf too. A sprout is not foliage, but CE has no
+   * sprite that is a sprout, and a green shoot in the right place beats a
+   * magenta square.
+   */
+  bamboo_stalk: sub('stripped_birch_log', [115, 210, 25]),
+  bamboo_small_leaves: sub('jungle_leaves', [235, 245, 210]),
+  bamboo_large_leaves: sub('jungle_leaves', [255, 255, 255]),
+  bamboo_stage0: sub('jungle_leaves', [210, 235, 180]),
+
   // Leaves are greyscale in CE too, so these get biome-tinted downstream
   // exactly like the leaves CE does have.
   mangrove_leaves: sub('oak_leaves'),
@@ -812,6 +843,35 @@ async function pooled(items, limit, fn) {
  * Sources
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * DERIVED MATERIALS: art this build composes instead of reading.
+ *
+ * A recipe with a `base` is not a file. blocks.js declares two of them, both
+ * bamboo, and the reason is a constraint in blockMeshes.js rather than
+ * anything about textures: a shape mesh gets ONE material, so a bamboo block
+ * -- a cane plus two leaf planes, two textures in vanilla -- needs its two
+ * source images folded into one. `stripe` copies a column range across.
+ *
+ * Kept separate from `overlay` above, which is alpha compositing, because
+ * these two operations fail at each other's job: compositing an opaque cane
+ * over a frond erases the frond, and striping a tinted overlay into a column
+ * range is not what a grass fringe wants.
+ * ------------------------------------------------------------------ */
+const DERIVED = Object.entries(MATERIAL_RECIPES).filter(([, r]) => r.base)
+
+/** The materials a derived recipe reads, which DO have to exist as files. */
+const derivedSources = () => DERIVED.flatMap(([, r]) => [r.base, r.stripe.from])
+
+/** Copy columns x0..x1 of `src` into `dst`, full height. Both 16x16 RGBA. */
+function stripe(dst, src, x0, x1) {
+  for (let y = 0; y < TILE; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * TILE + x) * 4
+      src.copy(dst, i, i, i + 4)
+    }
+  }
+}
+
 /**
  * Resolve every material name to a file path, per source.
  * Returns { path(name) -> file, substituted: Set<string> }.
@@ -821,6 +881,9 @@ function resolver(dir, allowSubstitutes) {
   const substituted = new Map()
   const need = new Set(MATERIALS)
   for (const r of Object.values(MATERIAL_RECIPES)) if (r.overlay) need.add(r.overlay)
+  // A derived material has no file of its own; what it reads does.
+  for (const [name] of DERIVED) need.delete(name)
+  for (const n of derivedSources()) need.add(n)
 
   const missing = []
   for (const name of need) {
@@ -845,6 +908,8 @@ async function decodeAll(dir, allowSubstitutes) {
   const raw = new Map()
   const need = new Set(MATERIALS)
   for (const r of Object.values(MATERIAL_RECIPES)) if (r.overlay) need.add(r.overlay)
+  for (const [name] of DERIVED) need.delete(name)
+  for (const n of derivedSources()) need.add(n)
 
   await pooled([...need], 16, async (name) => {
     const s = substituted.get(name)
@@ -852,6 +917,17 @@ async function decodeAll(dir, allowSubstitutes) {
     if (s) multiply(buf, s.mul)
     raw.set(name, buf)
   })
+
+  /*
+   * Derived materials, built BEFORE the recipe loop below so a derived name
+   * can also carry a tint or an alpha one day. Buffer.from copies, so the
+   * base art stays untouched for anything else that reads it.
+   */
+  for (const [name, r] of DERIVED) {
+    const buf = Buffer.from(raw.get(r.base))
+    stripe(buf, raw.get(r.stripe.from), r.stripe.x0, r.stripe.x1)
+    raw.set(name, buf)
+  }
 
   let tinted = 0
   for (const [name, recipe] of Object.entries(MATERIAL_RECIPES)) {

@@ -191,9 +191,23 @@ const RULES = [
   [/^(brick|nether_brick)$/, 'ingredients',
     'the brick ITEM, not `bricks` the block -- the singular key is the item'],
   [/^bowl$/, 'ingredients', 'vanilla files the empty bowl under Ingredients'],
-  [/^(sugar_cane|bamboo)$/, 'ingredients',
-    'vanilla has these as Natural Blocks because they ARE blocks there; here they '
-    + 'are items with no block, and an item in a block tab would be a lie about what it places'],
+  /*
+   * SUGAR CANE ONLY NOW, and bamboo's departure is the interesting half.
+   *
+   * This rule used to read `/^(sugar_cane|bamboo)$/` and its reason was that
+   * both were "items with no block, and an item in a block tab would be a lie
+   * about what it places". That reason was true and has stopped being true
+   * for one of them: bamboo the plant is registered (blocks.js id 684) and
+   * items.js points the bamboo item's `places` at it. So it moves to Natural
+   * Blocks, which is where vanilla files it, and it is no longer a lie.
+   *
+   * Sugar cane stays, unchanged, because nothing about it changed.
+   */
+  [/^sugar_cane$/, 'ingredients',
+    'vanilla has this as a Natural Block because it IS one there; here it is an '
+    + 'item with no block, and an item in a block tab would be a lie about what it places'],
+  [/^bamboo$/, 'natural_blocks',
+    'bamboo generates in jungles and is vanilla\'s own Natural Blocks entry for it'],
   /*
    * Signs, which vanilla files under Functional Blocks beside the torch and
    * the ladder. Only the canonical `oak_sign` reaches this table at all --
@@ -499,7 +513,21 @@ export const fullStack = (id) => ({ id, count: stackMax(id) })
  * `uncategorisedItems()` makes one section up.
  */
 export const blocksWithoutEntry = () => {
-  const have = new Set(PICKER_ITEMS.map(i => i.id))
+  /*
+   * The ids you can get, which is NOT the same as the ids on the picker.
+   *
+   * This used to be the picker's own ids, which was right for as long as
+   * every block item shared its block's id (items.js's rule: item 4 is
+   * cobblestone and places block 4). Bamboo is the first item that does not
+   * -- it is a MATERIALS item with an id in the item range and a `places`
+   * pointing at block 684 -- so asking only about `i.id` reported all
+   * thirteen bamboo ids as unreachable while the bamboo in the Natural Blocks
+   * tab placed them perfectly well.
+   *
+   * Reading `places` as well is the more honest question anyway: reachable
+   * means "some entry in this picker puts this block in the world".
+   */
+  const have = new Set(PICKER_ITEMS.flatMap(i => [i.id, i.places]))
   // REACHABLE, not listed. An orientation variant has no entry of its own on
   // purpose and is reached by placing its family's entry, which is what
   // `drops` points at -- the same redirection the loot table uses. Asking for
