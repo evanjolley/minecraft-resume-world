@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures.js'
 import {
-  SURFACE_Y, teleport, position, waitTicks, settleOnGround, DROP_X, DROP_Z,
+  SURFACE_Y, SPAWN, teleport, position, waitTicks, settleOnGround, DROP_X, DROP_Z,
 } from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 
@@ -83,8 +83,12 @@ test.describe('death and respawn', () => {
       await settleOnGround(page)
       const [x, y, z] = await position(page)
       expect(y).toBeCloseTo(SURFACE_Y, 1)
-      expect(x).toBeCloseTo(0.5, 2)
-      expect(z).toBeCloseTo(0.5, 2)
+      /* SPAWN, not (0.5, 0.5). The overworld's spawn moved to the south end
+       * of the road when the world became a timeline -- see the note on
+       * SPAWN in test/helpers/world.js. Read from there rather than written
+       * out again, so this follows the one place the number is recorded. */
+      expect(x).toBeCloseTo(SPAWN[0], 2)
+      expect(z).toBeCloseTo(SPAWN[2], 2)
 
       // And the input lock is actually released, not just the flag flipped.
       const [bx, , bz] = await position(page)
