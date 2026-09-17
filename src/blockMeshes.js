@@ -211,9 +211,40 @@ function wallTorch(facing) {
   // tilt turns about.
   const p = a === 0 ? 2 : 0
 
+  /*
+   * THE BOX IS THE FLOOR TORCH'S, UNMOVED, and it is moved afterwards. This
+   * used to be built where the torch ends up -- lo[a] = wall - 1/16, lo[1] =
+   * 3.5/16 -- and it drew the wrong pixels on all four walls. Reported from
+   * play as "the texture when a torch is placed on a wall is also incorrect",
+   * and the cause is three lines up the file from where it looked like it was.
+   *
+   * THIS MESHER CUTS A FACE'S UVs FROM THE BOX'S OWN COORDINATES.
+   * `coordAlong` is literally `p[axis]`, which is the rule that makes a
+   * bottom slab show the bottom half of its texture with nobody writing a UV
+   * down. It also means MOVING A BOX MOVES ITS TEXTURE. The floor torch's box
+   * spans 7/16..9/16 and 0..10/16, which samples columns 7..9 and the bottom
+   * ten rows -- vanilla's `uv [7, 6, 9, 16]` arrived at from the other end,
+   * as the note above says. Slide that box to the wall plane and it samples
+   * columns -1..1 instead (which wrap, so you get the texture's far edge),
+   * and rows 3.5..13.5 instead of 0..10, which cuts the bottom off the post
+   * and puts the flame halfway down it.
+   *
+   * And vanilla is unambiguous that the two torches share their pixels:
+   * `block/template_torch_wall.json` gives all four SIDE faces
+   * `uv [7, 6, 9, 16]` -- the floor torch's exact slice -- refetched from
+   * sis1cat/minecraftsodium-1.21.8 rather than remembered, because this
+   * repo has taken two wrong "corrections" from a 1.8.9 mirror before.
+   *
+   * So a wall torch is now literally the floor torch, turned about its foot
+   * and then carried to the wall: same vertices, same UVs, one translation.
+   * The pivot goes with it -- rotating about the box's own foot and then
+   * translating is the same transform as translating and then rotating about
+   * vanilla's `origin: [0, 3.5, 8]`, which is what makes this a refactor of
+   * where the numbers live rather than a change to the geometry.
+   */
   const lo = [0, 0, 0], hi = [0, 0, 0]
-  lo[a] = wall - 1 / 16; hi[a] = wall + 1 / 16
-  lo[1] = 3.5 / 16; hi[1] = 13.5 / 16
+  lo[a] = 7 / 16; hi[a] = 9 / 16
+  lo[1] = 0; hi[1] = 10 / 16
   lo[p] = 7 / 16; hi[p] = 9 / 16
 
   /*
@@ -227,10 +258,20 @@ function wallTorch(facing) {
    * check that this table is not mirrored.
    */
   const deg = WALL_TORCH_TILT * (a === 0 ? -s : s)
-  const origin = [0.5, 3.5 / 16, 0.5]
-  origin[a] = wall
+  // The foot of the post, at the centre of the cell, BEFORE it is carried to
+  // the wall. Vanilla's origin [0, 3.5, 8] is this point after the move.
+  const origin = [0.5, 0, 0.5]
 
-  return { boxes: [[...lo, ...hi]], rotation: { axis: p, deg, origin } }
+  /*
+   * ...and where it goes afterwards. Along the facing axis, from the middle
+   * of the cell to the wall -- half a block, in whichever direction the wall
+   * is. Up, by the 3.5 pixels vanilla's box starts at, which is why a torch
+   * sits higher on a wall than on a floor.
+   */
+  const translate = [0, 3.5 / 16, 0]
+  translate[a] = wall - 0.5
+
+  return { boxes: [[...lo, ...hi]], rotation: { axis: p, deg, origin, translate } }
 }
 
 for (const facing of Object.keys(FACINGS)) {
@@ -521,6 +562,18 @@ export function buildShapeMesh(scene, name, boxes, material, rotation = null) {
    * back geometry that is only correct once somebody else turns it.
    */
   if (rotation) rotateVertices(positions, normals, rotation)
+  /*
+   * And the translation, AFTER the rotation and after the UVs are cut, which
+   * is the whole point of having one: a box that is drawn somewhere other
+   * than where its texture comes from cannot be expressed as a box. See
+   * wallTorch() for the bug that made this necessary.
+   */
+  if (rotation?.translate) {
+    const [tx, ty, tz] = rotation.translate
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i] += tx; positions[i + 1] += ty; positions[i + 2] += tz
+    }
+  }
 
   const mesh = new Mesh(name, scene)
   const data = new VertexData()
