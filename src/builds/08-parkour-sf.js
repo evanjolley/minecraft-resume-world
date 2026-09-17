@@ -939,13 +939,13 @@ function summit(v) {
   v.box([0, -1, 0], [4, -1, 8], 'polished_andesite')       // the paved viewpoint
   /*
    * THE WEST PARAPET STOPS SHORT, and it is the single most breakable thing
-   * on this plot. The parkour's last jump arrives on this edge at z = 3..4,
+   * on this plot. The parkour's last jump arrives on this edge at z = 5..7,
    * and a slab there is half a block: the jump would be a rise of 1.5
    * against an apex of MC.JUMP_APEX = 1.2522 and the course would end one
    * block short of its own summit, forever, with nothing to show why.
    */
-  v.box([0, 0, 0], [0, 0, 1], 'stone_brick_slab')          // the parapet, west
-  v.box([0, 0, 6], [0, 0, 8], 'stone_brick_slab')
+  v.box([0, 0, 0], [0, 0, 2], 'stone_brick_slab')          // the parapet, west
+  v.box([0, 0, 8], [0, 0, 8], 'stone_brick_slab')
   v.box([0, 0, 0], [4, 0, 0], 'stone_brick_slab')
   v.box([0, 0, 8], [4, 0, 8], 'stone_brick_slab')
 
@@ -1004,109 +1004,183 @@ function tunnel(t) {
 /* ----------------------------------------------------------- the parkour */
 
 /*
- * THE COURSE. Thirteen jumps, over water, up to the summit.
+ * THE COURSE. Twelve jumps over water, and every one of them is flat.
  *
  * ------------------------------------------------------------------------
- * EVERY JUMP IS THE SAME JUMP: two air blocks across and one block up.
+ * THE JUMP IS THE WHOLE DESIGN, AND THE FIRST TWO VERSIONS OF IT WERE WRONG.
  *
- * That is deliberate and it is the entire design. The engine's movement is
- * tuned against Minecraft's real numbers in src/physics.js -- apex 1.2522
- * blocks, sprint 5.612 b/s, a 4 b/s sprint-jump impulse along the body yaw,
- * launch clamped at 9.612 -- and a standing jump from a dead stop clears
- * this. A visitor who sprints clears it with a block and a half to spare.
- * There is no jump here that has to be learned and no jump here that has a
- * timing.
+ * The obvious course is the standard Minecraft one: two air blocks across
+ * and one block up, thirteen times. It is not hard, it is not a timing, and
+ * it does not work here -- because it requires you to be SPRINTING, and most
+ * people who open this website will never press the sprint key.
+ *
+ * The arithmetic, out of src/physics.js. A jump leaves the ground at the
+ * speed that gives MC.JUMP_APEX = 1.2522 blocks, which against GRAVITY = 32
+ * is 8.952 b/s, and y(t) = 8.952t - 16t^2. So the player is a block or more
+ * above their take-off only between t = 0.154 s and t = 0.405 s. Clearing
+ * two air blocks needs 1.7 blocks of travel (the gap, less half the player's
+ * 0.6-wide box). At MC.WALK_SPEED = 4.317 b/s, 0.405 s buys 1.75 blocks
+ * before air drag, about 1.65 after. It is short, and short by a margin no
+ * player can feel or fix.
+ *
+ * MEASURED, NOT ARGUED. test/71-parkour.spec.js drove a player at the first
+ * version of this course holding W and Space and it landed IN THE WATER at
+ * (37.5, 21.9), which is dead centre on the next platform's footprint and
+ * three blocks below its surface: the arc was right and the height was not.
+ * Sprinting fixes it -- MC.SPRINT_SPEED + MC.SPRINT_JUMP_BOOST is 9.612 b/s
+ * and buys three and a half blocks -- and "hold Ctrl as well" is not a thing
+ * a jumping course is allowed to require without saying so.
+ *
+ * SO THE CLIMB MOVED OFF THE JUMP AND ONTO THE PLATFORM. Every platform is
+ * a PAD and a STEP: you land on the pad at height n, walk up the one-block
+ * step at its far end to n + 1, and jump from there to the next pad, which
+ * is also at n + 1. Every jump is dead level; the course still climbs a
+ * block per platform, because the step does the climbing.
+ *
+ * AND THE GAP IS ONE AIR BLOCK, NOT TWO, WHICH THE SECOND RUN OF THE SPEC
+ * TAUGHT ME. The step is one block deep, so you climb onto it and you are
+ * already standing on its far edge -- there is no run-up left, and the jump
+ * off it is a STANDING jump whatever you were doing before. A standing jump
+ * carries about 1.25 blocks; two air blocks need 1.7. Measured: the driver
+ * left platform 0's step and landed at (37.4, 20.0), dead centre on the next
+ * pad's footprint and three blocks under it. One air block needs 0.7, which
+ * the same standing jump clears with most of a block in hand -- and a player
+ * who arrives sprinting clears it without noticing.
+ *
+ * It is a short jump. It is still a jump: you cannot walk across a one-block
+ * gap in Minecraft, and there are twelve of them over open water fourteen
+ * blocks up. A visitor who has never played this game can finish it, which
+ * is the only specification that mattered.
+ *
+ * It buys three more things for free:
+ *
+ *   - THE STEP IS A BACKSTOP. A player who sprints -- and sprinting still
+ *     works, it just is not required -- overshoots the pad and hits the step
+ *     instead of sailing off the far side. The course is now easier the
+ *     faster you go, which is the opposite of the usual failure.
+ *   - IT READS. A one-block riser at the end of every platform is a visible
+ *     instruction to keep going up, where thirteen identical squares at
+ *     thirteen different heights is a puzzle.
+ *   - THE LAST MOVE IS A STEP, NOT A LEAP OF FAITH. The course arrives on a
+ *     ledge cut into the bluff and climbs one block onto the summit.
  *
  * WHAT HAPPENS WHEN YOU FALL, which is the question that decides whether
  * this is playable at all. The whole course stands over a pool three blocks
  * deep, and src/fluids.js calls survival.clearFallTracking() on every tick
  * your feet are in water -- vanilla's resetFallDistance, which cancels fall
- * damage OUTRIGHT rather than reducing it. So a miss from the last platform
- * is a fourteen-block drop that costs nothing but the swim back. The pool
- * runs one block past the course on every side precisely so that a badly
- * aimed jump cannot find the edge of it.
+ * damage OUTRIGHT rather than reducing it. A miss from the last platform is
+ * a thirteen-block drop that costs nothing but the swim back, and the spec
+ * asserts exactly that by dropping a player off the top. The pool runs a
+ * block past the course on every side so that a badly aimed jump cannot
+ * find the edge of it.
  *
- * That matters more here than anywhere else in this world: respawn puts you
- * back at spawn, which is a hundred blocks and eight stages away, so a death
- * on this course would throw a visitor out of the whole thing.
+ * That matters more here than anywhere else in this world: respawn is at the
+ * south end of the road, a hundred blocks and eight stages away, so a death
+ * on this course throws a visitor out of the whole thing.
  *
  * REJECTED -- a course that climbs the bridge cables, which is the obvious
- * thing to do with a suspension bridge and is a good deal prettier. The
- * cable is a one-block-per-z diagonal over paving, so every miss is a
- * six-block drop onto concrete, and the only fix is to put water under the
- * road. Scenery you can fall off is not the same thing as a course.
+ * thing to do with a suspension bridge and a good deal prettier. The cable
+ * is a one-block-per-z diagonal over paving, so every miss is a six-block
+ * drop onto concrete, and the only fix is to put water under the road.
+ * Scenery you can fall off is not the same thing as a course.
  * ------------------------------------------------------------------------
  *
- * The route is an anticlockwise spiral: north up the west side, east along
- * the top, south down the east side, west along the bottom, and then north
- * again on the inside, one block higher every time. Platform n sits at
- * y = n, so this list is also the height profile.
+ * The route is a spiral: north up the west side, east along the top, south
+ * down the east side, west along the bottom, then north and east again on
+ * the inside, and out onto the bluff.
  *
- * FOOTPRINTS, NOT CENTRES, AND THEY ARE NOT ALL THE SAME SIZE. Every
- * platform is at least 2x2, and each is widened by a block in whichever
- * directions are not a gap:
- *
- *   - a platform you run STRAIGHT over is widened SIDEWAYS, three by two,
- *     which buys a block of lateral slop for somebody whose aim drifts;
- *   - a platform you TURN on is widened one block further along the way you
- *     arrived and one block back from the way you leave, so there is room to
- *     overshoot into and a run-up to leave from.
- *
- * Neither widening touches a gap -- every consecutive pair below is still
- * exactly AIR_GAP apart, and test/71-parkour.spec.js asserts that from these
- * numbers rather than from my arithmetic. Turns are where a bunny-hopping
- * player carries seven blocks a second into a right angle, and a two-by-two
- * corner is a corner you slide off.
+ * Platform n's pad is at y = n and its step at y = n + 1, so this list is
+ * also the height profile. Both are given as footprints because the widths
+ * are not all the same -- a platform is three blocks wide across the
+ * direction you are running, which buys a block of lateral slop for
+ * somebody whose aim drifts.
  */
 const ROUTE = [
-  [37, 25, 38, 26],   //  0  the first hop off the apron, over one block of water
-  [36, 21, 38, 22],   //  1  north, up the west side
-  [36, 17, 38, 18],   //  2
-  [36, 12, 38, 14],   //  3  turn east
-  [41, 12, 42, 14],   //  4  east along the north side
-  [45, 12, 47, 14],   //  5  turn south
-  [44, 17, 46, 18],   //  6  south, down the east side
-  [44, 21, 46, 22],   //  7
-  [45, 25, 47, 26],   //  8  turn west
-  [40, 25, 42, 26],   //  9  turn north
-  [40, 21, 42, 22],   // 10  north again, one ring in
-  [40, 16, 42, 18],   // 11  turn east
-  [45, 16, 46, 18],   // 12  and out over the first pass, to the bluff
+  //     the pad, at y = n          the step, at y = n + 1
+  { pad: [37, 24, 38, 25], step: [37, 23, 38, 23] },   //  0  north, up the west side
+  { pad: [36, 20, 38, 21], step: [36, 19, 38, 19] },   //  1
+  { pad: [36, 16, 38, 17], step: [36, 15, 38, 15] },   //  2
+  { pad: [36, 12, 37, 13], step: [38, 12, 38, 13] },   //  3  turn east
+  { pad: [40, 12, 41, 14], step: [42, 12, 42, 14] },   //  4  east along the north side
+  { pad: [44, 12, 46, 13], step: [44, 14, 46, 14] },   //  5  turn south
+  { pad: [44, 16, 46, 17], step: [44, 18, 46, 18] },   //  6  south, down the east side
+  { pad: [44, 20, 46, 21], step: [44, 22, 46, 22] },   //  7
+  { pad: [44, 24, 46, 25], step: [43, 24, 43, 25] },   //  8  turn west
+  { pad: [40, 24, 41, 25], step: [40, 23, 41, 23] },   //  9  turn north
+  { pad: [40, 20, 42, 21], step: [43, 20, 43, 21] },   // 10  turn east, one ring in
+  { pad: [45, 19, 46, 21], step: [47, 19, 47, 21] },   // 11  and off onto the bluff
 ]
+
+/** Where the last jump lands: a notch cut into the bluff's west face, one
+ *  block below the summit, at the height platform 11's step leaves you at --
+ *  y = 12, so its surface is y = 13 and so is the step's, and the last jump
+ *  of the course is as level as the eleven before it. */
+const LEDGE = { x: 49, y: 12, z: [19, 21] }
 
 function parkour(s) {
   pool(s)
+  apron(s)
 
-  /*
-   * THE APRON, AND IT IS FLAT AND FIVE BLOCKS LONG ON PURPOSE.
-   *
-   * The first draft started you on a one-block plinth, which made the first
-   * jump of the course a STANDING jump -- and a standing jump in Minecraft
-   * carries about a block and a quarter, against the block and three
-   * quarters that first gap needs. The launch pad of a jumping course has to
-   * be a run-up, so this is painted onto the ground at y = -1 and you arrive
-   * on it already walking.
-   *
-   * Orange because by the time a visitor reaches it this stage has spent a
-   * whole bridge teaching them that orange is the thing you walk on.
-   */
+  ROUTE.forEach(({ pad, step }, n) => {
+    s.box([pad[0], n, pad[1]], [pad[2], n, pad[3]], 'smooth_quartz')
+    /* The step is a different block from the pad on purpose. It is the one
+     * piece of instruction the course gives -- "the way on is UP" -- and a
+     * riser in the same white as the floor it rises out of is a riser
+     * nobody sees until they walk into it. */
+    s.box([step[0], n + 1, step[1]], [step[2], n + 1, step[3]], 'orange_concrete')
+
+    /* A lantern let into the far corner of every pad. Two jobs: block light
+     * shipped today and an unlit jump is an unfair jump, and a lit square is
+     * the only signposting a route over open water can have. */
+    s.set(pad[2], n, pad[3], 'sea_lantern')
+  })
+
+  ledge(s)
+}
+
+/*
+ * THE APRON, AND IT IS FLAT AND FIVE BLOCKS LONG ON PURPOSE.
+ *
+ * The first draft started you on a one-block plinth, which made the first
+ * jump of the course a STANDING jump from a standstill. The launch pad of a
+ * jumping course has to be a run-up, so this is painted onto the ground at
+ * y = -1 and you arrive on it already walking.
+ *
+ * Orange because by the time a visitor reaches it this stage has spent a
+ * whole bridge teaching them that orange is the thing you walk on -- and
+ * because it is the same orange as the steps, which is the only hint the
+ * course gives about what to aim for.
+ */
+function apron(s) {
   s.rect([31, 24], [35, 26], -1, 'orange_concrete')
   s.pillar(32, 23, 0, 2, 'polished_blackstone')
   s.set(32, 3, 23, 'orange_concrete')
   s.set(32, 2, 23, 'white_concrete')
-  s.set(31, 0, 25, 'sea_lantern')
+  /* The lantern is at the BACK of the apron, not the middle of it. In the
+   * middle it stands in the one square metre of this plot a player is most
+   * likely to be standing in, and a player inside a block is squeezed out
+   * sideways -- which here means into the pool, before the course starts. */
+  s.set(31, 0, 24, 'sea_lantern')
+}
 
-  ROUTE.forEach(([x0, z0, x1, z1], i) => {
-    s.box([x0, i, z0], [x1, i, z1], 'smooth_quartz')
-    /* A lantern in the far corner of every platform. Two jobs: block light
-     * shipped today and an unlit jump is an unfair jump, and a lit square is
-     * the only signposting a route over open water can have. */
-    s.set(x1, i, z1, 'sea_lantern')
-  })
-
-  // The last jump lands on the bluff itself, which is why the route stops at
-  // x = 46: two air blocks of water, then stone at SUMMIT_Y.
-  void [AIR_GAP, RISE]
+/*
+ * The finish: a notch cut into the bluff at the height the last step leaves
+ * you at, and one block up onto the summit.
+ *
+ * Carved rather than built, and carved AFTER twinPeaks() has run -- the
+ * bluff is solid stone from y = -1 to SUMMIT_Y and the summit's paving is
+ * already on top of it, so the ledge is three columns of that stone taken
+ * back out. A landing you have to jump UP onto is the one thing this course
+ * has spent eighty lines avoiding.
+ */
+function ledge(s) {
+  s.box([LEDGE.x, LEDGE.y + 1, LEDGE.z[0]], [LEDGE.x, SUMMIT_Y, LEDGE.z[1]], 'air')
+  s.box([LEDGE.x, LEDGE.y, LEDGE.z[0]], [LEDGE.x, LEDGE.y, LEDGE.z[1]], 'polished_andesite')
+  s.set(LEDGE.x, LEDGE.y, LEDGE.z[0], 'sea_lantern')
+  s.set(LEDGE.x, LEDGE.y, LEDGE.z[1], 'sea_lantern')
+  // ...and the one step from the ledge onto the summit paving, in the same
+  // orange every other step on the course is, so the last one reads too.
+  s.box([LEDGE.x + 1, SUMMIT_Y, LEDGE.z[0]], [LEDGE.x + 1, SUMMIT_Y, LEDGE.z[1]], 'orange_concrete')
 }
 
 /*
@@ -1115,17 +1189,16 @@ function parkour(s) {
  *
  * Dug from y = -3 to y = -1 -- grass, then both courses of dirt, with the
  * bedrock at -4 as its floor. Three blocks is not aesthetic: the player
- * arrives from fourteen blocks up at about thirty blocks a second, which is
- * one block per engine tick, and the fall-damage cancel in src/fluids.js
- * fires on a tick whose feet are wet. One block of water is a coin flip.
- * Three is not.
+ * arrives from thirteen blocks up at about twenty-nine blocks a second,
+ * which is one block per engine tick, and the fall-damage cancel in
+ * src/fluids.js fires on a tick whose feet are wet. One block of water is a
+ * coin flip. Three is not.
  *
  * SEALED: x = 35 and x = 49 (the bluff) either side, z = 11 and z = 27 north
  * and south, all of them untouched ground at every level the water fills.
  * It reaches z = 12 rather than z = 13 because three platforms do -- the
- * north side of the ring overhangs by a block once the turns are widened,
- * and water has to be under all of it, or that block is the one place on the
- * course where a miss hurts.
+ * north side of the ring overhangs by a block -- and water has to be under
+ * all of it, or that block is the one place on the course where a miss hurts.
  */
 function pool(s) {
   s.box([36, -3, 12], [48, -1, 26], 'water')
@@ -1133,8 +1206,8 @@ function pool(s) {
   s.rect([35, 27], [49, 27], -1, 'stone_bricks')
   s.rect([35, 12], [35, 26], -1, 'stone_bricks')
 
-  // Something to look at on the bottom, for whoever swims down: the anchor
-  // chain and a lantern under fourteen blocks of water.
+  // Something to look at on the bottom, for whoever swims down: an anchor
+  // chain and a lantern under three blocks of water.
   s.set(42, -3, 20, 'iron_block')
   s.set(42, -3, 21, 'iron_block')
   s.set(41, -3, 20, 'sea_lantern')
