@@ -1,7 +1,6 @@
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
 import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture'
-import { Engine } from '@babylonjs/core/Engines/engine'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { MC } from './physics.js'
 import { entityBox } from './entityBox.js'
@@ -91,6 +90,15 @@ export function installEffectSwirl(noa, effects) {
   const mat = noa.rendering.makeStandardMaterial('effect-swirl')
   mat.diffuseTexture = moteTexture(scene)
   mat.diffuseTexture.hasAlpha = true
+  /*
+   * REQUIRED, and rain gets away without it for a reason that does not apply
+   * here. `hasAlpha` alone only puts the material in the transparent pass; it
+   * is this that makes StandardMaterial actually SAMPLE the texture's alpha.
+   * Rain's drops are narrow bright cores on a black surround, so they read
+   * correctly either way. A mote is nothing BUT its radial falloff -- without
+   * this line it draws as a solid square, which is what the first screenshot
+   * showed.
+   */
   mat.useAlphaFromDiffuseTexture = true
   /*
    * ALPHA BLEND, not the alpha TEST particles.js uses for its flames, and the
@@ -101,7 +109,6 @@ export function installEffectSwirl(noa, effects) {
    * each other, which is invisible here because they are all nearly the same
    * colour and nearly the same depth.
    */
-  mat.alphaMode = Engine.ALPHA_COMBINE
   mat.emissiveColor = new Color3(1, 1, 1)
   mat.specularColor = new Color3(0, 0, 0)
   mat.ambientColor = new Color3(0, 0, 0)
@@ -141,6 +148,15 @@ export function installEffectSwirl(noa, effects) {
   mesh.hasVertexAlpha = true
   noa.rendering.addMeshToScene(mesh)
   mesh.alwaysSelectAsActiveMesh = true
+  /*
+   * Babylon computed this mesh's bounding box once, from a position buffer
+   * that was all zeros, and never looks at it again -- the vertices are
+   * rewritten every frame and refreshing the box every frame would cost more
+   * than the motes do. `alwaysSelectAsActiveMesh` is supposed to make that
+   * irrelevant; `doNotSyncBoundingInfo` says the same thing to the half of
+   * Babylon that does not consult it, which is the transparent pass.
+   */
+  mesh.doNotSyncBoundingInfo = true
   mesh.setEnabled(false)
 
   /* Pre-allocated, for the reason particles.js states: allocating mid-burst
@@ -170,14 +186,42 @@ export function installEffectSwirl(noa, effects) {
     const box = entityBox(noa, entity)
     if (!box) return
     const p = pool[liveCount++]
-    p.x = box.min[0] + Math.random() * (box.max[0] - box.min[0])
+    /*
+     * ON THE SURFACE, NOT THROUGH THE VOLUME -- a deliberate departure, and
+     * the screenshot is why.
+     *
+     * Vanilla picks a uniform point inside the bounding box (`getRandomX(0.5)`
+     * spans the full 0.6 width). That works in Minecraft and it did not work
+     * here: the player MODEL is as wide as its box, so an interior point is
+     * inside opaque geometry and the depth test eats it. Photographed in third
+     * person with two effects up, the first version produced motes the spec
+     * could count and the picture could not show.
+     *
+     * So the horizontal position is pushed out to the box's own half-width.
+     * The height is still uniform over the box, which is where the swirl's
+     * shape actually comes from, and the outward drift below carries them
+     * further out from there. It is the same silhouette at the same rate; it
+     * is just on the outside of the skin rather than under it.
+     */
+    const hw = (box.max[0] - box.min[0]) / 2
+    const cx = (box.min[0] + box.max[0]) / 2
+    const cz = (box.min[2] + box.max[2]) / 2
+    const a = Math.random() * Math.PI * 2
+    // A hair beyond the box, so a mote is never coplanar with the skin and
+    // z-fighting with it.
+    const r = hw * 1.1
+    p.x = cx + Math.cos(a) * r
+    p.z = cz + Math.sin(a) * r
     p.y = box.min[1] + Math.random() * (box.max[1] - box.min[1])
-    p.z = box.min[2] + Math.random() * (box.max[2] - box.min[2])
     // A slow outward drift, no gravity. SpellParticle zeroes its own gravity
     // and keeps a small residual velocity; a falling mote reads as ash.
-    p.vx = (Math.random() - 0.5) * 0.35
-    p.vy = (Math.random() - 0.5) * 0.35
-    p.vz = (Math.random() - 0.5) * 0.35
+    // Drifting OUTWARD along the spawn radius rather than in a random
+    // direction, plus a little jitter. Half of what makes a swirl read as a
+    // swirl is that it expands away from the body; a random walk reads as
+    // smoke sitting on it.
+    p.vx = Math.cos(a) * 0.22 + (Math.random() - 0.5) * 0.18
+    p.vz = Math.sin(a) * 0.22 + (Math.random() - 0.5) * 0.18
+    p.vy = (Math.random() - 0.5) * 0.3
     p.age = 0
     p.life = LIFE_MIN + Math.random() * (LIFE_MAX - LIFE_MIN)
     p.r = color[0]; p.g = color[1]; p.b = color[2]
@@ -207,7 +251,24 @@ export function installEffectSwirl(noa, effects) {
   let wasDrawn = false
 
   function onFrame(dtMs) {
-    const dt = Math.min(0.05, dtMs / 1000)
+    /*
+     * TWO TIMESTEPS, AND THE SPLIT IS A REAL BUG THIS SPEC CAUGHT.
+     *
+     * particles.js clamps its frame dt to 0.05 s so that a tab-switch stall
+     * does not teleport everything across the world, and this copied it -- and
+     * used the clamped value to AGE the particles as well as to move them.
+     * Under swiftshader the suite renders at around ten frames a second, so
+     * dtMs is 100 and the clamp halves it: every mote lived twice its stated
+     * lifetime, and a two-second mote was still in the air eight seconds later
+     * on a slower frame. It leaked across tests, which is how it was found --
+     * a poison spec sampling a Speed mote from the test before it.
+     *
+     * So AGE uses real time and MOTION uses the clamped step. The clamp is
+     * about not moving a particle a hundred blocks in one frame; it was never
+     * about how long the particle should exist.
+     */
+    const dt = dtMs / 1000
+    const step = Math.min(0.05, dt)
 
     if (liveCount === 0) {
       // One last upload with the buffer emptied, then stop touching it. Left
@@ -234,9 +295,9 @@ export function installEffectSwirl(noa, effects) {
         i--
         continue
       }
-      p.x += p.vx * dt
-      p.y += p.vy * dt
-      p.z += p.vz * dt
+      p.x += p.vx * step
+      p.y += p.vy * step
+      p.z += p.vz * step
 
       const t = p.age / p.life
       // Fade out over the second half only. Fading from birth makes the swirl
@@ -245,9 +306,15 @@ export function installEffectSwirl(noa, effects) {
       const alpha = t < 0.5 ? 1 : 1 - (t - 0.5) * 2
       const s = SIZE * (1 - t * t * 0.5)
 
-      const x = p.x - originGlobal[0] + originLocal[0]
-      const y = p.y - originGlobal[1] + originLocal[1]
-      const z = p.z - originGlobal[2] + originLocal[2]
+      /*
+       * RAW WORLD COORDINATES in the buffer, and the frame's origin offset
+       * carried on the MESH -- which is particles.js's convention, copied
+       * exactly rather than re-derived. Baking the offset into every vertex is
+       * arithmetically identical and it is a second way of saying the same
+       * thing, which is one more place for the two to drift apart the day noa
+       * changes how it rebases.
+       */
+      const x = p.x, y = p.y, z = p.z
 
       const ax = rx * s, ay = ry * s, az = rz * s
       const bx = ux * s, by = uy * s, bz = uz * s
@@ -276,6 +343,7 @@ export function installEffectSwirl(noa, effects) {
       for (let k = 0; k < 4; k++) colors[c + k * 4 + 3] = 0
     }
 
+    mesh.position.set(originLocal[0], originLocal[1], originLocal[2])
     mesh.updateVerticesData('position', positions, false, false)
     mesh.updateVerticesData('color', colors, false, false)
     if (!wasDrawn) { mesh.setEnabled(true); wasDrawn = true }
