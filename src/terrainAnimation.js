@@ -171,7 +171,15 @@ export const MAX_PAGE_LAYERS = 192
  * by construction rather than by convention.
  */
 export function atlasLayout(pages = ATLAS_PAGES) {
-  const alphaPage = pages.findIndex(p => p.hasAlpha)
+  /*
+   * `page: 'alpha'` means the BLEND page, not merely a page with an alpha
+   * channel. There are two of the latter now (blocks.js splits cutout art from
+   * translucent art so leaves stop being drawn as blended, depth-write-less
+   * quads) and the only standalone run that asks for "alpha" is the nether
+   * portal, whose swirl is translucent. Falls back to `hasAlpha` so a page
+   * table without the newer flag still resolves to something.
+   */
+  const alphaPage = pages.findIndex(p => p.blend ?? p.hasAlpha)
   return pages.map((page, pageIndex) => {
     const extra = []
     let next = page.names.length

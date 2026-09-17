@@ -448,15 +448,19 @@ test.describe('a nametag is drawn over the world and under your hand', () => {
    * nametag.js had taken a group with Babylon's default depth clear, this test
    * would see full white text through the mountain.
    *
-   * STONE AND NOT LEAVES, and the reason is a real divergence worth knowing:
-   * noa puts the whole alpha atlas page (leaves, glass, water) on a material
-   * whose needAlphaBlending() is TRUE, and Babylon does not depth-write a
-   * blended mesh. So leaves in this engine occlude NOTHING -- not a nametag,
-   * not each other's far faces. Vanilla's leaves are in the cutout layer and
-   * do write depth, so a name behind a tree there is dim. Noted rather than
-   * fixed: it is a property of how terrain is meshed, it is the same reason
-   * the tag was being painted over in the first place, and changing it is a
-   * terrain-wide decision rather than a nametag one.
+   * STONE AND NOT LEAVES, and the reason USED TO BE a real divergence: noa put
+   * the whole alpha atlas page (leaves, glass, water) on a material whose
+   * needAlphaBlending() was TRUE, Babylon does not depth-write a blended mesh,
+   * and so leaves in this engine occluded NOTHING -- not a nametag, not each
+   * other's far faces. That was called "a terrain-wide decision rather than a
+   * nametag one" and left alone, correctly: it was one, and it got made.
+   * blocks.js now splits the cutout art onto its own atlas page, so leaves are
+   * alpha-TESTED and do write depth, the same as vanilla's cutout layer. See
+   * test/86-leaves.spec.js, which owns that contract.
+   *
+   * Stone stays the subject here anyway. This test is about the tag's
+   * rendering group inheriting the world's depth buffer, and a wall with holes
+   * in it is a worse instrument for that than a wall without.
    */
   test('behind stone, the crisp pass is occluded and the dim one is not',
     async ({ page, terrain }) => {

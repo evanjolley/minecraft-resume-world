@@ -1440,12 +1440,69 @@ export function iconFaces(def) {
 const ATLAS_PAGE_SIZE = 128
 
 /*
- * Alpha materials are segregated onto their own pages, not interleaved.
- * noa turns on alpha blending for a whole atlas texture if ANY material in
- * it needs alpha, and putting opaque terrain into the transparent render
- * pass costs sorting artifacts for no reason.
+ * TRANSLUCENT ART -- the materials whose alpha is something OTHER than 0 or
+ * 255 somewhere in the sprite, so the only honest way to draw them is to
+ * blend.
+ *
+ * WHY A HAND-WRITTEN LIST and not a measurement. The page a material lands on
+ * is a number baked into every chunk's vertex buffer, and blocks.js runs in
+ * the browser where it cannot open a PNG. So the classification has to be a
+ * DECLARATION, and scripts/build-textures.mjs checks the declaration against
+ * the pixels it just decoded (see assertAlphaClasses there) rather than the
+ * other way round.
+ *
+ * Measured off the vanilla 1.21.8 sprites: ice is a flat a=190, slime a=180,
+ * water a=180 (baked by the recipe above), tinted glass 110/200, and every
+ * stained glass pane mixes 102, 155 and 163. Everything else that needs alpha
+ * at all -- all nine leaves, plain glass, the copper grate, the torch -- is
+ * 0 or 255 and nothing in between, which is a CUTOUT.
+ *
+ * `ice` and not `packed_ice`/`blue_ice`: those two are opaque blocks that
+ * merely look cold.
  */
-const opaqueNames = [], alphaNames = []
+const TRANSLUCENT = new Set([
+  'water_still', 'ice', 'slime_block', 'tinted_glass',
+  ...['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink',
+    'gray', 'light_gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red',
+    'black'].map(c => `${c}_stained_glass`),
+])
+
+/*
+ * Three classes of page, not two, and the third one is the bug fix.
+ *
+ * Alpha materials were already segregated from opaque ones: noa turns alpha
+ * on for a whole atlas texture if ANY material in it needs it, and putting
+ * opaque terrain into the transparent render pass costs sorting artifacts for
+ * no reason.
+ *
+ * The split that was MISSING is inside the alpha half. A material is one
+ * material per PAGE, so `useAlphaFromDiffuseTexture` -- set for water, whose
+ * alpha is 180 -- was set for the leaves as well, and Babylon reads that flag
+ * as "this whole page blends":
+ *
+ *   - `Material._shouldTurnAlphaTestOn` is `!needAlphaBlending && needAlphaTesting`
+ *     (materials/material.js), so turning blending on turned the ALPHATEST
+ *     define OFF. The leaves stopped being a cutout.
+ *   - `ThinEngine.setAlphaMode` does `depthCullingState.depthMask = mode === 0`
+ *     (Engines/Extensions/engine.alpha.js), so a blended mesh does not write
+ *     depth. Leaves stopped occluding anything -- each other's far faces, the
+ *     far side of a canopy, a nametag behind a tree.
+ *
+ * Reported from play as "texture for cherry blossom leaves is incorrect I can
+ * see through it". Cherry is where it shows because cherry is the DENSEST
+ * leaf in the set -- 216 of 256 texels opaque, against oak's 172 and birch's
+ * 144 -- so a cherry canopy is the one the eye expects to be a solid mass.
+ * Every leaf had the fault; only cherry made it obvious.
+ *
+ * Vanilla agrees with the split rather than with the old page. 1.21.8's
+ * `RenderPipelines.CUTOUT_MIPPED` (what `RenderType.cutoutMipped()`, the leaf
+ * layer, is built from) is `builder(TERRAIN_SNIPPET).withShaderDefine(
+ * "ALPHA_CUTOUT", 0.5f)` -- no `withBlend`, no `withCull(false)`, no
+ * `withDepthWrite(false)`, and `RenderPipeline.Builder` defaults cull to
+ * `orElse(true)`. `RenderPipelines.TRANSLUCENT`, which is where water and
+ * stained glass go, is the same snippet plus `withBlend(TRANSLUCENT)`.
+ */
+const opaqueNames = [], cutoutNames = [], blendNames = []
 {
   const seen = new Set()
   const needsAlpha = new Set()
@@ -1461,20 +1518,32 @@ const opaqueNames = [], alphaNames = []
     for (const m of faceMaterials(def)) {
       if (seen.has(m)) continue
       seen.add(m)
-      ;(needsAlpha.has(m) ? alphaNames : opaqueNames).push(m)
+      const bucket = !needsAlpha.has(m) ? opaqueNames
+        : TRANSLUCENT.has(m) ? blendNames : cutoutNames
+      bucket.push(m)
     }
   }
 }
 
-const page = (names, hasAlpha, out) => {
+const page = (names, kind, out) => {
   for (let i = 0; i < names.length; i += ATLAS_PAGE_SIZE) {
-    out.push({ file: `atlas${out.length}.png`, names: names.slice(i, i + ATLAS_PAGE_SIZE), hasAlpha })
+    out.push({ file: `atlas${out.length}.png`, names: names.slice(i, i + ATLAS_PAGE_SIZE), ...kind })
   }
   return out
 }
 
-/** @type {{ file: string, names: string[], hasAlpha: boolean }[]} */
-export const ATLAS_PAGES = page(alphaNames, true, page(opaqueNames, false, []))
+/**
+ * `hasAlpha` means "the artwork has an alpha channel", which is what noa
+ * forwards to `diffuseTexture.hasAlpha` and is what buys the cutout. `blend`
+ * is the narrower claim that the alpha is fractional and has to go through
+ * the transparent pass.
+ *
+ * @type {{ file: string, names: string[], hasAlpha: boolean, blend: boolean }[]}
+ */
+export const ATLAS_PAGES =
+  page(blendNames, { hasAlpha: true, blend: true },
+    page(cutoutNames, { hasAlpha: true, blend: false },
+      page(opaqueNames, { hasAlpha: false, blend: false }, [])))
 
 /** Every texture name the build has to produce, in atlas order. */
 export const MATERIALS = ATLAS_PAGES.flatMap(p => p.names)
@@ -1524,24 +1593,60 @@ for (const def of BLOCK_TYPES) {
  * costs nothing to be on the right side of the freeze, and the next flag
  * someone reaches for here might not be so forgiving.)
  *
- * WHAT IT COSTS. Materials are one per atlas PAGE, not one per block, so this
- * is the whole alpha page: water, ice, glass, stained glass, slime and every
- * leaf. Leaves and glass now draw their far faces too. That is more overdraw
- * in the transparent pass and it is also, as it happens, what vanilla's fancy
- * leaves look like from outside a tree. The opaque pages are untouched, which
- * is where all the terrain actually is.
+ * WHAT IT COSTS, and this is the part that was wrong for a week. Materials are
+ * one per atlas PAGE, not one per block, so when water, glass and every leaf
+ * shared one alpha page these two flags were a decision about all of them --
+ * and the note that used to stand here claimed the alpha cutoff still ran and
+ * that double-sided leaves were "what vanilla's fancy leaves look like". Both
+ * halves were false; see the atlas page comment above for the two lines of
+ * Babylon and the two lines of Mojang that say so.
  *
- * REJECTED -- giving water its own atlas page so the flag lands on nothing
- * else. It is the precise fix and it costs a new page, an edit to
- * scripts/build-textures.mjs (another agent's file this pass) and one more
- * sub-mesh per chunk that contains water.
+ * TAKEN -- the option that note REJECTED: a page of its own for the art that
+ * genuinely blends. It cost one atlas page, one more sub-mesh per chunk that
+ * holds both classes, and about twenty lines here and in the build script. The
+ * two reasons it was passed over -- "it costs a new page" and "build-textures
+ * .mjs is another agent's file this pass" -- were a budget and a calendar, and
+ * neither survived contact with a rendering bug the owner could see from
+ * across a valley. The page budget is in scripts/build-textures.mjs; the cap
+ * is 192 layers and the new pages sit at 12 and ~120.
+ *
+ * REJECTED -- `mat.forceAlphaTest = true` on the shared page, which does put
+ * the ALPHATEST define back (`PrepareDefinesForMisc(..., _shouldTurnAlphaTestOn
+ * || _forceAlphaTest, ...)` in standardMaterial.js). It buys back the cutout
+ * and NOT the depth write, which is the half you can actually see, and it
+ * would alpha-test water and stained glass at a 0.4 cutoff their 0.4-ish
+ * texels sit right on top of.
  *
  * REJECTED -- a `blockMesh` for water, the way blockMeshes.js does slabs. It
  * takes water off the terrain mesher entirely: a per-block Babylon mesh for
  * every voxel of a 27-block-deep ocean, to solve a problem one boolean solves.
  */
 function installAlphaPageMaterials(noa) {
-  const alphaFiles = ATLAS_PAGES.filter(p => p.hasAlpha).map(p => p.file)
+  /*
+   * TWO LISTS, because the two flags are no longer one decision.
+   *
+   * Double-sided is for every page with holes in it. Single-sided is what
+   * vanilla does, and vanilla can afford it because vanilla MESHES THE INSIDE
+   * OF A TREE: leaves are non-opaque in Fancy graphics, so every leaf-to-leaf
+   * boundary is a drawn quad and a canopy is nine layers of them. noa's greedy
+   * mesher opens with `if (id0 === id1) continue` (terrainMesher.js, the mask
+   * loop) and never draws a face between two voxels of the same id, so a
+   * canopy here is a HOLLOW SHELL one quad thick. Cull its back faces and the
+   * 40-of-256 holes in cherry's sprite look straight through the tree to the
+   * sky -- which is the owner's "I can see through it", and it survives at
+   * every distance because there is no second layer to catch it.
+   *
+   * So the far side of the shell stands in for the interior layers noa
+   * declines to build. It costs one extra quad per visible face, and with the
+   * alpha test back on it is a CRISP stand-in: a hole discards, writes no
+   * depth, and the far face behind it draws. That is the whole difference
+   * between this and what it replaced, which blended the two into a smear.
+   *
+   * Alpha-from-diffuse is `blend` ONLY. On the cutout page it would cost the
+   * ALPHATEST define and the depth write -- see the page comment above.
+   */
+  const doubleSided = ATLAS_PAGES.filter(p => p.hasAlpha).map(p => p.file)
+  const alphaFiles = ATLAS_PAGES.filter(p => p.blend).map(p => p.file)
   const scene = noa.rendering.getScene()
 
   /*
@@ -1556,9 +1661,9 @@ function installAlphaPageMaterials(noa) {
     // scene uses that prefix.
     if (!mat.name.startsWith('terrain-textured-')) return
     const url = noa.registry.getMaterialData(+mat.name.split('-')[2])?.texture
-    if (!url || !alphaFiles.some(f => url.endsWith(f))) return
-    mat.backFaceCulling = false
-    waiting.add(mat)
+    if (!url) return
+    if (doubleSided.some(f => url.endsWith(f))) mat.backFaceCulling = false
+    if (alphaFiles.some(f => url.endsWith(f))) waiting.add(mat)
   })
 
   /*
@@ -1567,8 +1672,8 @@ function installAlphaPageMaterials(noa) {
    * Reported from play: "the water texture is opaque which is not correct".
    * Every other link in the chain was already right and that is what made it
    * hard to see -- the block says `alpha: true`, the recipe bakes 180 into
-   * `water_still` in the atlas (checked: those pixels come off atlas4.png at
-   * a = 180), the page is `hasAlpha`, and noa duly sets
+   * `water_still` in the atlas (checked: those pixels come off the blend page
+   * at a = 180), the page is `hasAlpha`, and noa duly sets
    * `diffuseTexture.hasAlpha = true`.
    *
    * What noa does NOT set is `useAlphaFromDiffuseTexture`, and Babylon's
@@ -1578,21 +1683,23 @@ function installAlphaPageMaterials(noa) {
    * full opacity. 180/255 is 0.71, comfortably over the cutoff, so every
    * water pixel survived the test and then rendered solid.
    *
-   * WHY IT SURVIVED THIS LONG. Alpha testing is the CORRECT treatment for
-   * everything else on this page -- leaves, glass, stained glass, the ladder,
-   * the lily pad. Their alpha is 0 or 255 and a cutoff reproduces them
-   * exactly, with no sorting cost. Water is the only material here whose
-   * alpha is in between, so it is the only one the missing flag could damage.
+   * WHY IT SURVIVED THIS LONG. Alpha testing is the CORRECT treatment for a
+   * cutout -- leaves, plain glass, the copper grate, the torch. Their alpha is
+   * 0 or 255 and a cutoff reproduces them exactly, with no sorting cost. Water
+   * is not a cutout, so it is the one the missing flag damaged.
    * AND STILL WATER WAS BROKEN TOO, not just the new flow ids: they all
    * resolve to the same material as `water_still`. This was never about
    * flowing water, and checking still water first is what said so.
    *
-   * Turning the flag on gives BOTH -- Babylon's `needAlphaBlending()` picks up
-   * `_shouldUseAlphaFromDiffuseTexture()` while `needAlphaTesting()` still
-   * fires on `hasAlpha` -- so the cutoff keeps discarding the fully
-   * transparent texels of glass and leaves before they can cost a blend, and
-   * water's 0.71 goes through the transparent pass and lets the world behind
-   * it through.
+   * Turning the flag on makes `needAlphaBlending()` true, which sends the page
+   * through the transparent pass and lets the world behind the water through.
+   *
+   * IT IS NOT FREE, and the first version of this comment said it was. Blending
+   * is not additive to alpha testing, it REPLACES it: `_shouldTurnAlphaTestOn`
+   * is `!needAlphaBlending && needAlphaTesting`, so the ALPHATEST define goes
+   * away, and `setAlphaMode` clears `depthMask`, so the mesh stops writing
+   * depth. Both are fine for water. Neither is fine for a leaf, which is why
+   * the cutout art now lives on a page this function never touches.
    *
    * REJECTED -- `mat.alpha = 180/255` on the material. It is one number for
    * the whole page, so it would fade the leaves and the glass frame with it.

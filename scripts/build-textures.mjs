@@ -748,7 +748,44 @@ async function decodeAll(dir, allowSubstitutes) {
  * Outputs
  * ------------------------------------------------------------------ */
 
+/*
+ * The other end of blocks.js's TRANSLUCENT list.
+ *
+ * blocks.js has to DECLARE which art blends, because a page index is baked
+ * into every chunk's vertex buffer and blocks.js runs in a browser that cannot
+ * open a PNG. This is where the declaration meets the pixels. It matters in
+ * one direction much more than the other: translucent art on the CUTOUT page
+ * gets alpha-tested, and a stained glass pane whose 102/255 sits right beside
+ * the 0.4 cutoff would flicker between "solid" and "gone". Cutout art on the
+ * blend page only costs a blend it did not need.
+ *
+ * WARNS, DOES NOT THROW, and that is deliberate. The classification is
+ * measured from vanilla 1.21.8, and CE draws some of the same blocks with
+ * different alpha -- a resource pack disagreeing about whether its glass is
+ * translucent should not stop `npm run build:deploy` from producing a game.
+ */
+function assertAlphaClasses(raw) {
+  const bad = []
+  for (const page of ATLAS_PAGES) {
+    if (!page.hasAlpha) continue
+    for (const name of page.names) {
+      const buf = raw.get(name)
+      let partial = false
+      for (let i = 3; i < buf.length; i += 4) {
+        if (buf[i] !== 0 && buf[i] !== 255) { partial = true; break }
+      }
+      if (partial !== page.blend) {
+        bad.push(`${name} is ${partial ? 'translucent' : 'a cutout'} but sits on `
+          + `${page.file}, the ${page.blend ? 'blend' : 'cutout'} page`)
+      }
+    }
+  }
+  for (const line of bad) console.log(`  WARNING: ${line}`)
+  return bad
+}
+
 async function writeTextures(raw) {
+  assertAlphaClasses(raw)
   // One file per material. Only blockIcon.js reads these -- terrain uses the
   // atlases -- but the inventory icons are plain CSS background-images, and
   // slicing an atlas in CSS would mean hardcoding every material's row.
