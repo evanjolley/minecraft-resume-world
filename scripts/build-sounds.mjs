@@ -189,6 +189,30 @@ const SETS = {
   pickup: ['random/pop'],
 
   /* ------------------------------------------------------------------ *
+   * Potions. Three events, read out of sounds.json in asset index 26
+   * (1.21.8) on this machine rather than from memory:
+   *
+   *   entity.generic.drink        -> random/drink
+   *   entity.splash_potion.throw  -> random/bow
+   *   entity.splash_potion.break  -> random/glass1, glass2, glass3
+   *
+   * THE THROW REALLY IS THE BOW. entity.splash_potion.throw, .egg.throw,
+   * .snowball.throw, .ender_pearl.throw and .wind_charge.throw all name
+   * `random/bow` and are separated only by the pitch the caller passes --
+   * 0.4 / (rand * 0.4 + 0.8), which drops it a fifth. A file called
+   * `throw.ogg` does not exist to be extracted, and looking for one is the
+   * half hour this note saves.
+   *
+   * LINGERING SHARES BOTH. entity.lingering_potion.throw is another
+   * random/bow, and there is no entity.lingering_potion.break at all --
+   * ThrownPotion fires level event 2002 or 2007 either way, and 2007's only
+   * difference is the particle. Two rows, not four.
+   * ------------------------------------------------------------------ */
+  drink: ['random/drink'],
+  potionThrow: ['random/bow'],
+  shatter: ['random/glass1', 'random/glass2', 'random/glass3'],
+
+  /* ------------------------------------------------------------------ *
    * Water.
    *
    * Every one of these is in the flat `liquid/*` and `ambient/underwater/*`
@@ -317,6 +341,29 @@ const FREE = {
    * samples that are obviously two different people getting hurt is worse
    * than one sample repeated. Replacing all three would mean throwing away
    * the one hurt sound a Minecraft clone has already judged fit for the job.
+   */
+  /*
+   * THE POTION SOUNDS HAVE NO FREE EQUIVALENT, and this is the note rather
+   * than a substitution.
+   *
+   * sounds-src/free is 31 files: VoxeLibre's footsteps and digging, one hurt,
+   * one fall, and three Kenney/qubodup interface and snow samples. There is
+   * no gulp in it, no glass, and no bowstring. So `npm run build:deploy`
+   * ships a game where drinking a potion and shattering one on a wall are
+   * SILENT, and the local vanilla build is the only one that has them.
+   *
+   * That is stated here rather than papered over, because the three ways to
+   * paper over it are all worse. Re-pitching the UI click into a "gulp" is a
+   * fabricated sound with no author to put in NOTICE.txt. Playing the gravel
+   * dig as breaking glass is a different material, which is the substitution
+   * this table's snow note already refuses when a correct recording exists.
+   * And adding a `fallback` in sounds.js's MIX would make the gap invisible
+   * -- the deployed site would make SOME noise and nobody would ever look.
+   *
+   * play() on a set the manifest does not carry is already a silent no-op, so
+   * nothing breaks; it is just quiet. Filling it properly means finding three
+   * CC0 recordings with named authors and adding them to NOTICE.txt, which is
+   * sourcing work rather than code and is not this change.
    */
   sets: {
     'damage/hit1': 'voxelibre/player_damage',

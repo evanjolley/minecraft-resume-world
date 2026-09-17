@@ -631,7 +631,14 @@ const buckets = installBuckets(noa, { inventory, authority, inputLock, effects }
  * it opened a screen, so everything after it is already guarded. A potion's
  * `places` is 0, so interact.js's placement path ignores it as well.
  */
-const potions = installPotions(noa, { inventory, effects, inputLock, authority, vitalsFor })
+/*
+ * `sounds.potions` is the adapter sounds.js exports for the three hooks
+ * potions.js already calls. It was shipped taking `sounds = null` and was
+ * never handed one, which is why drinking a potion made no noise.
+ */
+const potions = installPotions(noa, {
+  inventory, effects, inputLock, authority, vitalsFor, sounds: sounds.potions,
+})
 installFurnaceDrops(inventory.furnaces, authority, drops.popResource)
 
 /*

@@ -179,6 +179,35 @@ const GROUP_RULES = [
   // needs a sound; vanilla's barrier declares no SoundType and inherits stone.
   [/^barrier$/, 'stone', 'vanilla barrier inherits SoundType.STONE'],
 
+  /*
+   * Signs and paintings, which arrived after this table and were never added
+   * to it -- 24 blocks that have been playing stone since, and that
+   * build-sounds.mjs's drift gate has been refusing to build against. Found
+   * by running `npm run sounds`, which is the whole reason that gate is fatal.
+   *
+   * Before the wood rules, because `oak_sign_r7` and `oak_wall_sign_north`
+   * have to be matched as SIGNS: the non-cube suffix stripper below does not
+   * know about `_r<n>` or `_wall_sign_<facing>`, so they would fall through
+   * to the generic wood pattern by luck rather than by rule.
+   *
+   * A standing or wall sign is SoundType.WOOD in vanilla -- only the HANGING
+   * signs got their own families (block.hanging_sign.*, and one per wood
+   * type). This world has no hanging signs.
+   *
+   * THE PAINTING IS AN APPROXIMATION and says so. Vanilla has no SoundType
+   * for it at all, because a vanilla painting is an ENTITY: its noises are
+   * entity.painting.break and .place, three and four samples of their own
+   * under entity/painting/. This world made it a block (see the paintings
+   * commit, which lists five working systems that say block), and a block
+   * needs a family. Wood is the nearest one -- a canvas on a wooden frame --
+   * and the alternative, extracting entity/painting/* and wiring a
+   * block-keyed event to entity samples, is a new code path in play() for two
+   * sounds nobody has asked about.
+   */
+  [/^oak_sign(_r\d+)?$|^oak_wall_sign_(north|south|east|west)$/, 'wood', 'SoundType.WOOD'],
+  [/^painting(_wall_(south|east|west))?$/, 'wood',
+    'vanilla painting is an entity with its own events; wood is the nearest block family'],
+
   /* ---- foliage, before anything that matches a wood name ---- */
   [/^cherry_leaves$/, 'cherry_leaves', 'SoundType.CHERRY_LEAVES'],
   // Every other leaf in the palette is SoundType.GRASS -- which is the fix for
@@ -483,6 +512,37 @@ const MIX = {
   lavaPop: { set: 'lavaPop', shared: true, volume: 0.4, pitch: 1.0, vary: 0.3 },
   // The bubble leaving the air meter. A HUD sound, so flat and dry.
   breath: { set: 'breath', shared: true, volume: 0.5, pitch: 1.0, vary: 0.1 },
+
+  /* ------------------------------------------------------------------ *
+   * Potions. Volumes and pitches are the arguments vanilla's own callers
+   * pass, not ear-tuning:
+   *
+   *   LivingEntity.triggerItemUseEffects
+   *     playSound(getDrinkingSound(), 0.5F, random.nextFloat() * 0.1F + 0.9F)
+   *   SplashPotionItem.use
+   *     playSound(..., 0.5F, 0.4F / (random.nextFloat() * 0.4F + 0.8F))
+   *   LevelRenderer, level event 2002
+   *     playLocalSound(..., 1.0F, random.nextFloat() * 0.1F + 0.9F)
+   *
+   * THE THROW'S PITCH IS THE INTERESTING ONE. 0.4 / (rand*0.4 + 0.8) spans
+   * 0.333 to 0.5 -- half an octave, and a long way below 1.0. It is what
+   * makes the same random/bow sample read as a bottle leaving your hand
+   * rather than as an arrow. `pitch 0.4167, vary 0.2` reproduces that range
+   * EXACTLY (0.4167 * 0.8 = 0.333, 0.4167 * 1.2 = 0.5); only the distribution
+   * inside it differs, triangular here against vanilla's reciprocal.
+   *
+   * Drink and shatter want a uniform 0.9-1.0 and get a triangular
+   * 0.9025-0.9975 for the same reason. A second distribution for one tenth of
+   * a semitone is machinery nobody can hear, and `vary` already exists.
+   *
+   * SHATTER STAYS AT VANILLA'S 1.0, which makes it the loudest thing in this
+   * table. That is deliberate and it is not the fall-thump case: a fall fires
+   * three voices into one frame and had to come down, where a bottle breaking
+   * is one sound, once, and is the entire feedback that the throw connected.
+   * ------------------------------------------------------------------ */
+  drink: { set: 'drink', shared: true, volume: 0.5, pitch: 0.95, vary: 0.05 },
+  potionThrow: { set: 'potionThrow', shared: true, volume: 0.5, pitch: 0.4167, vary: 0.2 },
+  shatter: { set: 'shatter', shared: true, volume: 1.0, pitch: 0.95, vary: 0.05 },
 }
 
 // Minecraft's LivingEntity.getFallDamageSound: more than 4 half-hearts of fall
@@ -1160,6 +1220,31 @@ export function installSounds(noa, deps = {}) {
   return {
     play,
     groupForBlock,
+    /*
+     * The three potion hooks, bundled here rather than left for main.js to
+     * assemble out of play() calls.
+     *
+     * potions.js already calls `sounds?.drink?.()`, `sounds?.throw?.()` and
+     * `sounds?.shatter?.(at)` -- the seam was cut and nothing was ever passed
+     * into it, which is half of why the potions shipped silent. The shape is
+     * its, the mix is this file's, and putting the adapter here means main.js
+     * hands over `sounds.potions` instead of holding three closures that know
+     * what a splash potion costs in decibels.
+     *
+     * `throw` is a reserved word, which is legal as a property name and not as
+     * a MIX key -- hence potionThrow above.
+     *
+     * SHATTER IS POSITIONAL and the other two are flat. Vanilla plays the
+     * break with playLocalSound at the impact BlockPos, which is the whole
+     * point of a thrown potion: the noise tells you where it landed. Drinking
+     * and throwing both happen at your own head, where a panner would compute
+     * a pan of zero at some cost.
+     */
+    potions: {
+      drink: () => play('drink'),
+      throw: () => play('potionThrow'),
+      shatter: (at = null) => play('shatter', null, at),
+    },
     /*
      * The mapping itself, for the console and for the test suite. `unmapped`
      * is the one that matters: it is the same list scripts/build-sounds.mjs

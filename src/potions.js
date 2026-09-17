@@ -874,7 +874,7 @@ export function installPotions(noa, {
       if (potency <= 0) continue
       hits.push({ entity, potency, applied: applyPotion(entity, shot.id, potency) })
     }
-    sounds?.shatter?.()
+    sounds?.shatter?.([shot.x, shot.y, shot.z])
     return { at: [shot.x, shot.y, shot.z], color: potionColor(shot.id), hits }
   }
 

@@ -131,3 +131,73 @@ test.describe('the status effect icons', () => {
     await clear(page)
   })
 })
+
+/* ------------------------------------------------------------------ *
+ * The three potion sounds.
+ *
+ * potions.js has called `sounds?.drink?.()`, `sounds?.throw?.()` and
+ * `sounds?.shatter?.()` since the day it shipped. Nothing was ever passed in,
+ * and build-sounds.mjs had never extracted a sample for any of them -- two
+ * independent holes that both produce exactly the same silence, which is why
+ * this asserts the SAMPLE NAME rather than "something played".
+ * ------------------------------------------------------------------ */
+
+const lastPlayed = (page) => page.evaluate(() => window.game.sounds.lastPlayed)
+
+test.describe('the potion sounds', () => {
+  /*
+   * The AudioContext is 'off' until a real user gesture reaches the window --
+   * sounds.js attaches its unlock to mousedown/touchstart/keydown in the
+   * capture phase and removes it once resumed. A synthetic dispatchEvent does
+   * not satisfy the browser's autoplay policy; the key has to come from the
+   * driver. So: one real tap, then wait for the context to actually reach
+   * 'running', because resume() is a promise and the tap only starts it.
+   */
+  test.beforeAll(async ({ world }) => {
+    await world.page.keyboard.press('KeyZ')
+    await world.page.waitForFunction(() => window.game.sounds.state === 'running',
+      null, { timeout: 15_000, polling: 50 })
+    await world.page.evaluate(() => window.game.sounds.ready())
+  })
+
+  test('drink, throw and shatter reach vanilla\'s own samples', async ({ page }) => {
+    // A no-op play() leaves lastPlayed holding whatever ran before, so the
+    // gate is checked rather than assumed. Without this the whole describe
+    // passes against a build that has no potion samples at all.
+    expect(await page.evaluate(() => window.game.sounds.state)).toBe('running')
+
+    const fired = await page.evaluate(() => {
+      const out = {}
+      const s = window.game.sounds
+      for (const [name, fn] of [['drink', () => s.potions.drink()],
+                                ['throw', () => s.potions.throw()],
+                                ['shatter', () => s.potions.shatter([0, 64, 0])]]) {
+        out[name] = { ok: fn(), last: s.lastPlayed }
+      }
+      return out
+    })
+
+    // entity.generic.drink -> random/drink, one sample.
+    expect(fired.drink.ok).toBe(true)
+    expect(fired.drink.last).toMatchObject({ event: 'drink', set: 'drink', name: 'random/drink' })
+
+    // entity.splash_potion.throw -> random/bow. Not a file called `throw`.
+    expect(fired.throw.ok).toBe(true)
+    expect(fired.throw.last).toMatchObject({ event: 'potionThrow', name: 'random/bow' })
+
+    // entity.splash_potion.break -> random/glass1-3.
+    expect(fired.shatter.ok).toBe(true)
+    expect(fired.shatter.last.name).toMatch(/^random\/glass[123]$/)
+  })
+
+  test('drinking a potion in the world actually makes the noise', async ({ page }) => {
+    await page.evaluate(() => { window.game.sounds.lastPlayed })
+    const before = await lastPlayed(page)
+    await page.evaluate(() => window.game.potions.drinkNow('swiftness'))
+    await waitTicks(page, 2)
+    const after = await lastPlayed(page)
+    expect(after, 'drinking went through potions.js and reached no sample')
+      .toMatchObject({ event: 'drink', name: 'random/drink' })
+    expect(after).not.toEqual(before)
+  })
+})
