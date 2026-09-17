@@ -156,6 +156,44 @@ export const MC = {
                          // `isInWater() && isShiftKeyDown() && isAffectedByFluids()`.
 
   /*
+   * HOW DEEP THE WATER HAS TO BE BEFORE IT TAKES YOUR JUMP AWAY, and this is
+   * the number that says jumpInLiquid and jumpFromGround are an EITHER/OR
+   * rather than a pair.
+   *
+   * LivingEntity.aiStep, 1.21.8 (Mojang-mapped, `sis1cat/minecraftsodium-1.21.8`,
+   * src/net/minecraft/world/entity/LivingEntity.java around line 2758):
+   *
+   *   boolean bl = this.isInWater() && g > 0.0;
+   *   double h = this.getFluidJumpThreshold();
+   *   if (!bl || this.onGround() && !(g > h)) {
+   *     if (!this.isInLava() || this.onGround() && !(g > h)) {
+   *       if ((this.onGround() || bl && g <= h) && this.noJumpDelay == 0) {
+   *         this.jumpFromGround();  this.noJumpDelay = 10;
+   *       }
+   *     } else this.jumpInLiquid(FluidTags.LAVA);
+   *   } else this.jumpInLiquid(FluidTags.WATER);
+   *
+   * `g` is getFluidHeight, measured UP FROM THE BOTTOM OF THE BOX, and `h` is
+   * Entity.getFluidJumpThreshold: `getEyeHeight() < 0.4 ? 0.0 : 0.4`. A 1.62
+   * eye is comfortably over 0.4, so for a player it is a flat 0.4.
+   *
+   * Collapse those three branches for the one-fluid-at-a-time case this world
+   * has -- water and lava separately, and both come out identical:
+   *
+   *   in a fluid: jumpFromGround iff (onGround && g <= 0.4), else jumpInLiquid
+   *
+   * So you can hop through a puddle of level-7 flow (1/9 of a block deep) and
+   * you cannot leap out of a pond, because a still source is 8/9 = 0.889 deep
+   * and that takes the jump away.
+   *
+   * The `onGround` half of that needs no code here. noa only hands out an
+   * impulse when you are grounded or have air jumps left, and installPhysics
+   * sets airJumps to 0 -- so an airborne body has no ground jump to take. What
+   * the gate in fluids.js tests is the depth alone.
+   */
+  FLUID_JUMP_THRESHOLD: 0.4,
+
+  /*
    * The VERTICAL VELOCITY RETENTION, which is the one number in this block
    * that is not an acceleration and not a speed.
    *

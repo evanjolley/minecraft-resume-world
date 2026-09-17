@@ -284,8 +284,19 @@ export function createFluids(noa, move) {
    * flowing water becomes a hole you fall through.
    */
   let sourceIds = {}
+  /*
+   * id -> the whole FLUID_FLOW row, which byId deliberately throws away.
+   *
+   * byId answers "which fluid", and that is all every existing caller wants.
+   * The jump gate wants HOW DEEP, and depth is the level: `(8 - level) / 9`,
+   * fluidGeometry's ownHeight. Rejected: widening byId's values to the row and
+   * reaching for `.fluid` at its fourteen call sites -- a rename that touches
+   * every line of the file that has ever been right, to serve one new caller.
+   */
+  let metaById = new Map()
   const setIds = (ids) => {
     byId = new Map(FLUID_FLOW.map(f => [ids[f.key], f.fluid]))
+    metaById = new Map(FLUID_FLOW.map(f => [ids[f.key], f]))
     /*
      * The SOURCE id of each fluid, kept separately, and it has to be.
      *
@@ -360,19 +371,141 @@ export function createFluids(noa, move) {
    * block ids do, while this tuning has to run from boot and has to be right
    * in a STILL pool, where the push returns null and scans nothing.
    */
-  const feetFluid = (box) => {
-    if (!box) return null
+  /*
+   * ONE CELL'S HEIGHT, vanilla's FlowingFluid.getHeight rather than the
+   * renderer's.
+   *
+   * Two different questions share the word "height" in this codebase and only
+   * one of them belongs here. fluidGeometry's cornerHeight averages four
+   * columns with the x10 weighting, because a SURFACE has to be continuous or
+   * it reads as a staircase. Physics asks no such thing: getFluidHeight walks
+   * cells and takes `q + fluidState.getHeight(...)`, one cell at a time, no
+   * averaging. Using the corner version here would make how high you can jump
+   * depend on what the water looks like from the block next door.
+   *
+   * The `fluid above` rule is vanilla's and is not an optimisation: a cell
+   * with more of the same fluid on top of it is full, whatever its own level
+   * says, which is what stops a level-7 cell under a falling column reading as
+   * an ankle-deep puddle you could jump out of.
+   */
+  const cellHeight = (meta, x, y, z) =>
+    byId.get(noa.getBlock(x, y + 1, z)) === meta.fluid ? 1 : ownHeight(meta)
+
+  /*
+   * WHICH fluid and HOW DEEP, in one scan, because they come off the same
+   * cells and Minecraft reads them off the same loop.
+   *
+   * `height` is Entity.updateFluidHeightAndDoFluidPushing's `e`: the largest
+   * `cellY + cellHeight - box.min[1]` over the columns scanned, i.e. how far
+   * the fluid surface stands ABOVE THE BOTTOM OF THE BOX. Starting the max at
+   * zero is vanilla's `if (f >= aABB.minY)` guard by another route -- a cell
+   * whose surface is below your feet contributes nothing either way.
+   *
+   * KNOWN DIVERGENCE, left alone on purpose: vanilla sets isInWater from that
+   * same guard, so a 1/9-deep puddle you are standing ON TOP of is not water
+   * to it, while `fluid` below still says water. Changing that would move the
+   * drag, the buoyancy and the breath gates, which is the tuning this file's
+   * header says not to disturb, to fix nothing anybody has reported. The jump
+   * gate reads `height`, which is 0 there, so the gate agrees with vanilla
+   * even where `fluid` does not.
+   */
+  const feetFluidSample = (box) => {
+    if (!box) return NOT_IN_FLUID
     const y = Math.floor(box.min[1] + BOX_EPSILON)
     const x1 = Math.floor(box.max[0] - BOX_EPSILON)
     const z1 = Math.floor(box.max[2] - BOX_EPSILON)
+    let fluid = null
+    let height = 0
     for (let x = Math.floor(box.min[0] + BOX_EPSILON); x <= x1; x++) {
       for (let z = Math.floor(box.min[2] + BOX_EPSILON); z <= z1; z++) {
-        const f = byId.get(noa.getBlock(x, y, z)) ?? null
-        if (f) return f
+        const meta = metaById.get(noa.getBlock(x, y, z))
+        if (!meta) continue
+        // First one found wins the FLUID, which is exactly what the early
+        // return used to do, so nothing downstream of atFeet changed. Only
+        // cells of that same fluid are allowed to raise the height, the way
+        // vanilla asks getFluidHeight(WATER) and getFluidHeight(LAVA)
+        // separately.
+        if (!fluid) fluid = meta.fluid
+        if (meta.fluid !== fluid) continue
+        height = Math.max(height, y + cellHeight(meta, x, y, z) - box.min[1])
       }
     }
-    return null
+    return fluid ? { fluid, height } : NOT_IN_FLUID
   }
+
+  /** 'water', 'lava' or null. The question everything but the jump gate asks. */
+  const feetFluid = (box) => feetFluidSample(box).fluid
+
+  /*
+   * THE JUMP GATE. Reported from play: "i can currently jump too high in
+   * water. Its like im propelled up if i jump from one block depth."
+   *
+   * WHAT WAS WRONG IS THAT VANILLA CHOOSES AND THIS WORLD WAS ADDING. The
+   * aiStep branch quoted at MC.FLUID_JUMP_THRESHOLD is an either/or: deep
+   * enough water gets you jumpInLiquid's flat +0.04 b/tick^2 and NEVER
+   * jumpFromGround's 0.42 b/tick impulse, which is the whole reason you cannot
+   * leap out of a pond in Minecraft. In one-block-deep water here your feet
+   * are on the bottom, so noa says grounded and its movement component handed
+   * out the full JUMP_IMPULSE -- on top of the buoyancy top-up above AND the
+   * +16 b/s^2 climb below. Three upward contributions where vanilla applies
+   * one. The file's own header had already written the gate down (`its jump
+   * gate is isInWater() && getFluidHeight(WATER) > 0`) and nothing enforced it.
+   *
+   * WHY `state.jumping` AND NOT `jumpImpulse`. Zeroing the impulse would work
+   * and reads smaller, but it is a number this file does not own -- physics.js
+   * calibrated 9.585 against gravity, the tick rate and air drag, and npc.js
+   * copies it. Borrowing a field means remembering to give it back, on every
+   * path out of the water including the one where the entity is removed
+   * mid-swim. Clearing the input borrows nothing: receivesInputs writes
+   * `state.jumping` fresh from the key every single tick, so "give it back" is
+   * just not clearing it next tick. Same reason tuneOthers keeps no
+   * bookkeeping and the flow push, which really does borrow, needs a Map.
+   *
+   * WHY ORDER 25 AND NOT THE `tick` EVENT, which is where the rest of this
+   * file lives. noa's tick is physics -> entity systems -> emit('tick'), so
+   * the tick event is a frame LATE to stop anything the movement component
+   * (order 30) did. One frame is 33 ms and 0.14 blocks of walk, and the frame
+   * it would miss is the frame you enter the water -- the launch the report is
+   * about. 25 sits between receivesInputs (20) and movement (30), which is
+   * exactly where vanilla's own decision sits: aiStep resolves the jump before
+   * travel runs.
+   *
+   * A COMPONENT WITH NO ENTITIES, used as a scheduling slot. ent-comp's tick
+   * calls every registered system in order whether or not anything holds the
+   * component, so this is a hook at a chosen point in the order rather than a
+   * per-entity behaviour -- which is what it wants to be, because the set it
+   * has to cover is "every body with a movement component" and that set grows
+   * without asking. Rejected: adding the component to the player and to Evan.
+   * That is the shape the fluid drag bug had -- code that was right about the
+   * player and silent about the NPC who turned up later -- and Evan carries a
+   * copy of the same jumpImpulse, so he would have been the next report.
+   *
+   * NOT DONE, and it is the other half of the same either/or: making the climb
+   * below the ELSE of this gate, so a shallow puddle gets the ground jump and
+   * no +16. Vanilla is strict about that and this is not, so standing in a
+   * 1/9-deep puddle here you get both. It is not worth doing ALONE, because a
+   * larger divergence already owns that case -- `atFeet` is voxel-granular, so
+   * a puddle keeps you "in water" for the whole first block of the jump and
+   * you rise under water's -2 b/s^2 rather than air's -32, where vanilla's
+   * height-based isInWater drops you the instant your feet clear 1/9 of a
+   * block. Gating the climb would trim the smaller error and leave the bigger
+   * one, in a case nobody has reported, while moving drag, buoyancy and breath
+   * -- the tuning this file's header says not to disturb. One change, one bug.
+   */
+  noa.ents.createComponent({
+    name: 'fluidJumpGate',
+    order: 25,
+    state: {},
+    system: () => {
+      for (const state of noa.ents.getStatesList(noa.ents.names.movement)) {
+        // Cheapest test first: nobody is trying to jump on most ticks, and
+        // the scan below costs one to four getBlock calls per body.
+        if (!state.jumping) continue
+        const { height } = feetFluidSample(entityBox(noa, state.__id))
+        if (height > MC.FLUID_JUMP_THRESHOLD) state.jumping = false
+      }
+    },
+  })
 
   const sample = () => {
     const p = noa.ents.getPositionData(player).position
@@ -655,6 +788,11 @@ export function createFluids(noa, move) {
  * leave and need every scrap of climb you can get.
  */
 const BOX_EPSILON = 0.001
+
+/* The "no fluid at the feet" answer, shared rather than rebuilt, because
+ * feetFluidSample runs for every body every tick and this is the common case.
+ * Frozen so a caller cannot write into the one object everybody gets back. */
+const NOT_IN_FLUID = Object.freeze({ fluid: null, height: 0 })
 
 /* ------------------------------------------------------------------ *
  * What fluids do to you
