@@ -307,15 +307,53 @@ on effort.
    across. The catch is standing up: vanilla refuses to un-sneak while
    something is over your head, and without that check you would unsneak inside
    a block.
-6. **Movement is systematically 0.66% slow, and it is one line.** noa's
+6. **Movement is systematically 0.664% slow, and it is one line.** noa's
    movement component pushes toward the target with `responsiveness * (S - v)`
    while voxel-physics-engine drags back with `drag * v`, and those balance
    below `S` rather than at it. With `move.responsiveness = 15` and noa's
-   default `airDrag = 0.1` the steady state is `S * 15/15.1`, which is where
-   the 4.288 against Minecraft's 4.317 in the README table comes from, and the
-   same 0.66% shows up on sprint and sneak. `src/fluids.js` already solves for
-   exactly this and inflates its own `maxSpeed` to compensate — the correction
+   default `airDrag = 0.1` at a 30 Hz tick the steady state is
+   `S * (1-k)r / (1 - (1-k)(1-r))` with `k = 0.1/30` and `r = 15/30`, which is
+   `S * 0.993355`. Measured on a flat stone pad, three identical runs per case
+   with zero variance to four decimals, walk reads 4.28831 against 4.317,
+   sprint 5.57471 against 5.612 and sneak 1.28639 against 1.295. Three speeds,
+   one ratio, agreeing with the prediction to five digits. The note here used
+   to say `S * 15/15.1`, which is the same thing taken continuously and is
+   right to four. `src/fluids.js:620-638` already solves it exactly in
+   `maxSpeed()` and inflates its own target to compensate, so the correction
    exists in this codebase, in one place, and `physics.js` does not use it.
+   The lines are the `move.maxSpeed` chain at `src/physics.js:738-744` and the
+   `move.maxSpeed = MC.WALK_SPEED` at `src/physics.js:275`.
+
+   **The 0.664% is the whole of it, and it is not what broke the parkour.**
+   Measured 2026-09-16, after the parkour agent reported a separate and larger
+   shortfall. There is no second bug. Every jump in this world is a ballistic
+   arc at a constant horizontal speed, because the movement component keeps
+   pushing while you are airborne and that push cancels noa's air drag
+   outright. Across all seventeen ticks of an arc the per-tick displacement is
+   0.143 blocks, the same to four decimals from take-off to landing, so there
+   is no drag bleed to subtract. Apex is 1.25210 against Minecraft's 1.2522
+   and the arc lasts 0.5667 s; both are right. Flat ground, take-off to
+   landing: nothing held 0.0000, standing start with W 1.8068, walking 2.4300,
+   standing start sprinting 3.1418, sprinting 4.1370. Reach while still one
+   block above take-off, which is the number parkour cares about: walking
+   1.7153, sprinting 3.1769. Multiply any of those by 1.006689 for what a
+   corrected build gives, so the fix is worth about a centimetre and a half on
+   a walking jump and changes no gap a player can reach.
+
+   **Which makes the arithmetic in `src/builds/08-parkour-sf.js:1023` wrong in
+   both directions and roughly right by accident.** It reads 1.75 blocks of
+   reach before air drag and about 1.65 after, against a measured 1.7153. The
+   1.65 subtracted a drag that is not there. Against the 1.7 that a two-air
+   gap with a one-block rise needs, that is a margin of fifteen thousandths of
+   a block rather than a three per cent shortfall, and a margin that thin is a
+   take-off lottery rather than a jump. Driven at real gaps from real run-ups:
+   a walking jump clears two air blocks flat and fails the same two air blocks
+   with a one-block rise, which is the answer Minecraft gives too. So the flat
+   redesign was correct, and it was correct for a reason the agent did not
+   have. The gap widths are worth re-testing, because a flat two-air crossing
+   succeeded from a standing start as well as from a run-up, which means the
+   course's one-air gaps could probably be two.
+
    Held back deliberately: it changes a calibrated constant, so it is Evan's
    call whether the suite's measured numbers should move. The sprint-jump
    clamp landed in this same file and deliberately did not touch it — the
