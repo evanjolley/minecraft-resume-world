@@ -596,12 +596,18 @@ function gym(s) {
   s.box([x0 + 1, 0, z0], [x1 - 1, WING_TOP - 3, z0], P.white)
   s.box([x0 + 1, 0, z1 - 1], [x1 - 1, WING_TOP - 3, z1 - 1], P.white)
   ceilingLights(s, x0, x1, z0, z1, WING_TOP - 2, 4)
-  /* AND LIGHT AT HALF HEIGHT. Eleven blocks of ceiling delivers four levels
-   * to the floor; these fixtures on the long walls deliver nine. */
-  for (let z = z0 + 2; z <= z1 - 2; z += 4) {
-    s.set(x0 + 1, 7, z, P.lamp)
-    s.set(x1 - 1, 7, z, P.lamp)
-  }
+  /*
+   * AND LIGHT AT HALF HEIGHT, because eleven blocks of ceiling delivers four
+   * levels to the floor and photographs as a dark room with a bright lid.
+   *
+   * THE TWO WALLS GET DIFFERENT HEIGHTS, and that is not symmetry for its own
+   * sake. The east wall carries MUSTANGS from y = 5 to y = 11, and the first
+   * version put its fixtures at y = 7 -- six sea lanterns standing in the
+   * middle of the word, which is exactly what the screenshot showed. They
+   * moved to y = 3, under the banner and still over the eyeline.
+   */
+  for (let z = z0 + 2; z <= z1 - 2; z += 4) s.set(x0 + 1, 7, z, P.lamp)
+  for (let z = z0 + 3; z <= z1 - 2; z += 4) s.set(x1 - 1, 3, z, P.lamp)
 
   // Court markings: a centre line, a centre circle and a green border, in the
   // school's blue on a wood floor.
