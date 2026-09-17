@@ -31,6 +31,26 @@ export function createSurvival(noa, {
   // damage is inventory state, and survival has no business reading the
   // inventory. main.js supplies it.
   damageReduction = (amount) => amount,
+  /*
+   * THREE MORE GATES, and they are the same shape as the two above: a
+   * question survival asks, answered by someone who knows about effects.
+   *
+   * survival.js must not import effects.js. Health is this file's and status
+   * is that file's, and the moment this one starts reading an effect table it
+   * owns both. Injected predicates keep the dependency pointing one way --
+   * effects.js already calls INTO here to heal and hurt, so an import back
+   * would be a cycle as well as a muddle.
+   *
+   *   safeFallBlocks  Jump Boost raises it by a block a level.
+   *   canBreathe      Water Breathing and Conduit Power stop the meter.
+   *   fireproof       Fire Resistance, which stops the burn AND the damage.
+   *
+   * Defaults are full survival rules with no effects, which is what this
+   * module means standing on its own.
+   */
+  safeFallBlocks = () => MC.FALL_SAFE_BLOCKS,
+  canBreathe = () => false,
+  fireproof = () => false,
 } = {}) {
   const state = {
     health: MAX_HEALTH,
@@ -50,7 +70,30 @@ export function createSurvival(noa, {
     air: MC.AIR_TICKS,
     /** Whether the fire overlay should be drawn. Seconds remaining is private. */
     burning: false,
+    /*
+     * ABSORPTION AND HEALTH BOOST, which are NOT the same thing and are the
+     * pair everyone conflates.
+     *
+     *   absorption      a temporary pool of yellow hearts stacked on TOP of
+     *                   the 20. Damage eats it first, nothing refills it, and
+     *                   whatever is left evaporates when the effect ends.
+     *   bonusMaxHealth  raises the CEILING. You are 20/24 the instant Health
+     *                   Boost lands -- it grants no health at all -- and when
+     *                   it ends your current health is clamped back down.
+     *
+     * They live here rather than in effects.js because they are health, and
+     * health is this file's. effects.js owns WHEN they change; this owns what
+     * they mean.
+     */
+    absorption: 0,
+    bonusMaxHealth: 0,
   }
+
+  /** 20, plus whatever Health Boost is adding. The ceiling heal() clamps to. */
+  Object.defineProperty(state, 'maxHealth', {
+    get: () => MAX_HEALTH + state.bonusMaxHealth,
+    enumerable: true,
+  })
 
   const listeners = new Set()
   const changed = () => listeners.forEach(fn => fn(state))
@@ -93,6 +136,28 @@ export function createSurvival(noa, {
     if (!allowDamage(cause)) return
     amount = damageReduction(amount, cause)
     if (amount <= 0) return
+    /*
+     * ABSORPTION IS SPENT AFTER EVERY REDUCTION AND BEFORE HEALTH, which is
+     * where LivingEntity.actuallyHurt puts it: armor, then resistance, then
+     * the shield, then the bar. Spending it first would make it an ablative
+     * layer that armor never got to protect, and four absorption hearts in
+     * diamond would be worth exactly four hearts instead of the twenty-odd
+     * they are actually worth.
+     */
+    if (state.absorption > 0) {
+      const eaten = Math.min(state.absorption, amount)
+      state.absorption -= eaten
+      amount -= eaten
+      if (amount <= 0) {
+        changed()
+        // Still a HIT, even when nothing got through -- the red flash, the
+        // sound and the knockback are all reactions to being struck, not to
+        // losing health. Reporting zero here would make an absorbed hit
+        // silent, which is how you fail to notice you are being eaten.
+        hurt.emit({ amount: eaten, health: state.health, cause, ...detail })
+        return
+      }
+    }
     state.health = Math.max(0, state.health - amount)
     if (state.health === 0) state.dead = true
     changed()
@@ -102,7 +167,40 @@ export function createSurvival(noa, {
 
   state.heal = (amount) => {
     if (state.dead) return
-    state.health = Math.min(MAX_HEALTH, state.health + amount)
+    state.health = Math.min(state.maxHealth, state.health + amount)
+    changed()
+  }
+
+  /**
+   * The absorption pool, set outright rather than added to.
+   *
+   * Vanilla's AbsorptionMobEffect does `max(current, 4 * (1 + amplifier))`, so
+   * the decision about whether a new instance tops the shield up or leaves it
+   * alone belongs to the effect, not here. This is the setter it drives.
+   */
+  state.setAbsorption = (n) => {
+    const next = Math.max(0, n)
+    if (next === state.absorption) return
+    state.absorption = next
+    changed()
+  }
+
+  /**
+   * Health Boost's ceiling.
+   *
+   * THE CLAMP ON THE WAY DOWN IS THE SUBTLE PART. Vanilla's
+   * onAttributeUpdated(MAX_HEALTH) does `if (getHealth() > f) setHealth(f)`,
+   * so when Health Boost expires you LOSE the bonus hearts you were standing
+   * on -- permanently, not as damage. It cannot kill you (the attribute floors
+   * at 1) and it does not go through damage(), which is right: it is not a
+   * hit, it is the bar getting shorter underneath you, and routing it through
+   * damage() would fire a hurt sound and a death message for it.
+   */
+  state.setBonusMaxHealth = (n) => {
+    const next = Math.max(0, n)
+    if (next === state.bonusMaxHealth) return
+    state.bonusMaxHealth = next
+    if (state.health > state.maxHealth) state.health = state.maxHealth
     changed()
   }
 
@@ -111,6 +209,12 @@ export function createSurvival(noa, {
     state.food = MAX_FOOD
     state.saturation = 5
     state.dead = false
+    // Effects do not survive a respawn in vanilla either, but clearing the
+    // INSTANCES is effects.js's job -- this clears only what they left behind
+    // in the health model, so a reset with no effects module wired still
+    // lands on a clean 20/20.
+    state.absorption = 0
+    state.bonusMaxHealth = 0
     // Air and fire are part of "back to a fresh player" for the same reason
     // health is. Leaving them out is how a test that drowned leaks an empty
     // breath meter into the next one.
@@ -137,7 +241,10 @@ export function createSurvival(noa, {
     if (onGround) {
       if (peakY !== null) {
         const fallen = peakY - y
-        const excess = Math.floor(fallen - MC.FALL_SAFE_BLOCKS)
+        // Not MC.FALL_SAFE_BLOCKS directly: Jump Boost raises the safe
+        // distance by a block a level, which is how it stops you hurting
+        // yourself landing from the jump it just gave you.
+        const excess = Math.floor(fallen - safeFallBlocks())
         // `fallen` rides along because vanilla's death message splits on it:
         // over five blocks is "fell from a high place", under is "hit the
         // ground too hard". The DAMAGE does not care, so this is the only
@@ -226,6 +333,15 @@ export function createSurvival(noa, {
     const ticks = secs * MC.TICKS_PER_SECOND
     const before = airTicks
 
+    /*
+     * Water Breathing does not REFILL the meter, it freezes the drain -- so
+     * this returns before the drain branch and after the refill one. Vanilla's
+     * is the same shape: the decrement in baseTick is skipped and the refill
+     * on surfacing is not. A version that topped the bar up instead would look
+     * identical until you drank it at two bubbles.
+     */
+    if (submerged && canBreathe()) return
+
     if (!submerged) {
       if (airTicks >= MC.AIR_TICKS) return
       airTicks = Math.min(MC.AIR_TICKS, airTicks + ticks * MC.AIR_REFILL_PER_TICK)
@@ -266,6 +382,11 @@ export function createSurvival(noa, {
   /** Minecraft's setSecondsOnFire: it raises the timer, never lowers it. */
   state.ignite = (seconds) => {
     if (state.dead) return
+    // Fire Resistance stops you catching fire at all, not just the damage --
+    // so this is here rather than only in the damage path. Standing in lava
+    // with it up leaves no flames on the screen, which is what it looks like
+    // in game.
+    if (fireproof()) return
     if (seconds <= fireSeconds) return
     fireSeconds = seconds
     state.burning = true
@@ -285,6 +406,7 @@ export function createSurvival(noa, {
    */
   state.lavaBurn = (secs) => {
     if (state.dead) return
+    if (fireproof()) return
     state.ignite(MC.BURN_SECONDS)
     /*
      * Fire damage is suppressed while you are still in the lava
@@ -342,7 +464,7 @@ export function createSurvival(noa, {
       }
     }
 
-    if (state.food >= 18 && state.health < MAX_HEALTH && allowRegen()) {
+    if (state.food >= 18 && state.health < state.maxHealth && allowRegen()) {
       regenTimer += secs
       if (regenTimer > 4) { regenTimer = 0; state.heal(1) }
     }

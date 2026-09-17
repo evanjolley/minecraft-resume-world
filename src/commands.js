@@ -3,6 +3,7 @@ import { ITEMS } from './items.js'
 import { GAMEMODE_NAMES } from './gamemode.js'
 import { GAMERULES } from './authority.js'
 import { WEATHER_KINDS } from './weather.js'
+import { EFFECTS, DEFAULT_SECONDS, INFINITE, MAX_SECONDS } from './effects.js'
 
 /*
  * The command set. Vanilla syntax, vanilla wording, vanilla failure modes.
@@ -190,6 +191,75 @@ export function installCommands(chat, authority, { noa, playerName }) {
     }, opOnly)
 
   /*
+   * /effect, in vanilla's grammar with vanilla's one-target simplification.
+   *
+   *   /effect give <effect> [<seconds>|infinite] [<amplifier>] [<hideParticles>]
+   *   /effect clear [<effect>]
+   *
+   * THE MISSING ARGUMENT IS <targets>, and dropping it is the same decision
+   * /kill and /tp already made in this file: there is no selector grammar
+   * here, and the day this is multiplayer a stranger who can hand out
+   * Levitation V is a griefing tool. So every form targets you. It is stated
+   * in the help text rather than silently different, because a command whose
+   * arity does not match the wiki is worse when it pretends otherwise.
+   *
+   * THE BOOLEAN IS INVERTED IN VANILLA AND THAT IS NOT A BUG HERE EITHER.
+   * EffectCommands passes `!getBool("hideParticles")` into the SHOW-particles
+   * slot of the MobEffectInstance, so `true` means hide. Omitted means shown.
+   */
+  const EFFECT_KEYS = EFFECTS.map(e => e.key)
+
+  chat.command('effect',
+    'Gives or clears a status effect on yourself: give <effect> [seconds|infinite] [amplifier] [hideParticles], clear [effect]',
+    async (args) => {
+      const [verb, name, rawSeconds, rawAmp, rawHide] = args
+      const typed = `/effect ${args.join(' ')}`.trimEnd()
+
+      if (verb === 'clear') {
+        if (name === undefined) return report(await authority.requestEffectClear(null))
+        return report(await authority.requestEffectClear(bare(name)))
+      }
+
+      if (verb !== 'give') return chat.parseError(typed)
+      if (!name) return chat.parseError('/effect give')
+
+      /*
+       * Vanilla's bounds, not ours: seconds is integer(1, 1000000) and
+       * amplifier is integer(0, 255). The upper bound on seconds is the one
+       * worth keeping -- without it `/effect give speed 1e30` stores an
+       * Infinity that never counts down and cannot be distinguished from the
+       * `infinite` keyword.
+       */
+      let seconds = DEFAULT_SECONDS
+      if (rawSeconds !== undefined) {
+        if (rawSeconds === 'infinite') seconds = INFINITE
+        else {
+          const n = Number(rawSeconds)
+          if (!Number.isInteger(n) || n < 1 || n > MAX_SECONDS) {
+            return fail(`Integer must be between 1 and ${MAX_SECONDS}, found ${rawSeconds}`)
+          }
+          seconds = n
+        }
+      }
+
+      let amplifier = 0
+      if (rawAmp !== undefined) {
+        const n = Number(rawAmp)
+        if (!Number.isInteger(n) || n < 0 || n > 255) {
+          return fail(`Integer must be between 0 and 255, found ${rawAmp}`)
+        }
+        amplifier = n
+      }
+
+      if (rawHide !== undefined && rawHide !== 'true' && rawHide !== 'false') {
+        return fail(`Invalid boolean, expected 'true' or 'false' but found '${rawHide}'`)
+      }
+      const hidden = rawHide === 'true'
+
+      report(await authority.requestEffect(bare(name), seconds, amplifier, hidden))
+    }, opOnly)
+
+  /*
    * /weather, which used to report honestly that there was no weather to set.
    * There is now: weather.js owns the state, the authority owns the decision,
    * and this stays what every other command here is -- parse, ask, print.
@@ -293,5 +363,7 @@ export function installCommands(chat, authority, { noa, playerName }) {
   return {
     /** For the tests and for a future tab-complete. */
     get names() { return chat.visibleCommands },
+    /** Every effect /effect will accept, for the same future tab-complete. */
+    effectKeys: EFFECT_KEYS,
   }
 }

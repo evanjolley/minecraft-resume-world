@@ -1,5 +1,6 @@
 import { createEmitter } from './emitter.js'
 import { SURFACE_PHYSICS } from './blocks.js'
+import { everyBody } from './entityBox.js'
 
 /*
  * Minecraft Java Edition movement, mapped onto noa's physics.
@@ -690,6 +691,35 @@ function createFlight(noa, move, drive) {
 }
 
 export function installSpeedModes(noa, move, survival, fluids = null) {
+  /*
+   * THE EFFECTS SEAM.
+   *
+   * Speed, Slowness, Jump Boost, Slow Falling and Levitation all change
+   * movement, and this file's header is explicit that its constants are
+   * fitted backwards from Minecraft and are not to be disturbed. So they are
+   * MULTIPLIERS applied on top of whatever the tick below decided, and nothing
+   * in the table changes: MC.WALK_SPEED is still 4.317 and JUMP_IMPULSE is
+   * still the browser-calibrated 9.585, and Speed I is 4.317 * 1.2.
+   *
+   * A NULL-OBJECT DEFAULT, not an optional chain at four call sites. Physics
+   * is installed long before effects.js exists -- main.js builds the movement
+   * before it has anything to hand it -- so this starts as the identity and is
+   * replaced by `setEffects` once there is something to ask. The tick below
+   * then has no branch in it at all, which matters because it runs 30 times a
+   * second and because a `?.` that silently returns undefined into an
+   * arithmetic expression is how you get a NaN velocity.
+   *
+   * Rejected: reaching into effects.js from here. That makes physics depend on
+   * the status system, and the status system already depends on physics for
+   * MC. Passing the multipliers in keeps the arrow pointing one way.
+   */
+  let effects = {
+    speedMultiplier: () => 1,
+    jumpMultiplier: () => 1,
+    gravityMultiplier: () => 1,
+    levitationSpeed: () => 0,
+  }
+
   noa.inputs.bind('sprint', 'ControlLeft')
   noa.inputs.bind('sneak', 'ShiftLeft')
 
@@ -779,6 +809,29 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
       : sneaking ? MC.SNEAK_SPEED
       : sprinting ? MC.SPRINT_SPEED
       : MC.WALK_SPEED
+
+    /*
+     * Speed and Slowness, applied AFTER the gear is chosen, which is what
+     * makes them compose the way vanilla's ADD_MULTIPLIED_TOTAL does: Speed I
+     * while sprinting is 5.612 * 1.2 = 6.734 and not 4.317 * 1.2 * 1.3. That
+     * is not a rounding difference -- it is 6.734 against 6.735 here by luck,
+     * but at Speed II sprinting it is 7.857 against 7.857 and at Slowness II
+     * SWIMMING the two disagree outright, because the swim branch replaces the
+     * ground speed rather than scaling it.
+     *
+     * FLIGHT IS SCALED TOO, deliberately, and vanilla agrees: flyingSpeed is
+     * multiplied by the movement-speed attribute in Player.travel, so Speed
+     * makes creative flight faster in the real game as well.
+     */
+    move.maxSpeed *= effects.speedMultiplier(noa.playerEntity)
+
+    /*
+     * Jump Boost, as a scale on the CALIBRATED impulse rather than a recompute
+     * from an apex. See the header: 9.585 is not sqrt(2gh), it absorbs a full
+     * step of gravity that noa applies on the launch tick, and anything that
+     * re-derived it from a target height would throw that away.
+     */
+    move.jumpImpulse = JUMP_IMPULSE * effects.jumpMultiplier(noa.playerEntity)
 
     const body = noa.ents.getPhysics(noa.playerEntity).body
 
@@ -941,7 +994,54 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
     if (sneaking) preventWalkingOffEdge(noa)
   })
 
-  return { isSprinting: () => sprinting, flight, ...installMovementFeedback(noa) }
+  /*
+   * Slow Falling and Levitation, on every body rather than on the player --
+   * the water-drag and jump fixes both had to be extended past
+   * noa.playerEntity and this is the same shape, so it is written that way
+   * from the start.
+   *
+   * GRAVITY IS A PER-BODY MULTIPLIER in noa, not a global, which is lucky:
+   * installPhysics already sets the player's to 1 to undo noa's default of 2,
+   * so writing it every tick is the same kind of assignment and not a new
+   * mechanism.
+   *
+   * LEVITATION FIGHTS THE INTEGRATOR and this is the honest, partial version.
+   * Vanilla replaces the gravity step outright inside travelInAir:
+   *   deltaY += (0.05 * (amplifier + 1) - deltaY) * 0.2
+   * noa has no such seam -- its solver applies gravity, drag and collision in
+   * one step we do not get between -- so gravity is switched OFF for a
+   * levitating body and the same exponential approach is run here against the
+   * body's velocity. The 0.2 per Minecraft tick is resampled to noa's dt the
+   * same way createDrive does it, because a fixed 0.2 against a variable dt
+   * approaches at whatever the frame rate happens to be.
+   */
+  noa.on('tick', (dt) => {
+    const dtSec = dt / 1000
+    for (const entity of everyBody(noa)) {
+      const body = noa.ents.getPhysics(entity)?.body
+      if (!body) continue
+      const lift = effects.levitationSpeed(entity)
+      if (lift > 0) {
+        body.gravityMultiplier = 0
+        // 1 - 0.8^(ticks elapsed): the same resampling createDrive uses, so a
+        // 30 Hz frame and a 60 Hz frame reach the target at the same RATE.
+        const k = 1 - 0.8 ** (MC.TICKS_PER_SECOND * dtSec)
+        body.velocity[1] += (lift - body.velocity[1]) * k
+      } else {
+        // Vanilla's gate: Slow Falling only applies while descending, so it
+        // softens the landing without floating the jump.
+        body.gravityMultiplier = effects.gravityMultiplier(entity, body.velocity[1] <= 0)
+      }
+    }
+  })
+
+  return {
+    isSprinting: () => sprinting,
+    flight,
+    /** Hand the movement system something that knows about status effects. */
+    setEffects(next) { effects = next },
+    ...installMovementFeedback(noa),
+  }
 }
 
 /*

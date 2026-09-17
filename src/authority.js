@@ -1,3 +1,4 @@
+import { EFFECT_BY_KEY } from './effects.js'
 import { GAMEMODES, DEFAULT_GAMEMODE } from './gamemode.js'
 import { createEmitter } from './emitter.js'
 
@@ -103,6 +104,22 @@ const NOT_ALLOWED = deny('Unknown or incomplete command, see below for error')
  * @param {object} world  the APPLY half: how a granted change reaches the game.
  * @param {Storage} storage  injectable so a test can run without localStorage.
  */
+/*
+ * Roman numerals, for effect levels only, and capped where vanilla caps them.
+ *
+ * Minecraft's en_us.json has `enchantment.level.1` through `.10` and nothing
+ * beyond, so an amplifier past 9 is printed as a bare number in game rather
+ * than as a heroic pile of X's. A general int-to-roman converter is ten lines
+ * and would be wrong for exactly the range this needs.
+ */
+const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
+const effectLabel = (def, amplifier) => {
+  // Level I is printed WITHOUT a numeral, which is vanilla: "Applied effect
+  // Speed", not "Speed I". The numeral appears from II up.
+  if (amplifier <= 0) return def.name
+  return `${def.name} ${ROMAN[amplifier] ?? amplifier + 1}`
+}
+
 export function createAuthority({ world, storage = globalThis.localStorage } = {}) {
   let operator = false
   try {
@@ -408,6 +425,50 @@ export function createAuthority({ world, storage = globalThis.localStorage } = {
     async requestKill() {
       world.kill()
       return allow(`Killed ${world.playerName}`)
+    },
+
+    /*
+     * /effect, and it is a CHEAT COMMAND in vanilla -- permission level 2, the
+     * same tier as /give and /gamerule, which are both op-gated here already.
+     * Gating it is not caution about griefing (it only ever targets you); it
+     * is that handing a visitor Speed II and Jump Boost III by typing is the
+     * same category of thing as handing them a diamond pickaxe, and that
+     * decision was already made for /give.
+     *
+     * VANILLA'S WORDING, including the roman numeral, because a command that
+     * reports success in its own words is the tell that this is a
+     * Minecraft-flavoured web page rather than Minecraft. Vanilla's string is
+     * commands.effect.give.success.single: "Applied effect %s to %s".
+     */
+    async requestEffect(key, seconds, amplifier, hidden) {
+      if (!isOperator()) return NOT_ALLOWED
+      const def = EFFECT_BY_KEY.get(key)
+      if (!def) return deny(`Unknown effect '${key}'`)
+      const entity = world.playerEntity()
+      if (!world.giveEffect(entity, key, seconds, amplifier, hidden)) {
+        // Vanilla's commands.effect.give.failed: the target already has
+        // something at least as good, so nothing happened. Reported rather
+        // than swallowed -- a command that prints success and changes nothing
+        // is worse than one that says why.
+        return deny("Unable to apply this effect (target is either immune to effects, or has something stronger)")
+      }
+      return allow(`Applied effect ${effectLabel(def, amplifier)} to ${world.playerName}`)
+    },
+
+    async requestEffectClear(key = null) {
+      if (!isOperator()) return NOT_ALLOWED
+      const def = key === null ? null : EFFECT_BY_KEY.get(key)
+      if (key !== null && !def) return deny(`Unknown effect '${key}'`)
+      const entity = world.playerEntity()
+      const removed = world.clearEffect(entity, key)
+      if (removed === 0) {
+        return deny(def
+          ? `Target has no ${def.name} effect to remove`
+          : `Target has no effects to remove`)
+      }
+      return allow(def
+        ? `Removed effect ${def.name} from ${world.playerName}`
+        : `Removed every effect from ${world.playerName}`)
     },
   }
 
