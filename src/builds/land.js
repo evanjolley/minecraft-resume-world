@@ -44,6 +44,7 @@
  * pure, seeded by the coordinate, identical forever.
  */
 import { stamper } from './stamp.js'
+import { hash, smoothNoise } from './noise.js'
 import { GROUND_Y, LAND_SIZE, LAND, CHAPTERS, LAND_SPAWN_X, LAND_SPAWN_Z } from './plots.js'
 import { SPINE, sampleSpine } from './spine.js'
 import { carveRiver, carveIsland, bridgeToIsland, buildBridge } from './river.js'
@@ -65,36 +66,15 @@ export const KIND = {
   PLOT: 7,     // a chapter footprint. Nothing in this file may write here.
 }
 
-/**
- * A hash of two integers and a salt, in [0, 1). Deterministic, and that is
- * the whole requirement -- this is not cryptography and it is not even good
- * noise, it is a cheap repeatable scatter.
+/*
+ * The noise, re-exported. It MOVED to src/builds/noise.js, which has no
+ * imports, so that the biome map can be read by a spec running in node --
+ * this file reaches Babylon through the stamper and nothing that imports it
+ * can be loaded outside a browser. Re-exported rather than relocated in every
+ * caller, because river.js, path.js, flora.js and chapters.js all take them
+ * from here and none of them cares where they came from.
  */
-export function hash(x, z, salt = 0) {
-  let h = Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(z | 0, 0x165667b1) ^ Math.imul(salt | 0, 0x9e3779b1)
-  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b)
-  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35)
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
-}
-
-/**
- * Smooth value noise in [0, 1), so that a palette comes out in CLUMPS rather
- * than as static. The brief asked for "clumps, not noise" in as many words,
- * and a per-column hash gives you exactly the salt-and-pepper it was warning
- * against -- every block a different block. Bilinear interpolation between
- * hashed lattice points at `scale` blocks apart is the cheapest thing that
- * makes a patch of podzol be a PATCH.
- */
-export function smoothNoise(x, z, scale, salt = 0) {
-  const fx = x / scale, fz = z / scale
-  const x0 = Math.floor(fx), z0 = Math.floor(fz)
-  const tx = fx - x0, tz = fz - z0
-  // Smoothstep, so the lattice does not show as a grid of diamonds.
-  const sx = tx * tx * (3 - 2 * tx), sz = tz * tz * (3 - 2 * tz)
-  const a = hash(x0, z0, salt), b = hash(x0 + 1, z0, salt)
-  const c = hash(x0, z0 + 1, salt), d = hash(x0 + 1, z0 + 1, salt)
-  return (a + (b - a) * sx) * (1 - sz) + (c + (d - c) * sx) * sz
-}
+export { hash, smoothNoise } from './noise.js'
 
 /** Column index. The model's arrays are all indexed this way, and so is
  *  world.cols, which is why it is z-major. */

@@ -36,7 +36,7 @@
  * one or two blocks -- which is what these are.
  */
 import { KIND, at, onMap, hash, smoothNoise, nearSpawn, SPAWN_CLEAR } from './land.js'
-import { BIOME, DENSITY, speciesAt } from './biomes.js'
+import { BIOME, DENSITY, speciesAt, BAMBOO_STALK } from './biomes.js'
 
 /** How far from the path anything may grow. Two blocks of clear shoulder
  *  everywhere, and up to five where the noise thins the wood out. */
@@ -205,21 +205,26 @@ function tree(s, x, z, base, kind, model) {
 }
 
 /*
- * A BAMBOO STAND, which is what the bamboo jungle is actually made of.
+ * A BAMBOO GROVE, AND IT IS A GROVE RATHER THAN A THICKET ON PURPOSE.
  *
- * There is no bamboo PLANT in this block table -- the 683 keys are cubes,
- * slabs, stairs, a torch and some signs -- but there is `bamboo_block`, which
- * is vanilla's bundled-bamboo cube, and a 1x1 column of it eight high is a
- * stalk. A handful of stalks at slightly different heights in a two-block
- * radius is a clump, and clumps at the density below are a thicket you cannot
- * see through, which is the whole experience of the biome.
+ * `BAMBOO_STALK` is a solid cube -- read the long note on it in
+ * src/builds/biomes.js, which is there because this file's first version
+ * claimed it was a plant and the owner found out by looking. A wall of solid
+ * cubes at thicket density is not bamboo; it is a wall.
  *
- * BAMBOO AND NOT CHERRY BLOSSOM, on the owner's instruction: "dont use cherry
- * blossom for china, too on the nose". The agreed fallback if bamboo proved
- * unworkable was meadow, and it was not needed.
+ * So: TWO OR THREE poles per stand, not seven, and TALLER, because the thing
+ * that makes a one-block column read as a stalk rather than as a post is its
+ * proportion. A frond of jungle leaves on top of each, because the real plant
+ * has leaves and a pole that stops dead reads as a fencepost. The rest of the
+ * biome's cover is real jungle trees, which is also what most of a vanilla
+ * bamboo jungle is.
+ *
+ * WHEN THE REAL PLANT LANDS, the two numbers below are what wants revisiting
+ * -- a thin cross-shaped stalk CAN be planted at thicket density, and should
+ * be.
  */
 function bambooStand(s, x, z, base, model) {
-  const n = 3 + Math.floor(hash(x, z, 71) * 4)
+  const n = 2 + Math.floor(hash(x, z, 71) * 2)
   for (let k = 0; k < n; k++) {
     const dx = Math.round((hash(x, z, 401 + k) - 0.5) * 4)
     const dz = Math.round((hash(x, z, 431 + k) - 0.5) * 4)
@@ -228,11 +233,10 @@ function bambooStand(s, x, z, base, model) {
     const j = at(px, pz)
     if (model.kind[j] !== KIND.FIELD) continue
     const foot = model.h[j]
-    const h = 5 + Math.floor(hash(px, pz, 457) * 8)
-    s.pillar(px, pz, foot, foot + h - 1, 'bamboo_block')
-    /* A frond on the tallest ones. Jungle leaves rather than nothing: a
-     * stalk that stops dead reads as a fencepost. */
-    if (h > 9) s.set(px, foot + h, pz, 'jungle_leaves')
+    const h = 9 + Math.floor(hash(px, pz, 457) * 6)
+    s.pillar(px, pz, foot, foot + h - 1, BAMBOO_STALK)
+    /* A frond on every one of them, not just the tall ones. */
+    s.set(px, foot + h, pz, 'jungle_leaves')
   }
 }
 
@@ -289,7 +293,10 @@ export function plantForest(s, model) {
       /* The bamboo jungle is mostly stalks and a few real trees through them,
        * which is what the vanilla biome is. The roll is per site rather than
        * per region so the two are interleaved rather than zoned. */
-      if (biome === BIOME.BAMBOO && hash(x, z, 73) < 0.72) {
+      /* Under half the sites, so the jungle trees between them are what you
+       * mostly walk through. It was 0.85 while this thought it was planting
+       * a plant. */
+      if (biome === BIOME.BAMBOO && hash(x, z, 73) < 0.42) {
         bambooStand(s, x, z, model.h[j], model)
         continue
       }
@@ -378,8 +385,15 @@ function groundCover(s, model, dist) {
        * actually lying about up there.
        */
       if ((biome === BIOME.HILLS || biome === BIOME.PEAKS) && roll < (near ? 0.05 : 0.022)) {
-        const rock = hash(x, z, 77) < 0.5 ? 'cobblestone'
-          : hash(x, z, 79) < 0.5 ? 'stone' : 'andesite'
+        /*
+         * COBBLESTONE, NEVER STONE, and it is not only that a stone boulder
+         * on a stone hillside is invisible. Every block a biome puts DOWN is
+         * a surface; every block that stands ON one has to be something else,
+         * or "where is the ground here" stops having an answer. A stone
+         * boulder read as a block of hillside and made the slope measurement
+         * report a two-block riser next to a path that is perfectly flat.
+         */
+        const rock = hash(x, z, 77) < 0.5 ? 'cobblestone' : 'mossy_cobblestone'
         s.set(x, base, z, rock)
         if (hash(x, z, 83) < 0.35 && onMap(x + 1, z) && model.kind[at(x + 1, z)] === KIND.FIELD) {
           s.set(x + 1, model.h[at(x + 1, z)], z, rock)
@@ -387,12 +401,9 @@ function groundCover(s, model, dist) {
         continue
       }
 
-      /* Bamboo shoots: one or two blocks of stalk on their own, away from
-       * the stands. Undergrowth in a bamboo jungle is more bamboo. */
-      if (biome === BIOME.BAMBOO && roll < (near ? 0.09 : 0.05)) {
-        s.pillar(x, z, base, base + (hash(x, z, 89) < 0.5 ? 1 : 2), 'bamboo_block')
-        continue
-      }
+      /* No loose two-block shoots. With a real bamboo plant they would be
+       * young stalks; with a solid cube they are kerbstones dropped in a
+       * wood, and they were the thing closest to the camera in every frame. */
 
       if (roll < (near ? 0.055 : 0.02)) {
         s.set(x, base, z, `${wood}_leaves`)                 // a bush

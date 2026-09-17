@@ -24,10 +24,9 @@
  * something there is a reason to climb.
  *
  * BAMBOO AND NOT CHERRY BLOSSOM for Bilibili, on the owner's instruction:
- * "dont use cherry blossom for china, too on the nose". Bamboo turned out to
- * be the easier of the two anyway -- `bamboo_block` is in the block table and
- * a 1x1 column of it seven high is exactly what a bamboo stalk is, so the
- * agreed meadow fallback was never needed.
+ * "dont use cherry blossom for china, too on the nose". The agreed fallback
+ * if bamboo proved unworkable was meadow, and it is NOT being taken -- but
+ * read BAMBOO_STALK below before you believe the jungle is finished.
  * ------------------------------------------------------------------------
  * HOW A COLUMN GETS ITS BIOME: WARPED, WEIGHTED VORONOI.
  *
@@ -66,7 +65,7 @@
  * every page load and a visitor who walked past a birch and came back to find
  * a spruce would be right to think the place was broken.
  */
-import { hash, smoothNoise } from './land.js'
+import { hash, smoothNoise } from './noise.js'
 import { CHAPTERS, LAND_SIZE } from './plots.js'
 
 export const BIOME = {
@@ -303,6 +302,37 @@ export function groundOf(biome, x, z, h) {
  * twenty-block peak filled with dirt is a twenty-block dirt cliff with a snow
  * hat on it, and you see the whole thing side-on from the path.
  */
+/*
+ * THE BAMBOO STALK, AND IT IS A PLACEHOLDER. Read this before changing it.
+ *
+ * WHAT THIS BLOCK ACTUALLY IS: `bamboo_block` is the Block of Bamboo from
+ * 1.20 -- a solid cube of bundled bamboo, a building material in the same
+ * family as `bamboo_planks` and `bamboo_mosaic`, the bamboo equivalent of a
+ * hay bale. IT IS NOT THE PLANT. Vanilla's bamboo is a thin cross-shaped
+ * stalk about two pixels wide with leaf fronds, drawn from `bamboo_stalk`,
+ * `bamboo_small_leaves` and `bamboo_large_leaves` -- three textures this
+ * repo does not extract, on a non-cube block this repo does not register.
+ *
+ * AN EARLIER VERSION OF THIS FILE SAID THE OPPOSITE, in as many words, and
+ * the owner found it by looking at the world: a column of these is a chunky
+ * solid pillar and reads as one. The comment is recorded here rather than
+ * quietly deleted because a wrong comment about what a block IS is the
+ * expensive kind -- the next reader has no reason to doubt it.
+ *
+ * SO THE GROVE IS TUNED FOR WHAT THE BLOCK IS. src/builds/flora.js plants
+ * FEWER stalks, TALLER, with a jungle frond on top, and lets real jungle
+ * trees carry most of the biome -- which is also what a vanilla bamboo
+ * jungle mostly is. It reads as a grove of thick bamboo poles, which is an
+ * honest thing made of the blocks that exist, rather than as a thicket of
+ * bamboo, which it is not.
+ *
+ * WHEN THE REAL PLANT LANDS -- a separate pass owns src/blocks.js,
+ * src/blockMeshes.js and the texture build -- this constant is the one word
+ * that changes here, and the two numbers in flora.js's bambooStand are the
+ * only other thing that wants revisiting.
+ */
+export const BAMBOO_STALK = 'bamboo_block'
+
 export function subsurfaceOf(biome) {
   if (biome === BIOME.PEAKS) return 'stone'
   if (biome === BIOME.HILLS) return 'stone'
