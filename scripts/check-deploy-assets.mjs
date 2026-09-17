@@ -81,6 +81,36 @@ const REQUIRED = [
 const FORBIDDEN = [
   ['terrain', 'imported Minecraft terrain (the Nether and the mountain patch),'
     + ' licence unresolved -- see docs/DEPLOYMENT.md'],
+  /*
+   * MOJANG'S 51 PAINTING TEXTURES, and this rule was written the same hour
+   * the hole was made, because the hole is the exact one the note at the top
+   * of FORBIDDEN_FILES warns about: "Gitignoring a file has never once kept
+   * it out of a deploy in this repo."
+   *
+   * public/paintings/vanilla/ is extracted from a local Minecraft install by
+   * `npm run paintings`. It is gitignored for the same reason
+   * public/textures/ is -- and gitignore governs git, while vite copies
+   * public/ into dist/ WHOLESALE. A `vite build` on the machine that ran the
+   * extraction therefore shipped all 51 of them, silently, with no .source
+   * marker to notice because a marker describes a BUILD and this directory
+   * is a copy.
+   *
+   * A DIRECTORY RULE RATHER THAN A MARKER, which is the same shape as the
+   * terrain rule above and for the same reason: the question here is not
+   * "which source built this" but "is this here at all", and that is
+   * answered by a path. `npm run build:deploy` now removes it, exactly as it
+   * removes dist/terrain; this is the assertion that notices when somebody
+   * edits that line.
+   *
+   * NOT the custom paintings. public/paintings/*.png is Evan's own art,
+   * committed on purpose, and a deployed world is meant to have it -- that
+   * is the whole point of the pipeline. What a deploy does NOT get is
+   * vanilla's art, so every vanilla variant draws a blank canvas there.
+   * docs/paintings.md carries the separate, open question of whether a
+   * third-party photograph should be served at all.
+   */
+  ['paintings/vanilla', "Mojang's painting textures from a local Minecraft"
+    + ' install -- same rule as dist/textures, see docs/paintings.md'],
 ]
 
 /*
@@ -134,4 +164,5 @@ if (problems.length) {
   process.exit(1)
 }
 
-console.log('deploy assets: textures=ce, sounds=free, no terrain, no cape -- redistributable')
+console.log('deploy assets: textures=ce, sounds=free, no terrain, no vanilla painting art,'
+  + ' no cape -- redistributable')

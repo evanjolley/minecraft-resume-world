@@ -27,11 +27,21 @@ Then hang it from a build file:
 ```js
 import { hangPainting } from '../paintingArt.js'
 
-// x, y, z is the BOTTOM-LEFT block of the painting as a viewer sees it.
-// 'south' is the direction the picture faces, so this one is read by
-// somebody standing to the south of it looking north.
-hangPainting(-40, 71, 118, 'south', 'millard_north')
+// s is the stamper. [12, 4, 0] is PLOT-LOCAL, and it is the BOTTOM-LEFT cell
+// of the painting as a VIEWER sees it -- the rectangle grows up, and to the
+// viewer's right. 'south' is the direction the picture LOOKS, so this one is
+// read by somebody standing south of it.
+hangPainting(s, [12, 4, 0], 'south', 'millard_north')
 ```
+
+It takes the stamper because it writes **both halves** — the six blocks of
+frame *and* the art registration — from one set of numbers. `setSignText` does
+not, and a sign gets away with it because a sign is one block. Typing a 3×2
+painting's corner twice is how you get a picture one cell left of its frame.
+
+Every block behind the whole rectangle must be **solid**, or `installAttachment`
+pops the painting off on the next tick. That is vanilla's rule, checked per
+cell.
 
 The size is an **aspect ratio decision** and it is the step that goes wrong.
 The source is centre-cropped to `w:h`, never squashed, so a landscape photo in
@@ -81,3 +91,24 @@ so that it is a decision rather than a discovery:
 
 If the answer for some future image is "no", the mechanism already exists:
 leave it out of `CUSTOM_PAINTINGS` and it is neither built nor served.
+
+### Mojang's painting art and the deploy gate
+
+Adding `public/paintings/` opened a redistribution hole and closed it in the
+same change, which is worth recording because the hole is a repeat of one this
+repo already knew about.
+
+`public/paintings/vanilla/` is gitignored — and **gitignore governs git, not
+vite**. `vite build` copies `public/` into `dist/` wholesale, so a build on the
+machine that ran the extraction shipped all 51 Mojang textures with nothing to
+notice: a `.source` marker describes a *build*, and this directory is a *copy*.
+`check-deploy-assets.mjs` already warned about exactly this shape of mistake
+("Gitignoring a file has never once kept it out of a deploy in this repo") —
+about the cape.
+
+So `paintings/vanilla` is now in that script's `FORBIDDEN` list, and
+`build:deploy` removes it the way it removes `dist/terrain`. The rule is a
+**directory** rule, not a marker: the question is not "which source built
+this" but "is this here at all", and a path answers that.
+
+The custom paintings are deliberately *not* covered. They are meant to ship.

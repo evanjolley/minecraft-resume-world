@@ -210,6 +210,53 @@ bookkeeping — it is a lens on the same stamper, not a second one.
 
 ---
 
+## Hanging a painting
+
+One line, and it is the only call a build needs:
+
+```js
+import { hangPainting } from '../paintingArt.js'
+
+hangPainting(s, [12, 4, 0], 'south', 'millard_north')
+```
+
+- `s` is the stamper. **It takes the stamper on purpose**, unlike
+  `setSignText`, which does not. A sign is one block, so a build can stamp it
+  and then label it and the two numbers only have to agree once. A 3x2
+  painting is **six blocks plus an art registration**, and typing the corner
+  twice is how you get a picture one cell to the left of its frame. This
+  writes both halves from one set of numbers.
+- `[12, 4, 0]` is the **bottom-left cell as a viewer sees it**, plot-local.
+  The rectangle grows **up**, and to the **viewer's right**. It goes through
+  `s.set`, so the plot bounds check applies — a painting that pokes into
+  somebody else's chapter throws like any other block.
+- `'south'` is the way the **picture looks**, not the wall it is stuck to. A
+  painting on the south face of a building faces south, and is read by
+  somebody standing south of it.
+- `'millard_north'` is a row in `src/paintings.js`. Any of vanilla's 51
+  variants works too — `'fighters'`, `'kebab'`.
+
+**Every block behind the whole rectangle must be solid**, or `installAttachment`
+pops the painting off the wall on the next tick. That is vanilla's rule
+(`HangingEntity.survives` requires `allMatch(isSolid)` over the support box),
+and here it is checked per cell.
+
+Adding a new image is three steps and they are in `docs/paintings.md`.
+The one that goes wrong is the **size**: it is an aspect-ratio decision, the
+source is centre-cropped to it, and a landscape photo in a portrait frame
+loses its ends. The build refuses a crop more than 15% off.
+
+### Paintings do not take block light
+
+Same caveat as the lighting section below, and for the same reason: object
+meshes are not lit by `blockLight.js` at all. A painting is drawn **unlit**,
+so it is at full brightness in a pitch-dark room — deliberately, because the
+job of a photograph hung next to a building is to be compared with the
+building, and that job fails indoors if the picture goes grey. Vanilla
+paintings *are* block-lit and do go dark. If that ever reads wrong, the fix is
+an object-mesh path in `blockLight.js`, which every sign in the world wants
+too.
+
 ## Lighting a build, which is newer than it looks
 
 The block light engine shipped the same day these plots were laid out, so
