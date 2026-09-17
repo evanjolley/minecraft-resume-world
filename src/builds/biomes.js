@@ -110,13 +110,15 @@ const CHAPTER_BIOME = {
 const EXTRA = [
   [BIOME.PLAINS, 128, 4],
   [BIOME.BIRCH, 54, 98],
-  [BIOME.BAMBOO, 150, 136],
+  [BIOME.BAMBOO, 112, 146],
   [BIOME.RIVERLANDS, 132, 158],
-  [BIOME.HILLS, 146, 202],
+  [BIOME.HILLS, 108, 200],
   /* The massif, twice, so the mountain is a RANGE rather than a cone with a
-   * hills border halfway up it. SUMMIT below sits on the first of them. */
-  [BIOME.PEAKS, 190, 234],
-  [BIOME.PEAKS, 218, 250],
+   * hills border halfway up it. SUMMIT below sits on the first of them.
+   * BOTH MOVED WHEN CHAPTER 6 CHANGED HANDS: the climb's plot landed exactly
+   * on top of where the mountain used to be. */
+  [BIOME.PEAKS, 120, 242],
+  [BIOME.PEAKS, 78, 250],
 ]
 
 /** [biome, x, z] for every anchor: one per chapter centre, plus EXTRA. */
@@ -376,17 +378,49 @@ function fbm(x, z, salt) {
  *
  * The climb is a parkour going UP and the owner builds it, so its footprint
  * must stay dead flat at y = 136 like every other plot. A mountain under it
- * would be a mountain he has to demolish. So the massif stands WEST of the
- * path across z 200..255 -- in view from the last three bends, behind the
- * climb from the plot's own entrance, and on ground nothing else claims.
+ * would be a mountain he has to demolish. So the massif stands in the last
+ * open ground on the map: between San Francisco's plot and the climb's, south
+ * of both, with the path threading past its eastern flank. You walk around
+ * the mountain to reach the chapter that is about climbing one.
  *
- * IT SAT TEN ROWS FURTHER SOUTH AND CAME OUT A THIRD SHORTER. The relief
+ * IT HAS MOVED TWICE AND BOTH MOVES ARE WORTH KNOWING.
+ *
+ * It sat ten rows further south once and came out a third shorter: the relief
  * tapers to nothing over the last ten columns of the patch (a hillside that
  * ends at the barrier is a hillside ending at whatever the outside of the
  * world is), and a summit nine rows from the south edge spends most of its
- * height paying that taper. Measured at 12 blocks; moved to z = 234 it is 20.
+ * height paying that taper. Measured at 12 blocks; moved north it was 20.
+ *
+ * And it stood at x = 190 until chapter 6 changed hands and its plot landed
+ * exactly on top of it. That is the ONE thing in the whole four-plot flip
+ * that was not a row in a table -- everything else, the island included, is
+ * derived from the plot rectangle.
  */
-const SUMMIT = { x: 190, z: 234, r: 58, h: 22 }
+const SUMMIT = { x: 96, z: 240, r: 44, h: 13 }
+
+/*
+ * AND A FLOOR UNDER THE WHOLE REGION, which is the half of a mountain range
+ * a single cone cannot express.
+ *
+ * Jagged peaks in vanilla are not one hill on a plain; the ground is simply
+ * HIGH for a long way and the peaks are the bits of it that stick up. Trying
+ * to get that from one cone put the entire height budget in one column and
+ * meant the summit had to stand a long way from anything flat -- and with
+ * six plots and a 413-block path, the last quarter of this map does not have
+ * a spot like that. Lifting the region and putting a smaller cone on top
+ * gets the same skyline out of far less clearance.
+ *
+ * It is lifted BEFORE the path fade multiplies it, so the walk still runs at
+ * ordinary ground level through the middle of the highland -- which is what
+ * a pass through a mountain range is -- and the chapter plots still sit flat
+ * at y = 136 with the clamp ramping the ground down to meet them. Chapter 6
+ * is the climb: starting it at the bottom of a bowl is the right place to
+ * start a climb from.
+ */
+const LIFT = {
+  [BIOME.HILLS]: 2.5,
+  [BIOME.PEAKS]: 8,
+}
 
 /**
  * The height this column wants, in blocks above the ordinary ground, before
@@ -400,12 +434,12 @@ const SUMMIT = { x: 190, z: 234, r: 58, h: 22 }
  */
 export function reliefAt(biome, x, z, nearPath) {
   const amp = AMPLITUDE[biome] ?? 1
-  let v = (fbm(x, z, 871) - 0.5) * 2 * amp
+  let v = (LIFT[biome] ?? 0) + (fbm(x, z, 871) - 0.5) * 2 * amp
 
   if (biome === BIOME.PEAKS) {
-    /* A cone, squared off at the edges so the foot of the mountain is a slope
-     * and not a rim. Added to the noise rather than multiplied by it, so the
-     * ridges keep their shape all the way up. */
+    /* A cone on top of the floor, squared off at the edges so the foot of the
+     * mountain is a slope and not a rim. Added to the noise rather than
+     * multiplied by it, so the ridges keep their shape all the way up. */
     const d = Math.hypot((x - SUMMIT.x) * 0.9, z - SUMMIT.z)
     const t = Math.max(0, 1 - d / SUMMIT.r)
     v += SUMMIT.h * t * t * (3 - 2 * t)

@@ -32,9 +32,9 @@
  *     deliberately EARLY or LATE against the plot's midpoint (never on it) --
  *     seven swings all peaking exactly opposite their plot is a rule the eye
  *     finds even when the amplitudes differ.
- *   - The amplitudes differ on purpose: the west swings reach x = 102, 106,
- *     108 and 114; the east swings reach 154, 158 and 152. No two bends are
- *     the same size.
+ *   - The amplitudes differ on purpose: the west swings reach x = 104, 102
+ *     and 106; the east swings reach 152, 150 and 154. No two bends are the
+ *     same size.
  *   - The spacing differs on purpose: 10 to 14 blocks. A constant spacing
  *     with varying amplitude is still a rhythm.
  *   - The first two points are STRAIGHT and level. You arrive facing down a
@@ -73,23 +73,51 @@ export const SPINE = [
   [130, 64, 0],
   [152, 72, -1],  // east, for Harvard (z=65) -- peaks late, and drops
   [154, 84, 0],
-  [138, 92, 1],
-  [114, 98, 1],
-  [106, 108, 1],  // west, for the school years (z=97) -- peaks late, highest
-  [116, 118, 1],
-  [140, 126, 0],
-  [158, 134, 0],  // east, for Bilibili (z=129) -- the biggest swing
-  [150, 146, 0],
+  /*
+   * RE-CUT WHEN HARVARD AND THE SCHOOL WORK MERGED, and it is the one part of
+   * this table that was changed by something other than a place.
+   *
+   * There used to be four points here making a swing west to x = 106, and
+   * they were making it for the school-work plot at z 86..109. That plot is
+   * gone -- it is the same chapter as Harvard now -- and the swing stayed,
+   * which is how the walk ended up going "to the left to nothing then back to
+   * the right", in the owner's words. A bend whose reason has been deleted is
+   * not a bend, it is a detour.
+   *
+   * Bilibili moved to the low-x side in the same pass (src/builds/plots.js),
+   * so the swing has a destination again, and it is one long approach rather
+   * than a wobble: 154 at Harvard down to 102 at Bilibili over sixty rows,
+   * with the two points between it placed to keep the curve's radius growing
+   * rather than constant.
+   */
+  [142, 94, 1],
+  [122, 102, 1],
+  [106, 114, 1],
+  [102, 126, 1],  // west, for Bilibili (plot midpoint z=129) -- peaks EARLY
+  [110, 138, 1],
+  [128, 148, 0],
   [142, 156, 1],  // THE BRIDGE. Nearly straight across the water.
-  [138, 166, 0],
-  [120, 176, 1],
-  [110, 186, 1],  // west, for New York (z=183) -- peaks late and stays west
-  [124, 198, 1],
-  [148, 208, 1],
-  [152, 220, 1],  // east, for San Francisco (z=215) -- peaks late, high
-  [132, 232, 1],
-  [114, 242, 0],  // west, for the climb (z=241)
-  [110, 254, 0],
+  /*
+   * AND THE WHOLE SOUTHERN HALF IS RE-CUT, because chapters 4, 5 and 6 all
+   * changed hands (see the long note in src/builds/plots.js). Every bend
+   * below used to point the other way.
+   *
+   * THE ONE POINT THAT IS NOT ABOUT A CHAPTER is [150, 180]: it is as far
+   * east as the path may come at New York. The island's loop reaches x = 159
+   * at that row and the path has to stop clear of the water, so the spur --
+   * not the path -- is what crosses, over the bridge, which is the same
+   * arrangement the river crossing has and for the same reason.
+   */
+  [140, 166, 0],
+  [150, 180, 1],  // east, for New York (z=183) -- peaks EARLY, and stops
+                  // short of the moat; the spur and the bridge do the rest
+  [146, 192, 1],
+  [120, 202, 1],
+  [106, 212, 1],  // west, for San Francisco (z=215) -- peaks early
+  [108, 224, 1],
+  [132, 236, 1],
+  [154, 246, 0],  // east, for the climb (z=241) -- peaks late
+  [162, 255, 0],
 ]
 
 /**

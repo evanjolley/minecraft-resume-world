@@ -88,15 +88,20 @@ test.describe('the walk', () => {
     await page.screenshot({ path: path.join(SHOTS, '75-spawn.png') })
 
     /* THREE POINTS ALONG THE WALK, one per swing: the first bend past Omaha,
-     * the high ground opposite the school years, and the last bend before the
-     * climb. Different bends, different widths, different heights. */
+     * the long approach to Bilibili, and the last bend before the climb.
+     * Different bends, different widths, different heights.
+     *
+     * THE MIDDLE ONE MOVED. It used to stand on the high ground opposite the
+     * school-work plot; that chapter merged into Harvard and the spine was
+     * re-cut, so the coordinate is now on the swing toward Bilibili, which is
+     * the bend that replaced it. */
     await frameAt(page, '75-walk-1-bend', [106, 46])
-    await frameAt(page, '75-walk-2-rise', [110, 106])
-    await frameAt(page, '75-walk-3-south', [140, 228])
+    await frameAt(page, '75-walk-2-rise', [110, 116])
+    await frameAt(page, '75-walk-3-south', [112, 228])
 
     /* THE BRIDGE, approached from the north bank so the deck, the railings
      * and the water are all in the frame at once. */
-    const deck = await frameAt(page, '75-bridge', [146, 150])
+    const deck = await frameAt(page, '75-bridge', [136, 152])
     expect(deck).not.toBe('air')
   })
 

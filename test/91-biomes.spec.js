@@ -401,7 +401,15 @@ test.describe('the landscape', () => {
     async ({ page }) => {
       await waitTicks(page, 5)
       const ny = landPlot('ch4')
-      const parts = await page.evaluate(([ny]) => {
+      /* WHICH EDGE THE BRIDGE IS ON, from the table rather than typed. The
+       * spur arrives at whichever side of the plot faces the path, so this
+       * box followed the island across the world when chapter 4 changed
+       * hands -- and the first version did not, and censused twenty-five
+       * columns of empty field. */
+      const lowX = ny.side === 'LEFT'
+      const abut = lowX ? ny.x1 : ny.x0
+      const out = lowX ? 1 : -1
+      const parts = await page.evaluate(([ny, abut, out]) => {
         const v = window.game.voxelAt
         const t = window.game.terrain
         const keyOf = new Map()
@@ -409,7 +417,11 @@ test.describe('the landscape', () => {
         let sampled = 0
         const doorZ = ny.z0 + 6
         for (let pz = doorZ - 4; pz <= doorZ + 4; pz++) {
-          for (let px = ny.x1 - 2; px <= ny.x1 + 22; px++) {
+          /* `step` and not `k`: the tally below already binds `k` to a block
+           * key, and a shadowed loop counter there is a bug that reads as
+           * correct code. */
+          for (let step = -2; step <= 22; step++) {
+            const px = abut + step * out
             for (let y = 135; y <= 142; y++) {
               sampled++
               const id = v(px - t.originX, y, pz - t.originZ)
@@ -421,7 +433,7 @@ test.describe('the landscape', () => {
           }
         }
         return { sampled, tally }
-      }, [{ x0: ny.x0, x1: ny.x1, z0: ny.z0, z1: ny.z1 }])
+      }, [{ x0: ny.x0, x1: ny.x1, z0: ny.z0, z1: ny.z1 }, abut, out])
 
       expect(parts.sampled).toBeGreaterThan(1_000)
       /* The river bridge's vocabulary, item for item: a plank deck, stripped
@@ -544,11 +556,20 @@ async function frameAt(page, name, [px, pz], opts = {}) {
    * meshed yet, which is exactly the vacuous green this file's header is
    * about. voxelAt knows what the world IS, at any coordinate, immediately.
    */
-  const top = await page.evaluate(([x, z]) => {
+  const top = await page.evaluate(([x, z, keys]) => {
     const v = window.game.voxelAt
-    for (let y = 200; y >= 131; y--) if (v(x, y, z) !== 0) return y
+    const ids = new Set(keys.map(k => window.game.ids[k]).filter(Boolean))
+    /*
+     * THE GROUND, NOT THE HIGHEST BLOCK. Scanning for any non-air puts the
+     * camera inside the canopy of whatever tree happens to be standing on
+     * this column -- which is what the first version did, and three frames
+     * came back as a wall of leaves. It is the same mistake the boulder made
+     * to the slope measurement: a block STANDING on the ground is not the
+     * ground, and this world now has a lot more of both.
+     */
+    for (let y = 200; y >= 131; y--) if (ids.has(v(x, y, z))) return y
     return null
-  }, [x, z])
+  }, [x, z, GROUND])
   expect(top, `no ground at all under patch (${px}, ${pz})`).not.toBeNull()
   await teleport(page, x + 0.5, top + up, z + 0.5)
   await waitTicks(page, 16)
@@ -584,26 +605,42 @@ test.describe('the walk, biome by biome', () => {
     await frameAt(page, '91-2-birch-harvard', [168, 66], { heading: WEST })
 
     /* BAMBOO JUNGLE, off the path opposite Bilibili. */
-    await frameAt(page, '91-3-bamboo', [166, 128], { heading: WEST })
-    await frameAt(page, '91-3-bamboo-path', [150, 138])
+    await frameAt(page, '91-3-bamboo', [88, 128], { heading: EAST })
+    await frameAt(page, '91-3-bamboo-path', [106, 134])
 
     /* THE RIVER, the bridge, and the island beyond it. */
-    await frameAt(page, '91-4-river-bridge', [143, 148], { pitch: -0.02 })
-    /* Back from the abutment and up over the railing: at deck level with a
-       post one block away, the post is the photograph. */
-    await frameAt(page, '91-4-island-bridge', [106, 178], { heading: EAST, pitch: -0.04, up: 4 })
-    await frameAt(page, '91-4-island-shore', [60, 170], { heading: N })
-    await frameAt(page, '91-4-newyork', [82, 178], { heading: EAST })
+    await frameAt(page, '91-4-river-bridge', [134, 150], { pitch: -0.02 })
+    /*
+     * ON THE SPUR, looking down it at the crossing. Standing in the field
+     * beside it put the camera inside a bush: `up` is applied at the teleport
+     * and then gravity takes it straight back to the ground, so the only
+     * reliable way to be clear of the undergrowth is to stand somewhere the
+     * undergrowth is not, and the walked surface is exactly that.
+     */
+    await frameAt(page, '91-4-island-bridge', [152, 178], { heading: WEST, pitch: -0.03 })
+    await frameAt(page, '91-4-island-shore', [200, 204], { heading: S })
+    /*
+     * THE CITY ACROSS THE WATER, from the far bank of the river.
+     *
+     * Not from the island's own north shore, which is six blocks wide: the
+     * markers are 51 blocks of lettering and you cannot read one from eight
+     * blocks away. This is the frame the composition wants anyway -- water,
+     * then shore, then the name.
+     */
+    await frameAt(page, '91-4-newyork', [200, 144], { heading: S, pitch: -0.03 })
 
     /* WINDSWEPT HILLS, from the path and from among them. */
-    await frameAt(page, '91-5-hills-path', [150, 210], { pitch: -0.06 })
-    await frameAt(page, '91-5-hills', [170, 214], { heading: WEST, pitch: -0.08 })
+    await frameAt(page, '91-5-hills-path', [110, 208], { pitch: -0.06 })
+    await frameAt(page, '91-5-hills', [88, 214], { heading: EAST, pitch: -0.08 })
 
     /* JAGGED PEAKS: the massif from the last bend of the walk, and from its
      * own foot, which is where it stops being scenery. */
-    await frameAt(page, '91-6-peaks-path', [122, 240], { heading: WEST, pitch: -0.14 })
-    await frameAt(page, '91-6-peaks-foot', [160, 240], { heading: WEST, pitch: -0.22 })
-    await frameAt(page, '91-6-climb', [92, 236], { heading: EAST })
+    await frameAt(page, '91-6-peaks-path', [134, 242], { heading: EAST, pitch: -0.14 })
+    /* From the western foot looking up the flank. Standing ON the flank put
+     * the camera under a spruce and photographed the underside of a canopy --
+     * the treeline is real up there and it is in the way. */
+    await frameAt(page, '91-6-peaks-foot', [74, 246], { heading: WEST, pitch: -0.28 })
+    await frameAt(page, '91-6-climb', [168, 236], { heading: WEST })
   })
 
   test('every transition, from the ground', async ({ page }) => {
@@ -612,11 +649,11 @@ test.describe('the walk, biome by biome', () => {
 
     /* One frame on each of the five borders, standing ON the border and
      * looking along the walk, which is where a hard edge would show. */
-    await frameAt(page, '91-t1-plains-to-birch', [104, 86])
-    await frameAt(page, '91-t2-birch-to-bamboo', [148, 120])
-    await frameAt(page, '91-t3-bamboo-to-river', [146, 152], { pitch: -0.03 })
-    await frameAt(page, '91-t4-river-to-hills', [140, 198])
-    await frameAt(page, '91-t5-hills-to-peaks', [136, 228], { pitch: -0.08 })
+    await frameAt(page, '91-t1-plains-to-birch', [150, 88])
+    await frameAt(page, '91-t2-birch-to-bamboo', [112, 114])
+    await frameAt(page, '91-t3-bamboo-to-river', [138, 154], { pitch: -0.03 })
+    await frameAt(page, '91-t4-river-to-hills', [124, 198])
+    await frameAt(page, '91-t5-hills-to-peaks', [114, 228], { pitch: -0.08 })
   })
 
   test('the whole map, and the massif, from the air', async ({ page }) => {
@@ -635,10 +672,12 @@ test.describe('the walk, biome by biome', () => {
 
     /* And an oblique of the south end, which is the only frame that shows
      * whether the mountain is a mountain or a bump. */
-    const [px, pz] = W(150, 180)
-    await teleport(page, px + 0.5, SURFACE_Y + 55, pz + 0.5)
+    /* Forty up and fifty-six back from the summit, pitched to put it in the
+     * middle of the frame rather than on the bottom edge. */
+    const [px, pz] = W(96, 184)
+    await teleport(page, px + 0.5, SURFACE_Y + 40, pz + 0.5)
     await waitTicks(page, 40)
-    await look(page, { heading: S, pitch: 0.28 })
+    await look(page, { heading: S, pitch: 0.55 })
     await waitFrames(page, 20)
     await page.screenshot({ path: path.join(SHOTS, '91-massif.png') })
 

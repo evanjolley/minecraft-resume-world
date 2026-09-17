@@ -252,11 +252,13 @@ export const LAND = {
  * chapters was zero blocks long and the world read as a street. Here the
  * nearest edges of two consecutive chapters are 8 or 9 blocks apart in z AND
  * on opposite sides of a path that swings 50 blocks east and west between
- * them. MEASURED, not estimated: the path is 434 blocks long, the walk from
- * one spur mouth to the next is 53 to 73 blocks of it, and each spur is
- * another 20 to 33 blocks off the path to the plot edge. In the archive the
- * equivalent numbers were 28 and nothing. The walk between chapters is the
- * point.
+ * them. MEASURED, not estimated, and re-measured after the merge re-cut the
+ * spine: the path is 412 blocks long, the walk from one spur mouth to the
+ * next is 54 to 99 blocks of it, and each spur is another 23 to 34 blocks off
+ * the path to the plot edge. (Before the merge: 434, 53 to 73, and 20 to 33 --
+ * one fewer chapter over the same ground, so the gaps grew and the pacing
+ * held.) In the archive the equivalent numbers were 28 and nothing. The walk
+ * between chapters is the point.
  *
  * `side` is which hand the plot falls on as you walk SOUTH, and the compass
  * here is not the one you expect: +x is WEST in this engine (Babylon is
@@ -293,16 +295,38 @@ export const LAND = {
  * has no room to swing between them. At z 54 it overlaps ch1 in z and sits
  * across the path from it, which is what every other pair on this walk does.
  *
- * AND THE SIDES NO LONGER ALTERNATE PERFECTLY, which is arithmetic and not a
- * choice. Seven plots alternating L R L R L R L lose one from the middle;
- * whichever of the pair survives, its two neighbours were on opposite sides
- * of it and one of them now matches it. The sequence is L R R L R L. The
- * doubled hand is the merged chapter and Bilibili, 33 rows apart in z with
- * the path swinging from x = 154 out to x = 106 and back between them -- so
- * it is not a hand a walker can feel. The alternative was mirroring four
- * empty plots across the map and re-cutting the whole spine, which is a
- * bigger change than the merge and one the owner did not ask for ("dont
- * change the plots").
+ * THE SIDES ALTERNATE, L R L R L R, AND EVERYTHING AFTER THE MERGE MOVED TO
+ * KEEP IT THAT WAY.
+ *
+ * Seven plots alternating L R L R L R L lose one from the middle, and the
+ * two neighbours of the one that went are suddenly on the same hand. The
+ * first attempt at this pass left them there and argued the walker would not
+ * feel it. The walker felt it immediately: "the path between harvard and
+ * bilibili is inefficient after you combined the plots, it goes to the left
+ * to nothing then comes back to the right". The spine was still carrying the
+ * swing it used to make for the school-work plot, and that plot no longer
+ * exists -- fifty blocks of detour to a field. A bend whose reason has been
+ * deleted is not a bend.
+ *
+ * The second attempt moved Bilibili across and stopped there, leaving New
+ * York on the same hand as Bilibili and arguing the river between them was
+ * reason enough. The owner disagreed, in as many words: "gotta flip the
+ * later portion and have the island now on the right and the sf mountain on
+ * the left, has to be done."
+ *
+ * So chapters 3, 4, 5 and 6 all changed hands. Four plots' rows, the spine
+ * from the bridge south, the island's whole loop and the mountain, because
+ * ALTERNATION IS THE LAYOUT. It is what makes the path have a reason to
+ * bend, and a path with a reason to bend is the one thing src/builds/spine.js
+ * is written to protect.
+ *
+ * WHAT IT COST, recorded because the next person to move a plot should know:
+ * everything except New York was a row in this table. New York is an island
+ * -- a loop cut off the river, a shoreline, a bank ring the entire height
+ * field is solved against, and a bridge -- and all of it is derived from the
+ * plot rectangle and `side` in src/builds/river.js. Moving the chapter moved
+ * the island, and the only thing that had to be re-placed by hand was the
+ * summit of the mountain, which chapter 6 landed on top of.
  * ------------------------------------------------------------------------
  */
 export const CHAPTERS = [
@@ -335,10 +359,13 @@ export const CHAPTERS = [
    * AND SCHOOL WORK" is 79 blocks and markChapters throws rather than
    * truncating. The label is where both halves are written down. */
   { n: 2, id: 'ch2', label: 'Harvard, school work',  marker: 'HARVARD',       side: 'RIGHT', x0: 176, x1: 227, z0: 54,  z1: 77 },
-  { n: 3, id: 'ch3', label: 'Bilibili',              marker: 'BILIBILI',      side: 'RIGHT', x0: 176, x1: 227, z0: 118, z1: 141 },
-  { n: 4, id: 'ch4', label: 'New York, No Logo',     marker: 'NEW YORK',      side: 'LEFT',  x0: 28,  x1: 79,  z0: 172, z1: 195 },
-  { n: 5, id: 'ch5', label: 'San Francisco, Patronus', marker: 'SAN FRANCISCO', side: 'RIGHT', x0: 176, x1: 227, z0: 204, z1: 227 },
-  { n: 6, id: 'ch6', label: 'The climb',             marker: 'THE CLIMB',     side: 'LEFT',  x0: 28,  x1: 79,  z0: 230, z1: 253 },
+  /* FOUR ROWS THAT CHANGED HANDS when the merge cost the walk its
+   * alternation. Only the x pair moved on any of them; every z is where it
+   * has always been, so the pacing down the map is untouched. */
+  { n: 3, id: 'ch3', label: 'Bilibili',              marker: 'BILIBILI',      side: 'LEFT',  x0: 28,  x1: 79,  z0: 118, z1: 141 },
+  { n: 4, id: 'ch4', label: 'New York, No Logo',     marker: 'NEW YORK',      side: 'RIGHT', x0: 176, x1: 227, z0: 172, z1: 195 },
+  { n: 5, id: 'ch5', label: 'San Francisco, Patronus', marker: 'SAN FRANCISCO', side: 'LEFT',  x0: 28,  x1: 79,  z0: 204, z1: 227 },
+  { n: 6, id: 'ch6', label: 'The climb',             marker: 'THE CLIMB',     side: 'RIGHT', x0: 176, x1: 227, z0: 230, z1: 253 },
 ]
 
 /** Every overworld allocation by id. Separate from ALL above, because the two
