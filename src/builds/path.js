@@ -132,7 +132,10 @@ export function drawPath(model, samples, surfaceOf) {
 /*
  * THE SPURS, and the reason every chapter has one.
  *
- * "A short spur off the main path, so arriving somewhere is a choice." A plot
+ * "A short spur off the main path, so arriving somewhere is a choice." They
+ * came out 20 to 33 blocks long, which is not short -- it is the plot sitting
+ * well back from the path, which is what stops seven plots reading as a
+ * street. A plot
  * that the path runs straight into is a room you are pushed through; a plot
  * with a turning off it is a place you decide to visit. Three blocks wide
  * against the main path's four or five, so it reads as lesser -- you can tell

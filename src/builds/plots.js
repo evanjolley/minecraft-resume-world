@@ -248,8 +248,11 @@ export const LAND = {
  * chapters was zero blocks long and the world read as a street. Here the
  * nearest edges of two consecutive chapters are 8 or 9 blocks apart in z AND
  * on opposite sides of a path that swings 50 blocks east and west between
- * them, so the walk from one spur mouth to the next is 45 to 60 blocks of
- * path. The walk between chapters is the point.
+ * them. MEASURED, not estimated: the path is 434 blocks long, the walk from
+ * one spur mouth to the next is 53 to 73 blocks of it, and each spur is
+ * another 20 to 33 blocks off the path to the plot edge. In the archive the
+ * equivalent numbers were 28 and nothing. The walk between chapters is the
+ * point.
  *
  * `side` is which hand the plot falls on as you walk SOUTH, and the compass
  * here is not the one you expect: +x is WEST in this engine (Babylon is
