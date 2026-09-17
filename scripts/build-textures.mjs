@@ -239,6 +239,85 @@ async function emitParticle(src, out) {
 }
 
 /*
+ * textures/mob_effect/ -- the 39 status-effect icons the HUD blits.
+ *
+ * WHY THE WHOLE DIRECTORY, rather than a list of the 39 names. effects.js
+ * already holds that list and this script cannot import it (it is browser
+ * code, and it pulls in physics.js and blocks.js behind it). Writing the
+ * names out a second time creates two lists that have to agree, and the one
+ * in this file would be the one nobody updates the day Mojang adds a
+ * fortieth effect. The jar's directory IS the list, so it is copied whole --
+ * 39 files and 8 KB, which is less than one block texture.
+ *
+ * Kept at native 18x18, which is not a typo for 16. Effect icons are the one
+ * piece of vanilla art that is not on the 16-pixel grid: Gui.renderEffects
+ * blits them into a 24x24 frame at a 3-pixel inset, so 18 is the real size
+ * and hud.js's EFFECT_ICON already says so.
+ *
+ * Rejected: packing them into an atlas page like the block textures. The
+ * atlas exists so the terrain shader can index a layer; these are drawn by
+ * the DOM as 39 separate <div> backgrounds, so a page would have to be
+ * unpacked again in CSS for nothing.
+ */
+async function emitEffectIcons(jar, tmp) {
+  const dir = join(tmp, 'mob_effect')
+  mkdirSync(dir, { recursive: true })
+  execFileSync('unzip', ['-q', '-o', '-j', jar,
+    'assets/minecraft/textures/mob_effect/*', '-d', dir])
+  const out = join(OUT, 'mob_effect')
+  mkdirSync(out, { recursive: true })
+  const names = readdirSync(dir).filter(f => f.endsWith('.png'))
+  for (const f of names) await sharp(join(dir, f)).ensureAlpha().png().toFile(join(out, f))
+  return names.length
+}
+
+/*
+ * The spell mote's sprite strip, for the effect swirl.
+ *
+ * WHAT ENTITY_EFFECT ACTUALLY LOOKS LIKE, because this is the detail the
+ * first version of the swirl guessed at and got backwards. It is NOT a soft
+ * radial blob. `assets/minecraft/particles/entity_effect.json` names eight
+ * 8x8 sprites and every one of them is a hollow RING OUTLINE at a different
+ * diameter -- effect_0 is a two-pixel speck, effect_7 is a ring that fills
+ * the tile. SpellParticle picks the frame from its own age
+ * (`setSpriteFromAge`), so a mote is an animation, not a still.
+ *
+ * AND THE LIST IS IN REVERSE. entity_effect.json lists effect_7 FIRST and
+ * effect_0 last:
+ *
+ *     { "textures": [ "minecraft:effect_7", ..., "minecraft:effect_0" ] }
+ *
+ * so index 0 -- which is age 0 -- is the BIGGEST ring, and the mote collapses
+ * inward to a dot as it dies. That is the whole motion, and it is the
+ * opposite of the "grow and fade" a blob implies.
+ *
+ * So the strip is written in the JSON'S OWN ORDER, 8 frames stacked into one
+ * 8x64 column, and particles.js indexes it straight off age with no
+ * reversal at its end. Putting the reversal here keeps it next to the file
+ * that states it; doing it in the renderer would be a magic `7 - i` with
+ * nothing beside it to explain the 7.
+ *
+ * ONE TEXTURE, not eight. particles.js keys a pooled system by texture name,
+ * so eight files would be eight meshes and eight draw calls for one effect,
+ * and a mote would have to migrate between them as it aged.
+ */
+const SPELL_FRAMES = ['effect_7', 'effect_6', 'effect_5', 'effect_4',
+                      'effect_3', 'effect_2', 'effect_1', 'effect_0']
+
+async function emitSpellStrip(tmp) {
+  mkdirSync(join(OUT, 'particle'), { recursive: true })
+  const size = 8
+  const px = Buffer.alloc(size * size * SPELL_FRAMES.length * 4)
+  for (let i = 0; i < SPELL_FRAMES.length; i++) {
+    const { data } = await sharp(join(tmp, `${SPELL_FRAMES[i]}.png`)).ensureAlpha()
+      .raw().toBuffer({ resolveWithObject: true })
+    data.copy(px, i * size * size * 4, 0, size * size * 4)
+  }
+  await sharp(px, { raw: { width: size, height: size * SPELL_FRAMES.length, channels: 4 } })
+    .png().toFile(join(OUT, 'particle', 'spell.png'))
+}
+
+/*
  * CE has no particle/ directory at all. It is a pack_format 6 pack and it
  * never redrew Mojang's particle sheet, so there is nothing to copy. The
  * flame is therefore cropped out of CE'S OWN TORCH -- x 4..11, y 0..7, which
@@ -257,6 +336,50 @@ async function deriveParticleFromTorch(torchPng, out) {
   await sharp(torchPng).ensureAlpha()
     .extract({ left: 4, top: 0, width: 8, height: 8 })
     .png().toFile(join(OUT, 'particle', `${out}.png`))
+}
+
+/*
+ * The same strip for CE, drawn rather than copied -- and this is the one
+ * place in this file where that is defensible.
+ *
+ * CE has no particle/ directory, which is the hole deriveParticleFromTorch
+ * above already works around by cropping CE's own torch. There is nothing to
+ * crop here: no pack_format 6 texture is a spell mote, and the flame is the
+ * wrong shape, the wrong colour and the wrong size.
+ *
+ * What saves it from being "new art pretending to be a derivative" is that a
+ * spell mote is not art. Vanilla's eight frames are eight HOLLOW CIRCLES at
+ * diameters 2, 3, 4, 5, 6, 7, 8, 8 -- the shape is fully described by its own
+ * geometry, which is the same argument this file makes for the sun's alpha
+ * mask. Mojang's are hand-drawn and a pixel wobbly; these are the circle they
+ * are wobbling around, in the same order, at the same sizes.
+ *
+ * WHITE, and the alpha carries the shape. particles.js multiplies this by the
+ * per-particle vertex colour, so any tint baked in here would multiply
+ * against all 39 effect colours and darken every one of them.
+ */
+const SPELL_DIAMETERS = [8, 8, 7, 6, 5, 4, 3, 2]
+
+async function deriveSpellStrip() {
+  mkdirSync(join(OUT, 'particle'), { recursive: true })
+  const size = 8
+  const px = Buffer.alloc(size * size * SPELL_DIAMETERS.length * 4)
+  SPELL_DIAMETERS.forEach((d, f) => {
+    const r = d / 2
+    const c = (size - 1) / 2
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        // On the ring, not inside it: vanilla's frames are outlines, and a
+        // filled disc is the blob this whole change exists to stop drawing.
+        const dist = Math.hypot(x - c, y - c)
+        if (Math.abs(dist - (r - 0.5)) > 0.6) continue
+        const i = (f * size * size + y * size + x) * 4
+        px[i] = px[i + 1] = px[i + 2] = px[i + 3] = 255
+      }
+    }
+  })
+  await sharp(px, { raw: { width: size, height: size * SPELL_DIAMETERS.length, channels: 4 } })
+    .png().toFile(join(OUT, 'particle', 'spell.png'))
 }
 
 /* ------------------------------------------------------------------ *
@@ -324,6 +447,12 @@ function looksComplete() {
   // build made before particle/ existed is complete by every other test here,
   // and leaving it alone means every torch in the world 404s its flame.
   if (!existsSync(join(dir, 'particle', 'flame.png'))) return false
+  // Same again for the two directories potions brought. A build from before
+  // them passes every test above and leaves the HUD drawing coloured squares
+  // and the swirl 404ing its sprite, which is exactly the shape of bug the
+  // two lines above already exist to catch.
+  if (!existsSync(join(dir, 'particle', 'spell.png'))) return false
+  if (source === 'vanilla' && !existsSync(join(dir, 'mob_effect'))) return false
   return readdirSync(dir).filter(f => f.endsWith('.png')).length >= MATERIALS.length
 }
 
@@ -1054,6 +1183,7 @@ async function fromCE() {
   copyFileSync(join(CE_SRC, 'NOTICE.txt'), join(OUT, 'NOTICE.txt'))
 
   await deriveParticleFromTorch(join(CE_SRC, 'block', 'torch.png'), 'flame')
+  await deriveSpellStrip()
 
   await uiFromAtlases(join(CE_SRC, 'gui'))
 
@@ -1137,6 +1267,7 @@ async function fromVanilla() {
     'assets/minecraft/textures/environment/sun.png',
     'assets/minecraft/textures/environment/moon_phases.png',
     'assets/minecraft/textures/particle/flame.png',
+    'assets/minecraft/textures/particle/effect_*.png',
     'assets/minecraft/textures/colormap/grass.png', '-d', tmp])
 
   const t = (n) => join(tmp, `${n}.png`)
@@ -1196,6 +1327,8 @@ async function fromVanilla() {
   await alphaFromLuminance(moonCell, join(OUT, 'moon.png'))
 
   await emitParticle(t('flame'), 'flame')
+  await emitSpellStrip(tmp)
+  console.log(`  effect icons: ${await emitEffectIcons(jar, tmp)} of 39`)
 
   // Clouds and the first-person hand have no vanilla equivalent we can use,
   // so they stay on the CC-licensed pack.

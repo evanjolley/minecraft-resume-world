@@ -426,15 +426,37 @@ const EFFECT_ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X
  * that already exists. Rebuilding the DOM at 30 Hz to animate an opacity is
  * the version that works and quietly costs a frame.
  *
- * NO ICON ART EXISTS IN THIS WORLD. Vanilla blits `mob_effect/<name>.png`, 39
- * sprites that scripts/build-textures.mjs does not extract -- and that script
- * is owned by another agent this pass. So the 18x18 is filled with the
- * effect's OWN COLOUR, which is real data from MobEffects.java rather than
- * invented art, plus the roman numeral for level II and up. The numeral is a
- * deliberate departure: vanilla puts it in the inventory panel and not on the
- * HUD, and without either a sprite or a numeral three coloured squares are
- * unreadable. It comes out the moment the sprites land.
+ * THE ICON ART NOW EXISTS, and there are still two ways this draws, because
+ * the deployed build cannot have it.
+ *
+ *   SPRITE MODE. scripts/build-textures.mjs copies all 39
+ *   `mob_effect/<name>.png` out of the jar, and the key in effects.js is
+ *   the sprite's filename with no mapping in between. Vanilla exactly: the
+ *   18x18 sprite, and NO ROMAN NUMERAL -- the level lives in the inventory
+ *   panel, and the HUD row has no text on it at all.
+ *
+ *   SWATCH MODE. `npm run build:deploy` builds textures from CE, and CE is a
+ *   pack_format 6 pack with no mob_effect directory -- the same hole that
+ *   makes the torch's flame a crop of CE's own torch. Thirty-nine hand-drawn
+ *   icons cannot be derived from anything, so the public site keeps the old
+ *   drawing: the effect's own colour out of MobEffects.java, plus the roman
+ *   numeral, because three unlabelled coloured squares are unreadable and a
+ *   numeral is the cheapest thing that makes them distinguishable.
+ *
+ * HOW IT PICKS, and this is the subtle part. It loads ONE sprite
+ * (`speed.png`, which every build that has the directory has) and waits for
+ * the Image to resolve. There is no synchronous way to ask whether a URL
+ * 404s, and the alternatives are both worse: setting background-image and
+ * letting a miss fall through to background-colour silently leaves the
+ * numeral on in sprite mode, and shipping a manifest means a second file that
+ * can disagree with the directory beside it.
+ *
+ * The probe resolves in the first few frames, and `rebuild()` runs again when
+ * it does -- so a cell built before the answer arrives is a swatch that turns
+ * into a sprite. That is one repaint at startup, not a flicker per effect.
  */
+const EFFECT_SPRITE_DIR = '/textures/mob_effect'
+const EFFECT_PROBE = 'speed'
 function effectRows(container, effects, noa) {
   const rows = [
     Object.assign(document.createElement('div'), { className: 'effect-row' }),
@@ -447,6 +469,15 @@ function effectRows(container, effects, noa) {
 
   /* Live cells, so the per-frame alpha write does not have to re-query. */
   let cells = []
+
+  /*
+   * null while the probe is in flight, then true or false forever. Cells
+   * built during the null window draw as swatches and are rebuilt once.
+   */
+  let haveSprites = false
+  const probe = new Image()
+  probe.onload = () => { haveSprites = true; rebuild() }
+  probe.src = `${EFFECT_SPRITE_DIR}/${EFFECT_PROBE}.png`
 
   function rebuild() {
     for (const row of rows) row.textContent = ''
@@ -466,10 +497,21 @@ function effectRows(container, effects, noa) {
       icon.className = 'effect-icon'
       icon.style.left = icon.style.top = px(EFFECT_INSET)
       icon.style.width = icon.style.height = px(EFFECT_ICON)
-      icon.style.background = `#${inst.def.color.toString(16).padStart(6, '0')}`
+      if (haveSprites) {
+        // `contain` rather than a size in pixels: the sprite is 18x18 and the
+        // div is 18 GUI pixels, which is 18 * scale real ones. Letting the
+        // browser fit it means the HUD scale factor is stated in exactly one
+        // place, which is the div's own width.
+        icon.style.backgroundImage = `url(${EFFECT_SPRITE_DIR}/${inst.key}.png)`
+        icon.style.backgroundSize = 'contain'
+      } else {
+        icon.style.background = `#${inst.def.color.toString(16).padStart(6, '0')}`
+      }
       cell.appendChild(icon)
 
-      if (inst.amplifier > 0) {
+      // Vanilla's HUD row carries no text. The numeral is swatch mode's crutch
+      // and comes off the moment there is a picture to look at instead.
+      if (!haveSprites && inst.amplifier > 0) {
         const lv = document.createElement('span')
         lv.className = 'effect-level'
         lv.style.fontSize = `${FONT_PX * 0.75}px`
@@ -497,6 +539,10 @@ function effectRows(container, effects, noa) {
     get count() { return cells.length },
     get keys() { return cells.map(c => c.inst.key) },
     rowKeys: (i) => [...rows[i].children].map(el => el.dataset.effect),
+    /* Which of the two drawings is live. The spec asserts the local build is
+       in sprite mode; without it a 404ed directory looks identical to a CE
+       build and passes. */
+    get sprites() { return haveSprites },
   }
 }
 
