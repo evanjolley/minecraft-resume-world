@@ -239,6 +239,138 @@ for (const facing of Object.keys(FACINGS)) {
   SHAPE_ROTATION[`torch_wall_${facing}`] = rotation
 }
 
+/* ------------------------------------------------------------------ *
+ * Signs, and the geometry is vanilla's rather than a plausible guess.
+ *
+ * READ OUT OF 1.21 SOURCE, not the wiki -- minecraft.wiki's Sign article
+ * carries no geometry at all. Two Mojang-mapped mirrors were read and every
+ * constant below is byte-identical between them: `Yeet-Masta/MCP-1.21`
+ * (1.21.0/1.21.1) and `sis1cat/minecraftsodium-1.21.8` (1.21.8). The block
+ * model JSON is a decoy -- `models/block/oak_sign.json` is nothing but a
+ * `particle` texture, and `blockstates/oak_sign.json` maps all sixteen
+ * rotations to it with no rotation of its own. EVERY visible pixel of a sign
+ * comes from the block-entity renderer, so the numbers live in Java:
+ *
+ *   SignRenderer.createSignLayer()
+ *     "sign"  addBox(-12, -14, -1, 24, 12, 2)
+ *     "stick" addBox( -1,  -2, -1,  2, 14, 2)
+ *   SignRenderer.RENDER_SCALE = 0.6666667F        // 2/3, and it is applied
+ *   renderSign: poseStack.scale(f, -f, -f)        // to EVERYTHING
+ *   translateSign: translate(0.5, 0.5, 0.5)       // pivot = block centre
+ *     ...and for a wall sign only: translate(0, -0.3125, -0.4375)
+ *
+ * Multiply through and the sign everyone recognises falls out: a board
+ * EXACTLY one block wide and half a block tall, 1 1/3 pixels thick, on a
+ * 1 1/3 pixel post. The two-thirds is why a sign is not 24 pixels wide.
+ *
+ * THE BOARD POKES OUT OF ITS OWN CELL and that is not a bug in this
+ * transcription. 24 model px tall of board and stick above a pivot at y=8
+ * reaches y = 17 1/3 px, one and a third pixels above the block boundary.
+ * Vanilla does this; a sign with a block directly above it visibly clips
+ * into it. Clamping to 16 would have been the tidy-looking wrong answer.
+ *
+ * SIXTEEN ROTATIONS ARE NOT REPRODUCED -- there are four. Vanilla's standing
+ * sign stores `rotation` 0..15 and `RotationSegment` turns the model by
+ * 22.5-degree steps; this world's placement seam offers `headingToFacing`,
+ * which answers with one of four compass names, and docs/FUTURE.md item 1
+ * accepts four explicitly. The cost is real and worth naming: a sign placed
+ * while facing north-east squares up to north instead of splitting the
+ * difference. What it buys is that all four standing shapes stay
+ * AXIS-ALIGNED, so none of them needs SHAPE_ROTATION -- and a rotated shape
+ * is the one thing in this file whose collision and hitbox have to be
+ * declared separately, because buildShapeMesh turns finished vertices rather
+ * than boxes. Sixteen rotations means twelve shapes that are drawn one way
+ * and aimed at another. Four is not a shortcut around the hard case; it is
+ * the whole of the easy case.
+ *
+ * FACING NAMES THE DIRECTION THE BOARD FACES -- the way a reader stands.
+ * Same convention as the wall torch above (the direction it points, away
+ * from whatever holds it) and it is derived from the FACINGS vector rather
+ * than from the name, because this world's east is -x and a table typed out
+ * per name would be mirrored the moment anybody trusted it.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Vanilla's sign, in block pixels, with the 2/3 already multiplied in.
+ * Thirds are kept as fractions rather than decimals: 4/3 is exact and
+ * 1.333 is not, and these numbers are compared against in a spec.
+ */
+export const SIGN_GEOMETRY = {
+  /** 24 model px * 2/3 = one whole block. */
+  BOARD_WIDTH: 16,
+  /** 12 * 2/3. */
+  BOARD_HEIGHT: 8,
+  /** 2 * 2/3. */
+  BOARD_THICKNESS: 4 / 3,
+  /** The post is 2x2 model px, so 4/3 square, and 14 tall -> 28/3. */
+  POST: 4 / 3,
+  POST_HEIGHT: 28 / 3,
+  /** Board y for a standing sign: sits on top of the post and overshoots. */
+  BOARD_BOTTOM: 28 / 3,
+  BOARD_TOP: 52 / 3,
+  /** Board y for a wall sign, which the -0.3125 block drop moves down to. */
+  WALL_BOARD_BOTTOM: 13 / 3,
+  WALL_BOARD_TOP: 37 / 3,
+  /** A wall sign's board, measured outward from the wall it hangs on. */
+  WALL_BACK: 1 / 3,
+  WALL_FRONT: 5 / 3,
+}
+
+/**
+ * The two horizontal axes for a facing: the one it points along, and the one
+ * the board spans. `wall` is where the supporting block's face is, in
+ * block-local 0..1, for the wall variants.
+ */
+function signAxes(facing) {
+  const d = FACINGS[facing]
+  const a = d[0] ? 0 : 2
+  return { a, p: a === 0 ? 2 : 0, s: d[a], wall: (1 - d[a]) / 2 }
+}
+
+const px = (v) => v / 16
+
+function standingSignBoxes(facing) {
+  const { a, p } = signAxes(facing)
+  const G = SIGN_GEOMETRY
+  const board = [0, 0, 0, 0, 0, 0]
+  const post = [0, 0, 0, 0, 0, 0]
+  // The board spans the whole cell across, and is a thin slice through the
+  // middle along the facing axis.
+  board[p] = 0; board[p + 3] = 1
+  board[a] = px(8 - G.BOARD_THICKNESS / 2); board[a + 3] = px(8 + G.BOARD_THICKNESS / 2)
+  board[1] = px(G.BOARD_BOTTOM); board[4] = px(G.BOARD_TOP)
+  // The post is square and centred, so it is the same box for all four
+  // facings -- written from the axes anyway so it cannot drift.
+  for (const axis of [a, p]) {
+    post[axis] = px(8 - G.POST / 2); post[axis + 3] = px(8 + G.POST / 2)
+  }
+  post[1] = 0; post[4] = px(G.POST_HEIGHT)
+  return [board, post]
+}
+
+function wallSignBoxes(facing) {
+  const { a, p, s, wall } = signAxes(facing)
+  const G = SIGN_GEOMETRY
+  const box = [0, 0, 0, 0, 0, 0]
+  box[p] = 0; box[p + 3] = 1
+  // Measured outward from the wall plane along the facing, then sorted --
+  // `s` is -1 on two of the four facings and a box with lo > hi draws
+  // inside-out.
+  const near = wall + s * px(G.WALL_BACK)
+  const far = wall + s * px(G.WALL_FRONT)
+  box[a] = Math.min(near, far); box[a + 3] = Math.max(near, far)
+  box[1] = px(G.WALL_BOARD_BOTTOM); box[4] = px(G.WALL_BOARD_TOP)
+  return [box]
+}
+
+/** The four facings a sign can take, in the order blocks.js assigns ids. */
+export const SIGN_FACINGS = ['north', 'south', 'east', 'west']
+
+for (const facing of SIGN_FACINGS) {
+  SHAPE_BOXES[`sign_${facing}`] = standingSignBoxes(facing)
+  SHAPE_BOXES[`sign_wall_${facing}`] = wallSignBoxes(facing)
+}
+
 /**
  * The facing name for a block face's outward normal, or null for up and down.
  * The inverse of the FACINGS table, and the thing that turns "which face did
@@ -602,6 +734,15 @@ export function installThinInstanceUploadFix(noa) {
  */
 export const PASS_THROUGH_SHAPES = new Set([
   'torch', 'torch_wall_north', 'torch_wall_south', 'torch_wall_east', 'torch_wall_west',
+  /*
+   * And signs, which is the second family to take this opt-out and the
+   * reason the note above says "capability" rather than "torch". Vanilla
+   * registers both sign blocks `.noCollission()` (1.21 `Blocks.java`, the
+   * OAK_SIGN and OAK_WALL_SIGN rows), so a sign is walked through exactly
+   * like a torch. Nothing in this file changed to accept them.
+   */
+  ...['north', 'south', 'east', 'west'].flatMap(
+    (f) => [`sign_${f}`, `sign_wall_${f}`]),
 ])
 
 /** Minecraft's player step height: onto a slab, never onto a full block. */
@@ -942,6 +1083,33 @@ for (const facing of Object.keys(FACINGS)) {
   lo[1] = 3 / 16; hi[1] = 13 / 16
   lo[p] = 5.5 / 16; hi[p] = 10.5 / 16
   TARGET_BOXES[`torch_wall_${facing}`] = [[...lo, ...hi]]
+}
+
+/*
+ * A sign's outline, which is a THIRD shape again -- not the model, and not
+ * the same as a torch's relationship to its model either.
+ *
+ * 1.21 `SignBlock.java`:  SHAPE = Block.box(4, 0, 4, 12, 16, 12)
+ *
+ * Eight pixels square and the FULL height of the block, for a sign whose
+ * board is one pixel and a third thick and whose post is one and a third
+ * wide. So vanilla lets you aim at the column of air a sign stands in, which
+ * is the only way a sign on the far side of a path is clickable at all.
+ *
+ * `WallSignBlock.java` declares its four instead, and they are NOT the
+ * rendered board: y 4.5..12.5 against the board's 4 1/3..12 1/3, and two
+ * pixels deep against the board's one and a third. A sixth of a pixel of
+ * slack in vanilla's own numbers, transcribed rather than tidied.
+ */
+for (const facing of SIGN_FACINGS) {
+  TARGET_BOXES[`sign_${facing}`] = [[4 / 16, 0, 4 / 16, 12 / 16, 1, 12 / 16]]
+  const { a, p, s, wall } = signAxes(facing)
+  const lo = [0, 0, 0], hi = [0, 0, 0]
+  lo[p] = 0; hi[p] = 1
+  const inner = wall + s * (2 / 16)
+  lo[a] = Math.min(wall, inner); hi[a] = Math.max(wall, inner)
+  lo[1] = 4.5 / 16; hi[1] = 12.5 / 16
+  TARGET_BOXES[`sign_wall_${facing}`] = [[...lo, ...hi]]
 }
 
 /*

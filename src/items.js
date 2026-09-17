@@ -757,6 +757,15 @@ const DROP_RULES = [
    */
   [/^torch$|^wall_torch_(north|south|east|west)$/, self,
     'a torch drops itself, from the floor or off a wall'],
+  /*
+   * Signs, all eight of them, and `self` covers every one for the same reason
+   * it covers the torches: blocks.js points the seven variants' `drops` at the
+   * canonical `oak_sign`, so mining a wall sign gives you a sign rather than
+   * an Oak Sign (West). Vanilla drops the sign and DISCARDS the text, which is
+   * what happens here too -- signText.js drops its entry when the block goes.
+   */
+  [/^oak_sign(_(south|east|west))?$|^oak_wall_sign_(north|south|east|west)$/, self,
+    'a sign drops itself from the ground or off a wall, and forgets what it said'],
   [/^planks$|_planks$|_log$|_wood$|_stem$|_hyphae$|^bamboo_(planks|mosaic|block)$|^stripped_bamboo_block$/, self,
     'every wood: logs, planks, stems, hyphae and the bamboo set'],
   [/_wool$|_concrete$|_concrete_powder$|terracotta$/, self,

@@ -190,6 +190,14 @@ const BLOCK_RECIPES = [
   shaped('torch', 4, ['C', 'S'], { C: '#coals', S: 'stick' }),
   shapeless('jack_o_lantern', 1, ['carved_pumpkin', 'torch']),
 
+  /*
+   * Signs. Vanilla's recipe exactly -- six planks over a stick, three signs
+   * out -- and deliberately NOT `#planks`: vanilla has one recipe per wood and
+   * the oak one takes oak. The day a second wood's sign exists it gets its own
+   * row, which is what the tag would have quietly prevented.
+   */
+  shaped('oak_sign', 3, ['XXX', 'XXX', ' S '], { X: 'planks', S: 'stick' }),
+
   // Stone-cutting by hand: the 2x2 that turns rough into polished.
   square4('stone_bricks', 'stone', 4),
   square4('polished_andesite', 'andesite', 4),

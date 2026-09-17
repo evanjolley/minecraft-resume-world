@@ -1,7 +1,7 @@
 import {
   FACINGS, SHAPE_BOXES, SHAPE_ROTATION, PASS_THROUGH_SHAPES, buildShapeMesh,
   createMaterialCache, facingFromNormal, installNonCubeCollision,
-  installPlacementOrientation, installThinInstanceUploadFix,
+  installPlacementOrientation, installThinInstanceUploadFix, SIGN_FACINGS,
 } from './blockMeshes.js'
 import { EMISSION } from './blockLight.js'
 
@@ -1072,8 +1072,127 @@ NON_CUBE_VARIANTS.set(TORCH_ID, (_facing, _half, normal) => {
   return TORCH_ID + 1 + WALL_TORCH_FACINGS.indexOf(facing)
 })
 
+/* ------------------------------------------------------------------ *
+ * Signs, which are the first blocks in this world that can SAY something.
+ *
+ * Eight ids: four standing facings and four wall facings, all oak. The
+ * geometry and its vanilla provenance are in blockMeshes.js; what belongs
+ * here is which of the torch's three new capabilities a sign reuses, and the
+ * answer turned out to be two of three rather than three of three:
+ *
+ *   - PASS_THROUGH, yes. Vanilla registers both sign blocks `.noCollission()`
+ *     and you walk through one.
+ *   - `cutout`, NO, and this is worth writing down because the torch's report
+ *     predicted otherwise. A cutout material exists for a texture that is
+ *     mostly nothing; a sign's board is a SOLID CUBOID of oak planks with no
+ *     transparent texel anywhere on it. The transparency a sign needs is in
+ *     its TEXT, which is not this mesh at all (see signText.js -- noa gives
+ *     every voxel of an id one shared set of vertices, and every sign says
+ *     something different). So the flag is left off, which also keeps the
+ *     board on the cheaper opaque path with backface culling ON.
+ *   - `flatItem`, NO, and for a duller reason: vanilla's sign item really is
+ *     an `item/generated` sprite, but its art is `item/oak_sign.png` and this
+ *     world's texture pipeline has never extracted it. Marking the flag
+ *     without the art gets a missing sprite in three renderers. A sign in the
+ *     hand is a little oak cube until someone adds the texture; recorded as a
+ *     divergence rather than hidden.
+ *
+ * TEXTURE: `oak_planks`, which is not a substitute for a sign texture so much
+ * as an honest reading of one. Vanilla's `entity/signs/oak.png` is a 64x32
+ * atlas of one plank board, and the board this world draws is cut from the
+ * plank texture by the same slice rule every slab and stair already uses. It
+ * costs the atlas nothing: shape blocks pass no material to noa.
+ *
+ * FOUR FACINGS, NOT SIXTEEN, accepted on the terms docs/FUTURE.md item 1 set
+ * out. blockMeshes.js has the argument.
+ *
+ * APPENDED LAST, after the torches. Ids are save data.
+ * ------------------------------------------------------------------ */
+const SIGN_ID = 660
+
+/** facing -> block id, for both families. Built once, read by everything. */
+const STANDING_SIGN = new Map(SIGN_FACINGS.map((f, i) => [f, SIGN_ID + i]))
+const WALL_SIGN = new Map(SIGN_FACINGS.map((f, i) => [f, SIGN_ID + 4 + i]))
+
+/*
+ * The canonical is the NORTH standing sign, and it keeps the bare key
+ * `oak_sign` -- exactly the arrangement the torch has, where `torch` is a
+ * real placeable shape AND the thing every variant drops. The alternative was
+ * a ninth id that is only ever an item, which would have made `oak_sign` a
+ * block that cannot be placed and `oak_sign_north` the thing recipes name.
+ */
+const SIGNS = [
+  ...SIGN_FACINGS.map((facing, i) => ({
+    id: STANDING_SIGN.get(facing), key: i === 0 ? 'oak_sign' : `oak_sign_${facing}`,
+    name: 'Oak Sign', all: 'oak_planks', shape: `sign_${facing}`,
+    // Vanilla's strength(1.0), and axe-preferred like every other wood.
+    hardness: T(1, false),
+    ...(i === 0 ? {} : { drops: SIGN_ID }),
+  })),
+  ...SIGN_FACINGS.map((facing) => ({
+    id: WALL_SIGN.get(facing), key: `oak_wall_sign_${facing}`,
+    name: 'Oak Sign', all: 'oak_planks', shape: `sign_wall_${facing}`,
+    hardness: T(1, false), drops: SIGN_ID,
+  })),
+]
+
+/*
+ * Which of the eight you get.
+ *
+ * A sign reads BOTH of the things installPlacementOrientation offers, which
+ * no other family here does: the clicked face's normal decides whether it is
+ * a wall sign at all, and if it is not, the player's heading decides which
+ * way the board turns. That is vanilla -- `SignItem` places a wall sign when
+ * you click a side and a standing sign otherwise, and the standing one takes
+ * its rotation from the player.
+ *
+ * AND THE STANDING ONE IS THE OPPOSITE OF THE HEADING, which is the one line
+ * in this file most likely to be "corrected" back into a bug. `facing` here
+ * names the direction the board FACES, and a sign you have just planted faces
+ * BACK at you: you are looking south, so it is looking north. A stair takes
+ * the heading unchanged because a stair's facing is the way you are walking.
+ * Both are read off FACINGS by negating the vector, so the east/west flip in
+ * this world is applied once rather than remembered twice.
+ */
+const OPPOSITE = new Map(SIGN_FACINGS.map((facing) => {
+  const d = FACINGS[facing]
+  const back = SIGN_FACINGS.find((o) => {
+    const v = FACINGS[o]
+    return v[0] === -d[0] && v[2] === -d[2]
+  })
+  return [facing, back]
+}))
+
+NON_CUBE_VARIANTS.set(SIGN_ID, (facing, _half, normal) => {
+  const wall = facingFromNormal(normal)
+  if (wall) return WALL_SIGN.get(wall)
+  return STANDING_SIGN.get(OPPOSITE.get(facing))
+})
+
+/*
+ * A standing sign needs the block under it; a wall sign needs the one behind
+ * it. Identical in shape to the torch's rule, which is why installAttachment
+ * took a sign without a line changing: one neighbour, at a fixed offset.
+ */
+for (const facing of SIGN_FACINGS) {
+  BLOCK_SUPPORT.set(STANDING_SIGN.get(facing), [0, -1, 0])
+  BLOCK_SUPPORT.set(WALL_SIGN.get(facing), FACINGS[facing].map(v => (v ? -v : 0)))
+}
+
+/**
+ * Is this id a sign? Exported for signText.js, which has to know when a
+ * coordinate has stopped being one so it can take the text off it.
+ */
+export const isSignId = (id) => id >= SIGN_ID && id < SIGN_ID + 8
+/** facing -> the direction the board faces, for the text renderer. */
+export const signFacing = (id) =>
+  isSignId(id) ? SIGN_FACINGS[(id - SIGN_ID) % 4] : null
+/** A wall sign hangs its board off the wall; a standing one is centred. */
+export const isWallSign = (id) => id >= SIGN_ID + 4 && id < SIGN_ID + 8
+
 export const BLOCK_TYPES = normaliseHardness(
-  [...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER, ...FLUID_FLOW_BLOCKS, ...TORCHES])
+  [...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER, ...FLUID_FLOW_BLOCKS, ...TORCHES,
+    ...SIGNS])
 
 // Ids must be contiguous from 1. noa fills any gap with a silently-registered
 // filler block that has no material, which renders as untextured white and is
