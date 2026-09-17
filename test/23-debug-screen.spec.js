@@ -1,6 +1,9 @@
 import { test, expect } from './fixtures.js'
 import { shot } from './helpers/shots.js'
-import { aim, teleport, waitTicks, look, useGamemode, HEADING, getBlock, ID } from './helpers/world.js'
+import {
+  aim, teleport, waitTicks, look, useGamemode, HEADING, getBlock, ID,
+  SURFACE_Y, settleOnGround,
+} from './helpers/world.js'
 
 /*
  * The F3 debug screen.
@@ -478,9 +481,54 @@ test.describe('F3 debug screen', () => {
  */
 const GLOWSTONE = 129
 
+/*
+ * STAND SOMEWHERE WITH SKY OVER IT, and this is new as of the day the road
+ * was built.
+ *
+ * The three tests below all start from "the player is under open sky with no
+ * lamp near them", which was true of spawn for as long as spawn was a field.
+ * It is not true any more. src/builds/road.js puts a gateway arch over the
+ * south end of the road and spawn is underneath it, so a booted player reads
+ * 10 block light off a glowstone lintel five blocks above their head and
+ * something less than 15 sky through the arch. All three failed, on both
+ * engines, for a reason that has nothing to do with the debug screen.
+ *
+ * THE ARCH DOES NOT MOVE. It is the first thing a visitor sees and the lintel
+ * is what lights it; an unlit arch at spawn to make three assertions easier
+ * is trading the thing people look at for the thing nobody looks at. So the
+ * tests move instead, which is the honest direction -- what they are about is
+ * "the light line tracks the engine", and where the player stands while that
+ * is asked was never the point.
+ *
+ * WHERE, and the first answer was wrong. DROP_X / DROP_Z is the suite's
+ * reserved patch of nothing and the obvious reuse, but it is patch (72, 122),
+ * five blocks off the road's east verge, and it reads 8 block light off the
+ * road lamps. Open sky is not the same property as darkness and these tests
+ * need both -- the third one starts by asserting the player is standing in
+ * NO block light, because that zero is what makes the glowstone delta mean
+ * anything.
+ *
+ * So: patch (1, 126), the far south-west corner of the margin. Measured sky
+ * 15, block 0. It is the furthest any column in a 128x128 patch gets from
+ * somewhere a build may put a lamp -- about nine blocks from Omaha's west
+ * edge and fifty-nine from the road -- and the margins are asserted empty by
+ * test/70-builds.spec.js, so "nothing is standing here" is checked rather
+ * than assumed. It is NOT immune: a glowstone on Omaha's west boundary would
+ * reach it at about 5. If that ever happens this fails with "the player was
+ * already standing in light", which names the problem correctly.
+ */
+const DARK_SKY_XZ = [1 - 87 + 0.5, 126 - 56 + 0.5]
+
+async function standUnderOpenSky(page) {
+  await teleport(page, DARK_SKY_XZ[0], SURFACE_Y + 1, DARK_SKY_XZ[1])
+  await settleOnGround(page)
+  await waitTicks(page, 3)
+}
+
 test.describe('F3 Client Light', () => {
   test('the line reads vanilla\'s shape, with both channels in it',
     async ({ page }) => {
+      await standUnderOpenSky(page)
       const { left } = await lines(page)
       const light = left.find(l => l.startsWith('Client Light: '))
       /*
@@ -506,6 +554,7 @@ test.describe('F3 Client Light', () => {
        * A constant 15 would pass everything above. This is the test it fails:
        * build a roof over the player's head and the number has to fall.
        */
+      await standUnderOpenSky(page)
       const before = await sample(page)
       const [bx, by, bz] = before.block
       await terrain.keep([bx - 3, by - 1, bz - 3], [bx + 3, by + 4, bz + 3])
@@ -542,6 +591,7 @@ test.describe('F3 Client Light', () => {
        * require the line to agree with window.blockLight.getBlockLight at the
        * player's own block -- and to have MOVED, so a constant cannot pass.
        */
+      await standUnderOpenSky(page)
       const before = await sample(page)
       expect(before.light, 'sample() has no light field at all').not.toBeNull()
 
