@@ -138,6 +138,48 @@ async function deriveSlotHint(src, out) {
     .png().toFile(out)
 }
 
+/*
+ * textures/particle/. The first output here that is not a block face, an item
+ * sprite or a piece of GUI, and it exists because a torch's flame is a
+ * PARTICLE, not an animated texture -- block/torch.png in 1.21.8 is a plain
+ * 16x16 with no .mcmeta beside it, and every frame of motion you see on a lit
+ * torch comes from TorchBlock.animateTick spawning particle/flame.png.
+ *
+ * Kept at its native 8x8 rather than resized to TILE. Everything else here is
+ * normalised to 16x16 so it can be packed into an atlas page the terrain
+ * shader indexes by layer; a particle is drawn by particles.js from its own
+ * standalone texture, so there is no page to fit and nothing to gain from
+ * doubling it. Resizing a 4-pixel-wide flame with a nearest kernel also
+ * doubles the cost of a mistake in the UV maths from invisible to obvious.
+ */
+async function emitParticle(src, out) {
+  mkdirSync(join(OUT, 'particle'), { recursive: true })
+  // ensureAlpha because the flame ships RGBA but CE's derived one comes out of
+  // a crop, and a particle with no alpha channel draws as a black square.
+  await sharp(src).ensureAlpha().png().toFile(join(OUT, 'particle', `${out}.png`))
+}
+
+/*
+ * CE has no particle/ directory at all. It is a pack_format 6 pack and it
+ * never redrew Mojang's particle sheet, so there is nothing to copy. The
+ * flame is therefore cropped out of CE'S OWN TORCH -- x 4..11, y 0..7, which
+ * on that texture is the burning end and no stick at all (the post starts at
+ * y = 8) -- giving an 8x8 sprite, exactly the size vanilla's flame particle
+ * is. Same "right family, wrong pack" rule every CE block substitute above
+ * follows, and a crop of a CC-BY-SA texture is CC-BY-SA.
+ *
+ * Rejected: generating a soft orange blob procedurally. It would look better
+ * in isolation and wrong next to CE's torch, which is the only thing it is
+ * ever seen against -- and a hand-tuned gradient is new art pretending to be
+ * a derivative, which is exactly what NOTICE.txt should not have to cover.
+ */
+async function deriveParticleFromTorch(torchPng, out) {
+  mkdirSync(join(OUT, 'particle'), { recursive: true })
+  await sharp(torchPng).ensureAlpha()
+    .extract({ left: 4, top: 0, width: 8, height: 8 })
+    .png().toFile(join(OUT, 'particle', `${out}.png`))
+}
+
 function looksComplete() {
   const dir = join(PUBLIC, 'textures')
   if (!existsSync(MARKER)) return false
@@ -147,6 +189,10 @@ function looksComplete() {
   const itemDir = join(dir, 'item')
   if (!existsSync(itemDir)) return false
   if (readdirSync(itemDir).length < ITEM_TEXTURES.length) return false
+  // Same reasoning one line up, for the directory that arrived after it: a
+  // build made before particle/ existed is complete by every other test here,
+  // and leaving it alone means every torch in the world 404s its flame.
+  if (!existsSync(join(dir, 'particle', 'flame.png'))) return false
   return readdirSync(dir).filter(f => f.endsWith('.png')).length >= MATERIALS.length
 }
 
@@ -839,6 +885,8 @@ async function fromCE() {
    */
   copyFileSync(join(CE_SRC, 'NOTICE.txt'), join(OUT, 'NOTICE.txt'))
 
+  await deriveParticleFromTorch(join(CE_SRC, 'block', 'torch.png'), 'flame')
+
   await uiFromAtlases(join(CE_SRC, 'gui'))
 
   /*
@@ -913,6 +961,7 @@ async function fromVanilla() {
   execFileSync('unzip', ['-q', '-o', '-j', jar,
     'assets/minecraft/textures/environment/sun.png',
     'assets/minecraft/textures/environment/moon_phases.png',
+    'assets/minecraft/textures/particle/flame.png',
     'assets/minecraft/textures/colormap/grass.png', '-d', tmp])
 
   const t = (n) => join(tmp, `${n}.png`)
@@ -970,6 +1019,8 @@ async function fromVanilla() {
   const moonCell = await sharp(t('moon_phases'))
     .extract({ left: 0, top: 0, width: cell, height: cell }).png().toBuffer()
   await alphaFromLuminance(moonCell, join(OUT, 'moon.png'))
+
+  await emitParticle(t('flame'), 'flame')
 
   // Clouds and the first-person hand have no vanilla equivalent we can use,
   // so they stay on the CC-licensed pack.
