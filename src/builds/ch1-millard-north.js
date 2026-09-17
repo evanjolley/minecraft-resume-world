@@ -146,9 +146,32 @@ const PAV_TOP = 18        // top of the entry pavilion's metal volume
 const CANOPY_Y = 19       // the canopy slab
 
 const WEST = [1, 16]      // the tan west wing
-const COL = [17, 33]      // the glass colonnade with the brick piers
-const PAV = [34, 46]      // the entry pavilion
-const EAST = [47, 64]     // the tan east wing
+const COL = [17, 31]      // the glass colonnade with the brick piers
+const PAV = [32, 48]      // the entry pavilion
+const EAST = [49, 64]     // the tan east wing
+
+/*
+ * THE PAVILION IS SEVENTEEN BLOCKS WIDE AND IT WAS THIRTEEN, which is the
+ * one change that came out of putting the screenshot next to the photograph.
+ *
+ * At thirteen in a sixty-four-block frontage it was 20% of the front and
+ * twenty blocks tall, so it read as a TOWER -- a narrow shaft pushed up
+ * through a long low building. The real one is a broad portal: about a
+ * quarter of the frontage, wider than it is tall above the wings, with the
+ * canopy spreading past it on both sides. Four blocks of width and a canopy
+ * that oversails by two instead of one is the whole difference between a
+ * tower with a lid and the thing in the photograph.
+ *
+ * It cost the colonnade two blocks and the east wing two, which is the right
+ * place to take them from: the colonnade keeps three full-height brick piers
+ * and is still the widest single element, which is what the head-on
+ * photograph shows.
+ */
+
+/** The commons is the room behind the colonnade and the pavilion together,
+ *  so its walls are derived rather than typed -- move a bay above and the
+ *  hall, the sign on its back wall and the doors into it all follow. */
+const HALL = [COL[0], EAST[0]]
 
 const DOOR = [37, 43]     // the bank of entrance doors, centred on the pavilion
 
@@ -262,9 +285,8 @@ function wingRoof(s, [x0, x1], z0, z1) {
 
 function westWing(s) {
   wingSkin(s, WEST, WING_FRONT)
-  // The two returns, east and west, where the wing meets the plaza and the
-  // plot edge. `front: false` -- no windows on a wall nobody stands in front
-  // of, and the brick base still wraps, which is how a base course behaves.
+  /* It runs two blocks further south than everything else -- the gym is in
+   * it and MUSTANGS is thirty-one blocks long. See BACK_W. */
   wingRoof(s, WEST, WING_FRONT, BACK_W)
 }
 
@@ -298,7 +320,7 @@ function colonnade(s) {
    * running the full two storeys, which is what the dusk photograph shows:
    * the brick is not a base here, it is a set of full-height piers with
    * glass between them. */
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 3; i++) {
     const px = x0 + 1 + i * 5
     s.box([px, -1, PIER], [px + 1, WING_TOP - 3, PIER], P.brick)
     s.box([px, -1, FRONT], [px + 1, WING_TOP - 3, FRONT], P.brick)
@@ -382,10 +404,10 @@ function pavilion(s) {
    *    from CANOPY_TIP to just inside the glass, with a darker fascia on the
    *    three exposed edges. Soffit lights under it, because at dusk the
    *    underside of that canopy is the brightest thing in the photograph. */
-  s.box([x0 - 1, CANOPY_Y, CANOPY_TIP], [x1 + 1, CANOPY_Y + 1, FRONT], P.metal)
-  s.box([x0 - 1, CANOPY_Y, CANOPY_TIP], [x1 + 1, CANOPY_Y + 1, CANOPY_TIP], P.coping)
-  s.box([x0 - 1, CANOPY_Y, CANOPY_TIP], [x0 - 1, CANOPY_Y + 1, FRONT], P.coping)
-  s.box([x1 + 1, CANOPY_Y, CANOPY_TIP], [x1 + 1, CANOPY_Y + 1, FRONT], P.coping)
+  s.box([x0 - 2, CANOPY_Y, CANOPY_TIP], [x1 + 2, CANOPY_Y + 1, FRONT], P.metal)
+  s.box([x0 - 2, CANOPY_Y, CANOPY_TIP], [x1 + 2, CANOPY_Y + 1, CANOPY_TIP], P.coping)
+  s.box([x0 - 2, CANOPY_Y, CANOPY_TIP], [x0 - 2, CANOPY_Y + 1, FRONT], P.coping)
+  s.box([x1 + 2, CANOPY_Y, CANOPY_TIP], [x1 + 2, CANOPY_Y + 1, FRONT], P.coping)
   for (let x = x0 + 1; x <= x1 - 1; x += 4) {
     s.set(x, CANOPY_Y, CANOPY_TIP + 3, P.lamp)
     s.set(x, CANOPY_Y, CANOPY_TIP + 6, P.lamp)
@@ -445,7 +467,7 @@ function ceilingLights(s, x0, x1, z0, z1, y, step = 6) {
  * read both from inside and from the plaza through the curtain wall.
  */
 function commons(s) {
-  const x0 = 17, x1 = 47, z0 = 31, z1 = 45
+  const x0 = HALL[0], x1 = HALL[1], z0 = 31, z1 = 45
   s.clear([x0 + 1, 0, z0], [x1 - 1, WING_TOP - 2, z1 - 1])
   s.rect([x0 + 1, z0], [x1 - 1, z1 - 1], -1, P.tile)
   s.rect([x0 + 1, z0], [x1 - 1, z1 - 1], WING_TOP - 2, P.white)     // ceiling
@@ -669,8 +691,8 @@ function corridor(s) {
    * middle of the word and the screenshot showed an N followed by nothing.
    */
   const shelf = []
-  for (let x = 19; x <= 44; x++) shelf.push(x)      // west of the commons door
-  for (let x = 48; x <= 63; x++) shelf.push(x)      // east of it
+  for (let x = 19; x <= 46; x++) shelf.push(x)      // west of the commons door
+  for (let x = 50; x <= 63; x++) shelf.push(x)      // east of it
   if (shelf.length !== 42) throw new Error(`the trophy case holds ${shelf.length}, not 42`)
   for (const x of shelf) {
     s.set(x, 1, z0 + 1, P.dark)                     // the plinth
@@ -684,10 +706,10 @@ function corridor(s) {
    * The commons pair are one block wide and in its corners -- the wall
    * between them is 27 blocks of lettering with one column to spare.
    */
-  s.clear([18, 0, z0 - 1], [18, 3, z0])                 // commons, west corner
-  s.clear([46, 0, z0 - 1], [46, 3, z0])                 // commons, east corner
+  s.clear([HALL[0] + 1, 0, z0 - 1], [HALL[0] + 1, 3, z0])   // commons, west corner
+  s.clear([HALL[1] - 1, 0, z0 - 1], [HALL[1] - 1, 3, z0])   // commons, east corner
   s.clear([WEST[1], 0, 48], [x0, 3, 49])               // west, into the gym
-  s.clear([54, 0, z0 - 1], [56, 3, z0])                 // the library
+  s.clear([56, 0, z0 - 1], [58, 3, z0])                 // the library
   for (const dx of [24, 39, 54]) s.clear([dx, 0, z1], [dx + 2, 3, z1 + 1])  // classrooms
 
   // Lit at intervals, in the ceiling plane.
@@ -709,7 +731,11 @@ function library(s) {
   s.rect([x0 + 1, z0], [x1 - 1, z1 - 1], -1, P.tile)
   s.rect([x0 + 1, z0], [x1 - 1, z1 - 1], 5, P.white)
 
-  for (let i = 0; i < 4; i++) {
+  /* THREE RUNS, NOT FOUR. The east wing lost two blocks to the widened entry
+   * pavilion and the fourth run's aisle lamp landed at local x = 66, one
+   * block outside the plot -- which the stamper caught at boot, out loud,
+   * with the coordinate, which is exactly what the bounds check is for. */
+  for (let i = 0; i < 3; i++) {
     const sx = x0 + 3 + i * 4
     s.box([sx, 0, z0 + 2], [sx, 2, z1 - 4], 'bookshelf')
     s.box([sx + 1, 0, z0 + 2], [sx + 1, 2, z1 - 4], 'bookshelf')
@@ -718,7 +744,7 @@ function library(s) {
   }
   // Reading tables at the front, under the windows.
   for (let i = 0; i < 3; i++) {
-    s.box([x0 + 3 + i * 5, 0, z1 - 2], [x0 + 5 + i * 5, 0, z1 - 2], P.white)
+    s.box([x0 + 2 + i * 5, 0, z1 - 2], [x0 + 4 + i * 5, 0, z1 - 2], P.white)
   }
   s.set(x0 + 2, 5, z0 + 1, P.ceilingLight)
   s.set(x1 - 2, 5, z0 + 1, P.ceilingLight)

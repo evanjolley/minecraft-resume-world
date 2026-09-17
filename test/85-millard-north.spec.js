@@ -183,7 +183,7 @@ test.describe('Millard North High School', () => {
      *    two-storey hall where it is read through the curtain wall as well
      *    as from inside. */
     const mw = textWidth('MILLARD'), nw = textWidth('NORTH')
-    const mx = Math.round((17 + 47) / 2 - mw / 2), nx = Math.round((17 + 47) / 2 - nw / 2)
+    const mx = Math.round((17 + 49) / 2 - mw / 2), nx = Math.round((17 + 49) / 2 - nw / 2)
     const millard = await readGrid(page, 'xy',
       { x: X + mx, y: Y + 10, z: Z + 45, w: mw, h: 5, key: 'lapis_block' })
     assertSample(millard, 'the commons wall')
@@ -234,7 +234,7 @@ test.describe('Millard North High School', () => {
     /* 4. THE TWO DATES. 1978 crawled to, under the bleachers; 2016 flown to,
      *    on the east wing's roof. Both are facts and both are easter eggs. */
     const roof = await readGrid(page, 'xz', {
-      x: X + Math.round((47 + 64) / 2 - textWidth('2016') / 2),
+      x: X + Math.round((49 + 64) / 2 - textWidth('2016') / 2),
       y: Y + 11, z: Z + 50, w: textWidth('2016'), h: 5, key: 'glowstone',
     })
     assertSample(roof, 'the roof date', 15)
