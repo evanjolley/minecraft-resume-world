@@ -107,7 +107,8 @@ const P = {
   seat: 'polished_blackstone',     // the hexagonal concrete seat blocks
   bed: 'moss_block',               // the ornamental grass beds
   mulch: 'coarse_dirt',
-  grass: 'hay_block',              // the tawny ornamental grass itself
+  grass: 'dried_kelp_block',       // the tawny ornamental grass itself
+  accent: 'dark_prismarine',       // the school green, at wall scale
   lamp: 'sea_lantern',
   ceilingLight: 'glowstone',
   tile: 'smooth_stone',            // interior floors
@@ -129,6 +130,15 @@ const WING_FRONT = 28     // the wings project two blocks proud of that
 const COL_FRONT = 26      // the pavilion's two columns, four proud
 const CANOPY_TIP = 23     // and the canopy flies three blocks past them
 const BACK = 58           // the back wall of everything
+/*
+ * EXCEPT THE WEST WING, WHICH RUNS TWO BLOCKS FURTHER SOUTH, and the reason
+ * is a word. The gym is in it, "MUSTANGS" is thirty-one blocks in the block
+ * alphabet, and a banner is only a banner if it is on the wall the bleachers
+ * look at. Thirty-one blocks of gym meant a wing that oversails the classroom
+ * block -- which is exactly what a gym does in every school ever built, so
+ * the constraint and the architecture happened to want the same thing.
+ */
+const BACK_W = 60
 
 const WING_TOP = 12       // parapet cap of both wings and the colonnade
 const FLOOR2 = 6          // the second floor slab sits at y = 5, air from 6
@@ -164,6 +174,24 @@ function site(s) {
    * into the grass rather than on top of it, or the front doors end up a
    * block off the ground and every threshold is a step.
    */
+  /*
+   * THE SURVEY POSTS COME OUT OF THE FRONT HALF FIRST.
+   *
+   * src/builds/chapters.js frames every plot in a ring of pale stone with
+   * two-block posts along it, which is exactly right for a plot nobody has
+   * built in and wrong the moment somebody has -- the three-quarter
+   * screenshot had a line of stripped logs standing in the middle of the
+   * ornamental beds. The ring STAYS, because a chapter still needs an edge;
+   * the posts come out of the twenty-eight rows the visitor is looking
+   * across, and stay everywhere else.
+   *
+   * EXCEPT IN FRONT OF THE MARKER. `markChapters` already refuses to put a
+   * post through the word OMAHA and this must not undo the wall itself, so
+   * the north edge is only cleared west of where the lettering starts.
+   */
+  for (let z = 4; z <= 27; z++) s.clear([0, 0, z], [0, 1, z]).clear([65, 0, z], [65, 1, z])
+  for (let x = 0; x <= 44; x++) s.clear([x, 0, 0], [x, 1, 0])
+
   // The lawn: leave the grass, but mow a clean apron round the building so
   // the plaza does not meet raw field at a hard line.
   s.rect([1, 24], [64, BACK + 1], -1, P.paving)
@@ -173,6 +201,7 @@ function site(s) {
    * the four elements share walls with each other and an internal wall drawn
    * twice is invisible; a missing one is a hole you find from inside. */
   s.box([WEST[0], -1, WING_FRONT], [EAST[1], WING_TOP - 1, BACK], P.precast)
+  s.box([WEST[0], -1, BACK], [WEST[1], WING_TOP - 1, BACK_W], P.precast)
   // The centre block sits two back of the wings, so cut its front off again.
   s.clear([COL[0], -1, WING_FRONT], [PAV[1], WING_TOP - 1, FRONT - 1])
   s.box([COL[0], -1, WING_FRONT], [PAV[1], -1, FRONT - 1], P.paving)
@@ -236,7 +265,7 @@ function westWing(s) {
   // The two returns, east and west, where the wing meets the plaza and the
   // plot edge. `front: false` -- no windows on a wall nobody stands in front
   // of, and the brick base still wraps, which is how a base course behaves.
-  wingRoof(s, WEST, WING_FRONT, BACK)
+  wingRoof(s, WEST, WING_FRONT, BACK_W)
 }
 
 function eastWing(s) {
@@ -308,10 +337,20 @@ function pavilion(s) {
   s.box([x0, WING_TOP - 1, FRONT], [x1, PAV_TOP, BACK], P.metal)
   s.clear([x0 + 1, WING_TOP, FRONT + 2], [x1 - 1, PAV_TOP - 1, BACK - 1])
   s.rect([x0, FRONT], [x1, BACK], PAV_TOP, P.metal)            // its own roof
-  // Its flanks, which in the dusk photograph are the two tall metal planes
-  // that make the pavilion read as a box pushed through the roof.
-  s.box([x0, -1, COL_FRONT], [x0, PAV_TOP, FRONT], P.metal)
-  s.box([x1, -1, COL_FRONT], [x1, PAV_TOP, FRONT], P.metal)
+  /*
+   * ITS FLANKS STOP AT THE FACE, and the first version's did not.
+   *
+   * Running solid metal from the face forward to the columns turned the four
+   * blocks between them into side walls, and the head-on screenshot came
+   * back showing a tunnel mouth -- a deep dark recess with the doors at the
+   * back of it. In every photograph you see straight PAST the columns to the
+   * plaza beyond; the canopy is a plane on two legs, not a porch. So the
+   * flanks are one block deep, in the plane of the glass, and the four
+   * blocks in front of them are air.
+   */
+  s.box([x0, -1, FRONT], [x0, PAV_TOP, FRONT + 1], P.metal)
+  s.box([x1, -1, FRONT], [x1, PAV_TOP, FRONT + 1], P.metal)
+  s.clear([x0, 0, COL_FRONT], [x1, PAV_TOP, FRONT - 1])
 
   /* 4. The glass, cut back out of the metal. Full width between the flanks,
    *    floor to four blocks under the top -- the photographs show a solid
@@ -326,6 +365,10 @@ function pavilion(s) {
    * glass wall and the vestibule behind it. */
   s.box([DOOR[0] - 1, 0, FRONT], [DOOR[1] + 1, 4, FRONT], P.dark)
   s.clear([DOOR[0], 0, FRONT], [DOOR[1], 3, FRONT])
+  /* And the frames between them, so it is a BANK of doors rather than one
+   * hole in a wall. Four single-block openings with a mullion between each
+   * pair -- which is what the photographs show and is still four ways in. */
+  for (let x = DOOR[0] + 1; x < DOOR[1]; x += 2) s.pillar(x, FRONT, 0, 3, P.dark)
   // The transom over them, glass, so the lobby light spills onto the plaza.
   s.box([DOOR[0], 4, FRONT], [DOOR[1], 4, FRONT], P.glass)
 
@@ -367,12 +410,11 @@ function pavilion(s) {
    * seen through this glass (27 blocks, two lines, exactly as the real sign
    * stacks it).
    */
-  s.box([DOOR[0] - 2, 6, FRONT], [DOOR[1] + 2, 9, FRONT], P.white)
-  s.box([DOOR[0] - 1, 7, FRONT], [DOOR[1] + 1, 8, FRONT], P.blue)
-  s.box([DOOR[0] - 2, 5, FRONT], [DOOR[1] + 2, 5, FRONT], P.green)
+  s.box([DOOR[0] - 2, 7, FRONT], [DOOR[1] + 2, 9, FRONT], P.white)
+  s.box([DOOR[0] - 1, 8, FRONT], [DOOR[1] + 1, 8, FRONT], P.blue)
   // Its own light, or it photographs grey -- README, and Harvard's mistake.
-  s.set(DOOR[0] - 2, 10, FRONT, P.ceilingLight)
-  s.set(DOOR[1] + 2, 10, FRONT, P.ceilingLight)
+  s.set(DOOR[0] - 3, 8, FRONT, P.ceilingLight)
+  s.set(DOOR[1] + 3, 8, FRONT, P.ceilingLight)
 }
 
 /* ====================================================================== *
@@ -407,12 +449,17 @@ function commons(s) {
   s.clear([x0 + 1, 0, z0], [x1 - 1, WING_TOP - 2, z1 - 1])
   s.rect([x0 + 1, z0], [x1 - 1, z1 - 1], -1, P.tile)
   s.rect([x0 + 1, z0], [x1 - 1, z1 - 1], WING_TOP - 2, P.white)     // ceiling
+  /* AND THE SIDE WALLS GET A FINISH. The shell is precast, which is an
+   * OUTSIDE material, and the first interior screenshot had the commons
+   * looking out at a raw tan wall. A school lobby is lined. */
+  s.box([x0 + 1, 0, z0], [x0 + 1, WING_TOP - 3, z1 - 1], P.white)
+  s.box([x1 - 1, 0, z0], [x1 - 1, WING_TOP - 3, z1 - 1], P.white)
   ceilingLights(s, x0, x1, z0, z1, WING_TOP - 2, 5)
 
   /* A blue and green inlay in the floor on the entry axis: the school's
    * colours, laid where everybody walks over them. */
   s.rect([DOOR[0] - 1, z0 + 2], [DOOR[1] + 1, z0 + 2], -1, P.blue)
-  s.rect([DOOR[0] - 1, z0 + 3], [DOOR[1] + 1, z0 + 3], -1, P.green)
+  s.rect([DOOR[0] - 1, z0 + 3], [DOOR[1] + 1, z0 + 3], -1, P.accent)
 
   /*
    * THE BACK WALL, and the name on it.
@@ -434,10 +481,40 @@ function commons(s) {
   const mx = Math.round((x0 + x1) / 2 - mw / 2)
   const nx = Math.round((x0 + x1) / 2 - nw / 2)
   s.pattern({ at: [mx, 6, z1], plane: 'xy', legend: { '#': P.blue }, rows: textRows('MILLARD') })
-  s.box([x0 + 1, 5, z1], [x1 - 1, 5, z1], P.green)
+  s.box([x0 + 1, 5, z1], [x1 - 1, 5, z1], P.accent)
   s.pattern({ at: [nx, 0, z1], plane: 'xy', legend: { '#': P.blue }, rows: textRows('NORTH') })
-  // A lit valance, or the whole wall photographs grey.
-  for (let x = x0 + 2; x <= x1 - 2; x += 4) s.set(x, WING_TOP - 3, z1 - 1, P.ceilingLight)
+  /*
+   * AND THE PAVILION BAY GOES UP INSIDE IT. The tall metal volume outside is
+   * a two-storey glass wall in every photograph and the first screenshot had
+   * its top four blocks reading as a dark grid, because the room behind them
+   * stopped at the colonnade's ceiling and what was left was a sealed void.
+   * Carving the bay up to y = 15 makes the outside honest -- the volume is
+   * tall because the room is -- and the lights under its ceiling are what
+   * put the warm glow in the glass that the dusk photograph is all about.
+   */
+  s.clear([PAV[0] + 1, WING_TOP - 2, z0], [PAV[1] - 1, 15, z1 - 1])
+  s.rect([PAV[0] + 1, z0], [PAV[1] - 1, z1 - 1], 16, P.white)
+  for (let x = PAV[0] + 2; x <= PAV[1] - 2; x += 4) {
+    for (let z = z0 + 2; z <= z1 - 2; z += 5) s.set(x, 16, z, P.ceilingLight)
+  }
+
+  /* MID-HEIGHT LIGHT. A ceiling eleven blocks over the floor delivers four
+   * levels to it, which photographs as a dark room with a bright lid. These
+   * are the uplighters on the piers, at a height that is over the eyeline
+   * and under the ceiling. */
+  for (let z = z0 + 1; z <= z1 - 2; z += 4) {
+    s.set(x0 + 1, 6, z, P.lamp)
+    s.set(x1 - 1, 6, z, P.lamp)
+  }
+
+  /*
+   * NO VALANCE ON THIS WALL, and that is a reversal. README: "a sign, a
+   * chart or a plaque has to be its own light, or carry a lit valance" --
+   * but a row of glowstone one block in FRONT of a wall is a row of boxes
+   * stuck to it, which is what the screenshot showed. The uplighters on the
+   * piers below and the ceiling grid above already put this wall at a light
+   * level the photograph reads, so the rule is satisfied without the lumps.
+   */
 
   /* Tables, because a commons with nothing in it is a lobby. Four runs of
    * bench seating on the east side, clear of the entry axis. */
@@ -449,16 +526,36 @@ function commons(s) {
   }
 
   /*
-   * THE MEZZANINE. A balcony along the back of the hall at the second floor
-   * line, reached by a run of single-block steps at the west end, so the
-   * double-height room has somewhere to be looked at from. Single blocks and
-   * not stair blocks: a staircase you cannot climb is worse than a blocky
-   * one, and the stair keys carry their facing in the name.
+   * THE MEZZANINE, AND IT IS AT THE FRONT OF THE HALL RATHER THAN THE BACK.
+   *
+   * It started along the back wall, one block in front of the lettering, and
+   * the interior screenshot showed the deck cutting "MILLARD" in half from
+   * every position in the room. A balcony is a thing you look OUT from, so
+   * it moved to the west side of the entry bay where it overlooks the doors
+   * and the curtain wall and leaves the name wall to be read.
+   *
+   * Single blocks and not stair blocks: a staircase you cannot climb is
+   * worse than a blocky one, and the stair keys carry their facing in the
+   * name.
    */
-  for (let i = 0; i <= 6; i++) s.box([x0 + 4 + i, 0, z1 - 1], [x0 + 4 + i, i, z1 - 1], P.tile)
-  s.rect([x0 + 12, z1 - 3], [x1 - 1, z1 - 1], FLOOR2, P.tile)
-  s.box([x0 + 12, FLOOR2 + 1, z1 - 3], [x1 - 1, FLOOR2 + 1, z1 - 3], P.dark)   // the rail
-  for (let x = x0 + 14; x <= x1 - 2; x += 6) s.set(x, WING_TOP - 3, z1 - 2, P.ceilingLight)
+  for (let i = 0; i <= 6; i++) s.box([19 + i, 0, 37], [19 + i, i, 37], P.tile)
+  s.rect([18, 31], [28, 36], FLOOR2, P.tile)
+  s.box([29, FLOOR2, 31], [29, FLOOR2 + 1, 36], P.dark)          // the east rail
+  s.box([18, FLOOR2 + 1, 36], [24, FLOOR2 + 1, 36], P.dark)      // the south rail
+  s.box([26, FLOOR2 + 1, 36], [28, FLOOR2 + 1, 36], P.dark)      // ...with the gap
+  for (let x = 20; x <= 27; x += 4) s.set(x, WING_TOP - 3, 33, P.ceilingLight)
+  for (let z = 32; z <= 35; z += 3) s.set(19, FLOOR2 - 1, z, P.lamp)  // under it
+  // A pair of benches on the deck, because a balcony you cannot sit on is a
+  // landing.
+  s.box([21, FLOOR2 + 1, 33], [26, FLOOR2 + 1, 33], P.white)
+
+  /* AND THE PAVILION BAY'S WALLS GET THE SAME FINISH, up to its own ceiling
+   * -- the first pass lined only to the colonnade's, and the screenshot
+   * showed raw tan precast over the top of the white. */
+  for (const wx of [PAV[0], PAV[1]]) s.box([wx, WING_TOP - 2, z0], [wx, 15, z1 - 1], P.white)
+  /* From y = 11, NOT y = 10: the top row of "MILLARD" sits at 10 and the
+   * first version of this line painted over it. */
+  s.box([PAV[0], WING_TOP - 1, z1], [PAV[1], 15, z1], P.white)
 }
 
 /*
@@ -467,47 +564,62 @@ function commons(s) {
  * Behind the bleachers is the first easter egg -- see eggs().
  */
 function gym(s) {
-  const x0 = WEST[0], x1 = WEST[1], z0 = WING_FRONT + 1, z1 = 46
+  const x0 = WEST[0], x1 = WEST[1], z0 = WING_FRONT + 1, z1 = BACK_W
   s.clear([x0 + 1, 0, z0], [x1 - 1, WING_TOP - 2, z1 - 1])
   s.rect([x0 + 1, z0], [x1 - 1, z1 - 1], -1, P.court)
   s.rect([x0 + 1, z0], [x1 - 1, z1 - 1], WING_TOP - 2, P.white)
+  /* Lined, like the commons: the shell is precast and precast is an outside
+   * material. A gym is painted block from the floor to the roof deck. */
+  for (const wx of [x0, x1]) s.box([wx, 0, z0], [wx, WING_TOP - 3, z1 - 1], P.white)
+  s.box([x0 + 1, 0, z0], [x1 - 1, WING_TOP - 3, z0], P.white)
+  s.box([x0 + 1, 0, z1 - 1], [x1 - 1, WING_TOP - 3, z1 - 1], P.white)
   ceilingLights(s, x0, x1, z0, z1, WING_TOP - 2, 4)
+  /* AND LIGHT AT HALF HEIGHT. Eleven blocks of ceiling delivers four levels
+   * to the floor; these fixtures on the long walls deliver nine. */
+  for (let z = z0 + 2; z <= z1 - 2; z += 4) {
+    s.set(x0 + 1, 7, z, P.lamp)
+    s.set(x1 - 1, 7, z, P.lamp)
+  }
 
-  // Court markings: a centre line, a centre circle and two keys, in blue,
-  // with a green border round the whole floor.
-  const cz = Math.round((z0 + z1) / 2)
+  // Court markings: a centre line, a centre circle and a green border, in the
+  // school's blue on a wood floor.
+  const cz = Math.round((z0 + z1) / 2), cx = Math.round((x0 + x1) / 2)
   s.rect([x0 + 1, cz], [x1 - 1, cz], -1, P.blue)
-  for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]]) {
-    s.set(Math.round((x0 + x1) / 2) + dx * 2, -1, cz + dz * 2, P.blue)
+  for (const [dx, dz] of [[-2, 0], [2, 0], [0, -2], [0, 2], [-1, -1], [1, 1], [-1, 1], [1, -1]]) {
+    s.set(cx + dx, -1, cz + dz, P.blue)
   }
   for (let x = x0 + 1; x <= x1 - 1; x++) { s.set(x, -1, z0, P.green); s.set(x, -1, z1 - 1, P.green) }
 
-  // The two hoops, backboard and rim, at each end of the court.
-  for (const hz of [z0 + 1, z1 - 2]) {
-    const hx = Math.round((x0 + x1) / 2)
-    s.box([hx - 1, 4, hz], [hx + 1, 5, hz], P.white)
-    s.set(hx, 4, hz + (hz === z0 + 1 ? 1 : -1), P.curb)
+  // The two hoops: a backboard on the wall with a rim under it, at each end.
+  for (const [hz, dir] of [[z0, 1], [z1 - 1, -1]]) {
+    s.box([cx - 1, 4, hz], [cx + 1, 5, hz], P.white)
+    s.set(cx, 4, hz + dir, P.curb)
   }
 
-  // Bleachers: three tiers stepping up against the west wall.
-  for (let t = 0; t < 3; t++) {
-    s.box([x0 + 1 + t, t, z0 + 2], [x0 + 1 + t, t, z1 - 3], P.tile)
-  }
+  // Bleachers: three tiers stepping up against the west wall, and the crawl
+  // space behind them is the first easter egg -- see eggs().
+  for (let t = 0; t < 3; t++) s.box([x0 + 1 + t, t, z0 + 2], [x0 + 1 + t, t, z1 - 3], P.tile)
 
-  /* MUSTANGS, across the east wall of the gym where the bleachers look at
-   * it. Thirty-one blocks, which is why the gym is in the wing with room for
-   * it. A `zy` wall, facing west -- THE OTHER PLANE, and therefore the one
-   * the README says a spot check on the first plane proves nothing about.
-   * The spec reads this one out of the world separately. */
+  /*
+   * MUSTANGS, on the east wall where the bleachers look at it. Thirty-one
+   * blocks exactly, which is why the wing is two blocks deeper than the rest
+   * of the building. Painted INTO the wall at x = x1 rather than onto a panel
+   * in front of it, so the banner is flush and the court keeps its width.
+   *
+   * A `zy` wall facing west -- THE OTHER PLANE, and therefore the one the
+   * README says a spot check on the first plane proves nothing about. The
+   * spec decodes this one out of the world separately from the north-facing
+   * ones, and GYM_MIRROR below is set by that decode and by a screenshot.
+   */
   const word = 'MUSTANGS'
   const ww = textWidth(word)
   const wz = Math.round((z0 + z1) / 2 - ww / 2)
-  s.box([x1 - 1, 5, wz - 1], [x1 - 1, 11, wz + ww], P.white)
+  s.box([x1, 5, wz - 1], [x1, 11, wz + ww], P.white)
   s.pattern({
-    at: [x1 - 1, 6, wz], plane: 'zy',
+    at: [x1, 6, wz], plane: 'zy',
     legend: { '#': P.blue }, rows: textRows(word, GYM_MIRROR),
   })
-  for (let z = wz; z < wz + ww; z += 5) s.set(x1 - 2, 11, z, P.ceilingLight)
+  for (let z = wz + 2; z < wz + ww; z += 6) s.set(x1 - 1, 11, z, P.ceilingLight)
 }
 
 /*
@@ -530,7 +642,7 @@ const GYM_MIRROR = true
  */
 function corridor(s) {
   const z0 = 46, z1 = 51
-  const x0 = WEST[0] + 1, x1 = EAST[1] - 1
+  const x0 = WEST[1] + 1, x1 = EAST[1] - 1
   s.clear([x0, 0, z0], [x1, 4, z1])
   s.rect([x0, z0], [x1, z1], -1, P.tile)
   s.rect([x0, z0], [x1, z1], 5, P.white)
@@ -544,21 +656,27 @@ function corridor(s) {
   }
 
   /*
-   * THE TROPHY CASE, and it is here rather than in the commons because 42 is
-   * a long number. Millard North has forty-two state championships, so the
-   * case holds forty-two trophies -- two rows of twenty-one, in glass, set
-   * into the locker run where every school in America puts them. Counting
-   * them is the reward for noticing there is something to count.
+   * THE TROPHY CASE. Millard North has forty-two state championships, which
+   * is a fact, so the case holds forty-two trophies -- two rows of twenty-one
+   * along the north side of the hall, on a dark plinth with a lit valance
+   * over it. Counting them is the reward for noticing there is something to
+   * count.
+   *
+   * IT STANDS IN THE CORRIDOR RATHER THAN BEING RECESSED INTO THE WALL, and
+   * that is a bug fix rather than a preference: recessed, it was one block
+   * behind the locker line, which is the commons' back wall, which is where
+   * "NORTH" is written. Two rows of gold blocks went straight through the
+   * middle of the word and the screenshot showed an N followed by nothing.
    */
-  const tx = 22
-  s.box([tx - 1, 0, z0], [tx + 21, 2, z0], P.dark)
-  for (let i = 0; i < 21; i++) {
-    s.set(tx + i, 1, z0 - 1, 'gold_block')
-    s.set(tx + i, 2, z0 - 1, 'gold_block')
-    s.set(tx + i, 1, z0, P.glass)
-    s.set(tx + i, 2, z0, P.glass)
+  const shelf = []
+  for (let x = 19; x <= 44; x++) shelf.push(x)      // west of the commons door
+  for (let x = 48; x <= 63; x++) shelf.push(x)      // east of it
+  if (shelf.length !== 42) throw new Error(`the trophy case holds ${shelf.length}, not 42`)
+  for (const x of shelf) {
+    s.set(x, 1, z0 + 1, P.dark)                     // the plinth
+    s.set(x, 2, z0 + 1, 'gold_block')               // the trophy
+    s.set(x, 3, z0 + 1, P.ceilingLight)             // the valance over it
   }
-  s.box([tx, 3, z0], [tx + 20, 3, z0], P.ceilingLight)
 
   /*
    * DOORWAYS, cut after the lockers so the openings win. Two deep, because
@@ -568,15 +686,15 @@ function corridor(s) {
    */
   s.clear([18, 0, z0 - 1], [18, 3, z0])                 // commons, west corner
   s.clear([46, 0, z0 - 1], [46, 3, z0])                 // commons, east corner
-  s.clear([8, 0, z0 - 1], [10, 3, z0])                  // the gym
-  s.clear([56, 0, z0 - 1], [58, 3, z0])                 // the library
-  for (const dx of [14, 30, 46]) s.clear([dx, 0, z1], [dx + 2, 3, z1 + 1])  // classrooms
+  s.clear([WEST[1], 0, 48], [x0, 3, 49])               // west, into the gym
+  s.clear([54, 0, z0 - 1], [56, 3, z0])                 // the library
+  for (const dx of [24, 39, 54]) s.clear([dx, 0, z1], [dx + 2, 3, z1 + 1])  // classrooms
 
   // Lit at intervals, in the ceiling plane.
   for (let x = x0 + 2; x <= x1; x += 7) s.set(x, 5, z0 + 2, P.ceilingLight)
   // A blue and green stripe down the floor, which is a thing schools do.
   s.rect([x0, z0 + 2], [x1, z0 + 2], -1, P.blue)
-  s.rect([x0, z0 + 3], [x1, z0 + 3], -1, P.green)
+  s.rect([x0, z0 + 3], [x1, z0 + 3], -1, P.accent)
 }
 
 /*
@@ -614,11 +732,17 @@ function library(s) {
 function classrooms(s) {
   const z0 = 53, z1 = BACK - 1
   for (let i = 0; i < 3; i++) {
-    const x0 = 12 + i * 16, x1 = x0 + 12
-    s.clear([x0, 0, z0 - 1], [x1, 4, z1])
-    s.rect([x0, z0 - 1], [x1, z1], -1, P.tile)
-    s.rect([x0, z0 - 1], [x1, z1], 5, P.white)
-    s.box([x0 + 2, 1, z0 - 2], [x1 - 2, 3, z0 - 2], 'dark_prismarine')   // the board
+    const x0 = 21 + i * 15, x1 = x0 + 12
+    s.clear([x0, 0, z0], [x1, 4, z1])
+    s.rect([x0, z0], [x1, z1], -1, P.tile)
+    s.rect([x0, z0], [x1, z1], 5, P.white)
+    /*
+     * THE BOARD IS ON z0 - 1, WHICH IS THE ROOM'S OWN NORTH WALL, and the
+     * first version put it on z0 - 2 -- which is the corridor's south locker
+     * line. The screenshot showed forty blocks of blackboard running down
+     * the hallway instead of three classrooms with a board in each.
+     */
+    s.box([x0 + 2, 1, z0 - 1], [x1 - 2, 3, z0 - 1], 'dark_prismarine')
     for (let r = 0; r < 2; r++) {
       for (let c = 0; c < 4; c++) {
         s.set(x0 + 2 + c * 3, 0, z0 + 1 + r * 2, P.white)
@@ -701,14 +825,16 @@ function plaza(s) {
    */
   for (let i = 0; i < 3; i++) {
     const fx = 24 + i * 3
-    s.pillar(fx, 20, 0, 11, 'quartz_pillar')
+    s.pillar(fx, 20, 0, 10, 'quartz_pillar')
     const flag = [
-      ['bricks', 'smooth_quartz', 'lapis_block'],      // the US flag
-      ['lapis_block', 'lapis_block', 'smooth_quartz'], // Nebraska, blue
-      ['lapis_block', 'emerald_block', 'iron_block'],  // blue, green, silver
+      ['bricks', 'smooth_quartz', 'lapis_block'],        // the United States
+      ['lapis_block', 'smooth_quartz', 'lapis_block'],   // Nebraska, blue
+      ['lapis_block', 'dark_prismarine', 'iron_block'],  // blue, green, silver
     ][i]
-    flag.forEach((k, r) => s.box([fx + 1, 10 - r, 20], [fx + 2, 10 - r, 20], k))
-    s.set(fx, 12, 20, P.lamp)
+    /* ONE BLOCK OF FLY, NOT TWO. The first version's flags were 2x3 slabs of
+     * saturated colour halfway up the colonnade and read as billboards. */
+    flag.forEach((k, r) => s.set(fx + 1, 9 - r, 20, k))
+    s.set(fx, 11, 20, P.lamp)
   }
 
   /*
@@ -756,7 +882,7 @@ function plaza(s) {
    * most of the plot. Four poles on the south lawn are the whole reference
    * to them and they are honest: they say the fields are that way.
    */
-  for (const x of [8, 26, 42, 60]) {
+  for (const x of [20, 34, 48, 60]) {
     s.pillar(x, 61, 0, 15, P.silver)
     s.box([x - 1, 16, 61], [x + 1, 16, 61], P.lamp)
   }
@@ -790,28 +916,44 @@ function digitRows(text) {
 
 function eggs(s) {
   /*
-   * ONE: UNDER THE BLEACHERS. The gym's bleachers step up against the west
-   * wall and there is a crawl space behind them, which is where every
-   * American high school keeps whatever it keeps. In this one it is 1978 --
-   * the year the building opened, for grades 9 and 10 only -- with the
-   * school's three colours stacked beside it: blue, silver, green.
+   * ONE: UNDER THE BLEACHERS -- and under the floor under them.
    *
-   * REACHED BY CRAWLING. The bottom tier is one block, so the gap under the
-   * top tier is one block of headroom and you get in on your feet by walking
-   * into the corner at the north end. It is not signposted and it is not
-   * visible from the court, which is the whole idea.
+   * There is a cellar beneath the gym holding 1978, the year the building
+   * opened for grades 9 and 10 only, laid in glowstone in its floor, with
+   * the school's three colours on a shelf beside it: blue, silver, green.
+   *
+   * THE VERTICAL BUDGET IS THE WHOLE DESIGN HERE. This world is Classic
+   * Flat: grass at y = -1, dirt at -2 and -3, bedrock at -4. Clearing -3 and
+   * -2 gives exactly two blocks of headroom standing on the bedrock, which
+   * is the most a cellar in this world can ever have, and there is no room
+   * for a staircase. So the way in is Omaha's: a pair of missing floorboards
+   * with two crates under them. From the crates the opening is one block up,
+   * and one block is a jump. Without them the floor is three blocks over
+   * your head and the cellar is a hole you cannot get out of.
+   *
+   * IT IS UNDER THE SECOND BLEACHER TIER, so the missing boards are in the
+   * strip of floor nobody walks on and you find them by going and looking
+   * behind the seats.
    */
-  const x0 = WEST[0], z0 = WING_FRONT + 1, z1 = 46
-  const cz = z0 + 3
-  s.clear([x0 + 1, 0, cz], [x0 + 3, 1, z1 - 5])
-  s.rect([x0 + 1, cz], [x0 + 3, z1 - 5], -1, P.dark)
+  const cx0 = WEST[0] + 1, cz0 = 33
+  const cw = textWidth('1978')
+  s.box([cx0, -4, cz0], [cx0 + cw - 1, -4, cz0 + 6], P.dark)
+  s.clear([cx0, -3, cz0], [cx0 + cw - 1, -2, cz0 + 6])
+  /* Read by somebody standing at the near end looking south: facing +z, the
+   * reader's right is +x, so the characters run the right way already -- but
+   * the TOP of a word on the floor is the far side of it, and `pattern` puts
+   * row 0 nearest. Hence the reversal, the same one the plaza inlay needs. */
   s.pattern({
-    at: [x0 + 1, 0, cz + 1], plane: 'zy',
-    legend: { '#': P.ceilingLight }, rows: digitRows('1978').map(r => [...r].reverse().join('')),
+    at: [cx0, -4, cz0 + 1], plane: 'xz',
+    legend: { '#': P.ceilingLight }, rows: digitRows('1978').slice().reverse(),
   })
-  s.set(x0 + 2, 1, cz, P.blue)
-  s.set(x0 + 2, 1, cz + 1, P.silver)
-  s.set(x0 + 2, 1, cz + 2, P.green)
+  // Blue, silver and green on a shelf at the far end.
+  s.set(cx0 + cw - 1, -3, cz0 + 2, P.blue)
+  s.set(cx0 + cw - 1, -3, cz0 + 3, P.silver)
+  s.set(cx0 + cw - 1, -3, cz0 + 4, P.green)
+  // The missing floorboards, and the crates under them.
+  s.clear([cx0 + 2, -1, cz0 + 3], [cx0 + 2, -1, cz0 + 4])
+  s.box([cx0 + 2, -3, cz0 + 3], [cx0 + 2, -3, cz0 + 4], 'planks')
 
   /*
    * TWO: ON THE ROOF. 2016, the year the comprehensive renovation finished
