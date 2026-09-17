@@ -336,14 +336,44 @@ test.describe('a painting is one object over several cells', () => {
       'installAttachment popped a cell and the painting followed').toBe(0)
   })
 
-  test('two paintings of the same name share one texture', async ({ page }) => {
+  test('two paintings of the same name share one GPU texture', async ({ page }) => {
     const y = PY + 2
     await hang(page, CX - 6, y, CZ - 1, 'west', DEMO)
     await hang(page, CX - 6, y + 3, CZ - 1, 'west', DEMO)
     await waitTicks(page, 2)
+
+    /*
+     * TEXTURE IDENTITY, NOT A COUNT OF THE CACHE, and the difference is the
+     * whole value of this test.
+     *
+     * It used to assert `paintingStats().textures === 1`, which is the SIZE
+     * OF THE MAP -- and deleting the cache lookup still writes one entry per
+     * name, so the number stayed 1 and the test passed. A mutation that
+     * removed the sharing entirely FAILED TO FAIL. It is recorded here
+     * rather than quietly fixed, because "the counter says one" is a
+     * plausible-looking assertion about a thing it does not measure.
+     *
+     * What it asks now is whether the two meshes point at the SAME Babylon
+     * texture object. Nothing but real sharing can make those ids equal.
+     */
+    const ids = await page.evaluate(([a, b]) => {
+      const scene = window.noa.rendering.getScene()
+      const tex = (name) => {
+        const m = scene.getMeshByName(name)
+        return m?.material?.diffuseTexture?.uniqueId ?? null
+      }
+      return [tex(a), tex(b)]
+    }, [`painting-${CX - 6},${y},${CZ - 1}`, `painting-${CX - 6},${y + 3},${CZ - 1}`])
+
+    // Assert the sample is non-empty before asserting anything about it: two
+    // nulls would compare equal and prove nothing at all.
+    expect(ids[0], 'the first painting has a texture').not.toBeNull()
+    expect(ids[1], 'the second painting has a texture').not.toBeNull()
+    expect(ids[0], 'and it is the SAME texture object').toBe(ids[1])
+
     const s = await stats(page)
     expect(s.drawn, 'two pictures').toBe(2)
-    expect(s.textures, 'one texture between them').toBe(1)
+    expect(s.textures, 'one entry in the cache').toBe(1)
   })
 })
 
