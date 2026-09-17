@@ -121,27 +121,144 @@ import {
  * lets the browser's image decoder do the work off the main thread.
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * HOW THE PICTURE BEATS ITS OWN FRAME, WHICH IS A DEPTH-BUFFER QUESTION
+ * AND NOT A GEOMETRY ONE. This block replaces a constant called ART_PROUD
+ * and the reasoning that came with it, so the reasoning is replaced too.
+ *
+ * THE BUG IT IS HERE TO FIX. "painting texture kinda glitches in and out
+ * when i move around" -- the picture flickering against the oak-plank front
+ * face of the frame block behind it, which is the textbook signature of two
+ * surfaces the depth buffer cannot tell apart: a still frame picks a winner
+ * and looks right, and the winner changes as the camera moves.
+ *
+ * WHY A GEOMETRIC OFFSET CANNOT WIN THAT FIGHT, in this world's numbers.
+ * Measured off the live engine in test/89-painting-depth.spec.js: 24 depth
+ * bits, near 0.01, far 10000. One depth step at distance z is
+ *
+ *     z^2 * (far - near) / (far * near * 2^24)  ~=  z^2 * 5.96e-6 blocks
+ *
+ *         2 blocks   2.4e-5      6.4 blocks  2.4e-4  <-- ties ART_PROUD
+ *         4 blocks   9.5e-5      12 blocks   8.6e-4
+ *         8 blocks   3.8e-4      24 blocks   3.4e-3
+ *
+ * The old ART_PROUD was 1/4096 = 2.44e-4 blocks, so it was worth about FOUR
+ * depth steps at 4 blocks and LESS THAN ONE beyond 6.4. A painting hung on
+ * the front of a school is looked at from further away than that, which is
+ * why the owner saw it and the test suite did not.
+ *
+ * And the number cannot simply be raised, because of the other half:
+ *
+ *     THE SELECTION OUTLINE HAS TO WIN. src/highlight.js copies vanilla's
+ *     VIEW_OFFSET_Z_LAYERING and pulls the wireframe toward the camera by
+ *     distance/4096, which in depth steps is 1/(4096 * z * 5.96e-6) = 41/z
+ *     -- 41 steps at 1 block, 8 at 5 blocks, and SHRINKING with distance
+ *     while a fixed geometric offset GROWS with distance. The two curves run
+ *     opposite ways, so no constant satisfies both. The repo has already
+ *     walked both ends of that: 1/512 was 36 steps at 3 blocks, beat the
+ *     outline, and aiming at a painting drew no outline at all; 1/4096 is
+ *     4.5 steps at 3 blocks, loses to the outline correctly, and loses to
+ *     the rounding as well.
+ *
+ * SO THE OFFSET IS MEASURED IN DEPTH STEPS, NOT IN BLOCKS. `glPolygonOffset`
+ * biases a polygon by a fixed number of depth-buffer units, which is a
+ * CONSTANT margin over the frame at every distance -- exactly the shape the
+ * outline's own margin has, so the ordering picture > frame, outline >
+ * picture holds at 2 blocks and at 40.
+ *
+ * AND VANILLA AGREES WITH THE TECHNIQUE, which is why this is not a hack of
+ * last resort. 1.21.8's PaintingRenderer asks for
+ * `RenderType.entitySolidZOffsetForward`, whose layering shard is
+ * VIEW_OFFSET_Z_LAYERING_FORWARD: `matrix.scale(1 - f/4096)` on the model-
+ * view with f = -1 (RenderStateShard.java, ProjectionType.java). Mojang's
+ * painting is depth-biased as a render state too; it is only biased the
+ * other way, because vanilla's painting has nothing coplanar in FRONT of it
+ * to beat -- see the geometry note below.
+ *
+ * REJECTED -- floating the picture off the block, the vanilla-fidelity
+ * answer. It is not what vanilla does. In 1.21.8 the art is not a decal at
+ * all: PaintingRenderer.renderPainting emits the picture as the FRONT FACE
+ * of the painting's own cuboid, at local z = -0.03125 with back.png on the
+ * other five faces of the same mesh, so nothing in vanilla is ever coplanar
+ * with the art. (The cuboid itself stands off the wall exactly as far as
+ * this frame block does: Painting.calculateBoundingBox centres it at
+ * `Vec3.atCenterOf(pos).relative(direction, -0.46875)` with DEPTH = 0.0625,
+ * which spans the wall face to 1/16 -- the same 1/16 blockMeshes.js uses.)
+ * The offset the brief expected to find does not exist, so copying vanilla's
+ * GEOMETRY means putting the picture exactly where it is now.
+ *
+ * REJECTED -- a rendering group above the world. src/renderOrder.js: Babylon
+ * clears the depth buffer between groups, so a painting on group 1 would
+ * draw through the wall you are standing behind, and a painting must not.
+ * The stack is also full (MAX_RENDERINGGROUPS is 4). The picture stays in
+ * GROUP.world with the terrain, on purpose, and 89 asserts it.
+ *
+ * REJECTED -- disabling the depth test or writing depthFunction = ALWAYS.
+ * Same objection, louder.
+ * ------------------------------------------------------------------ */
+
 /**
- * How far proud of the frame's front face the picture sits.
+ * The picture's plane: vanilla's, exactly. Zero, and it is a named zero.
  *
- * It has to be bigger than zero, because two coplanar surfaces z-fight and
- * the fight is per-pixel and moves with the camera -- which reads as the
- * painting FLICKERING rather than as a depth bug.
- *
- * AND IT HAS TO BE SMALLER THAN THE SELECTION BOX'S OWN PULL, which is the
- * half that cost this file a screenshot. src/highlight.js does not inflate
- * the outline; it copies vanilla's `VIEW_OFFSET_Z_LAYERING` and shifts the
- * wireframe's ORIGIN toward the camera by `distance / 4096`. At 3 blocks
- * that is 0.00073 blocks. The first version of this constant was 1/512 =
- * 0.00195 -- nearly three times as much -- so the picture sat IN FRONT of
- * its own selection box and aiming at a painting drew no outline at all. The
- * targeting test passed the whole time, because targeting was never broken.
- *
- * 1/4096 is the same denominator highlight.js uses, which makes the rule
- * legible rather than tuned: the outline wins at every distance past one
- * block, and one block is closer than the near plane lets you get to a wall.
+ * The art sits ON the front face of the frame block, which is where 1.21.8
+ * puts it (the front face of the painting cuboid, 1/16 off the wall). The
+ * separation that stops the two from fighting is ART_DEPTH_UNITS below, and
+ * keeping it in one mechanism rather than two is the point: a hair of
+ * geometry plus a depth bias would be two numbers that have to be reasoned
+ * about together, and the geometric one provably does not scale.
  */
-const ART_PROUD = 1 / 4096
+const ART_PROUD = 0
+
+/**
+ * How many depth-buffer steps toward the camera the picture is biased.
+ *
+ * `gl.polygonOffset(factor, units)` offsets a fragment by
+ * `factor * maxDepthSlope + units * r`, where r is the smallest resolvable
+ * depth difference. Negative is toward the viewer. Babylon exposes the two
+ * halves as `material.zOffset` (factor) and `material.zOffsetUnits`, and
+ * passes them through unchanged here -- there is a sign flip inside
+ * `setZOffset`, but only when `useReverseDepthBuffer` is on, and nothing in
+ * this repo turns it on.
+ *
+ * TWO, which is a budget and not a taste. The margin has to be at least one
+ * step to beat the frame at all, and the outline's own margin over the frame
+ * is 41/z steps -- 8 at five blocks, which is about as far away as a block
+ * can be targeted. Two steps spends a quarter of the tightest case and still
+ * leaves the fight with the frame won everywhere. Raising it to eight would
+ * re-open the 1/512 bug at the far end of reach.
+ *
+ * Frozen materials still honour it: `Material._preBind` reads zOffset every
+ * draw and `freeze()` only short-circuits the uniform rebuild.
+ */
+const ART_DEPTH_UNITS = -2
+
+/**
+ * The slope half of the offset, and units alone DO NOT WORK WITHOUT IT.
+ *
+ * Tried units-only first, on the theory that two exactly parallel surfaces
+ * share a depth slope so the constant term should be the whole story. 89
+ * disagreed, loudly, and the trace is worth keeping: at 6 blocks and 72
+ * degrees off the normal the frame still took 39%, 61% and 99% of the
+ * picture's pixels on three separate frames of a camera dolly. Head-on it
+ * was clean. That is the shape of a SLOPE problem -- at grazing incidence a
+ * single fragment spans a long run of the surface, the depth interpolated
+ * across it varies by far more than two steps, and a constant two-step bias
+ * is simply too small to matter.
+ *
+ * `factor * maxDepthSlope` is the term that exists for it: it contributes
+ * NOTHING when the surface faces the camera and grows exactly as fast as the
+ * error it is there to cover. That self-scaling is why it is safe next to
+ * the selection outline: head-on, where the outline is big and obvious and
+ * has to win, the factor adds zero and the picture is only two steps proud.
+ * The place it grows to hundreds of steps is the place the outline is a
+ * near-edge-on line a pixel wide, and 89 photographs that case rather than
+ * arguing about it.
+ *
+ * -1 is the GL convention for "one slope's worth toward the viewer" and is
+ * what the decal recipe uses. Not tuned upward: bigger would buy nothing
+ * (the fight is already won by a whole slope) and would cost outline.
+ */
+const ART_DEPTH_FACTOR = -1
 
 /* ------------------------------------------------------------------ *
  * THE MIRROR TRAP.
@@ -411,6 +528,22 @@ function materialFor(name, custom) {
   // A painting has a back -- the frame block behind it is opaque -- so the
   // reverse face is never seen. Culled, which halves the fragments.
   mat.backFaceCulling = true
+  /*
+   * THE Z-FIGHT FIX, both halves of it. The picture is coplanar with the
+   * front face of its frame block and wins the depth test against it by two
+   * depth steps plus one surface slope -- constant against distance, growing
+   * against viewing angle. ART_DEPTH_UNITS and ART_DEPTH_FACTOR above carry
+   * the numbers and the two measurements that chose them.
+   *
+   * On the MATERIAL rather than the mesh, which is a real choice: the
+   * material is shared by every painting of the same name, so this is one
+   * piece of state for the whole world rather than one per hung painting,
+   * and it cannot drift between two copies of the same picture. It also
+   * means the offset applies to every facing without anything per-facing
+   * existing -- all four hang the same quad off the same material.
+   */
+  mat.zOffsetUnits = ART_DEPTH_UNITS
+  mat.zOffset = ART_DEPTH_FACTOR
   mat.freeze()
   ctx.materials.set(name, mat)
   return mat
@@ -460,8 +593,14 @@ function artVertexData(entry, right) {
 }
 
 /**
- * Where the bottom-left corner of the picture sits in world coordinates: on
- * the front face of the frame, a hair proud of it.
+ * Where the bottom-left corner of the picture sits in world coordinates: ON
+ * the front face of the frame, 1/16 off the wall, which is where 1.21.8 puts
+ * the front face of a painting. Nothing is added to lift it clear -- what
+ * keeps it clear is ART_DEPTH_UNITS, and ART_PROUD is the zero that says so.
+ *
+ * Every facing goes through the same two lines, so all four get it: `a` is
+ * the axis the picture faces along and `s` its sign, both read off the
+ * normal, never off the name.
  */
 function artOrigin(x, y, z, normal, right) {
   // The axis the painting faces along, and the block-local plane of the wall
