@@ -1,0 +1,468 @@
+import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture'
+import { Texture } from '@babylonjs/core/Materials/Textures/texture'
+import { Color3 } from '@babylonjs/core/Maths/math.color'
+import { Mesh } from '@babylonjs/core/Meshes/mesh'
+import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
+import { FACINGS, SIGN_GEOMETRY } from './blockMeshes.js'
+import { isSignId, isWallSign, signFacing } from './blocks.js'
+
+/*
+ * SIGN TEXT, and the whole file is an answer to one constraint.
+ *
+ * noa draws every voxel of a block id as a THIN INSTANCE of one shared mesh.
+ * Position, rotation and scale vary per voxel; vertices and materials cannot.
+ * That is exactly right for a sign's board, which is the same plank
+ * everywhere, and it is fatal for the text, because every sign says something
+ * different. So the board is a block (blockMeshes.js) and the text is a
+ * separate mesh per sign, owned here. There is no third option inside noa.
+ *
+ *
+ * WHAT WAS REJECTED, and the numbers are the reason.
+ *
+ * docs/FUTURE.md item 1 proposed "a canvas and a DynamicTexture per placed
+ * sign, which is a budget nobody has counted yet". Counted:
+ *
+ *   A sign's text block is 90 x 39 font pixels. nametag.js draws its font at
+ *   8 canvas pixels per font pixel, which is what keeps Minecraft's bitmap
+ *   glyphs hard-edged instead of soft, so the canvas is 720 x 312 = 224,640
+ *   texels. At RGBA8 that is 899 KB per sign, and a GPU texture is not
+ *   compressed. A HUNDRED SIGNS IS 88 MB of texture memory, for a hundred
+ *   pictures of the same 95 glyphs in different orders.
+ *
+ * So the glyphs are rasterised ONCE into a shared atlas and every sign is a
+ * quad per character with UVs into it. The atlas is 768 x 432 = 1.27 MB, and
+ * it is 1.27 MB whether there is one sign in the world or a thousand. A
+ * sign's own cost drops to its vertex buffer: 60 characters is 240 vertices,
+ * about 7.7 KB. A hundred signs is 770 KB of geometry and ONE texture -- a
+ * hundredfold saving that is not a micro-optimisation, it is the difference
+ * between "label every plot" being free and being a memory budget.
+ *
+ * Draw calls are the same either way (one mesh per sign), because all the
+ * per-sign textures would have forced separate calls too. What the atlas adds
+ * is that every sign now shares ONE material, which is the precondition for
+ * ever merging them into a single mesh if a thousand signs is a real number.
+ *
+ * Also rejected: one canvas holding many sign faces, keyed by text. It is the
+ * middle answer -- it fixes duplicate strings and nothing else, and plot
+ * labels are all different by definition, so it would have saved nothing on
+ * the one workload that exists.
+ *
+ *
+ * ALPHA TESTING, NOT BLENDING, which is where this diverges from nametag.js
+ * despite drawing the same font. A nametag needs real blending because its
+ * background plate is 63/255 and its see-through pass is 32/255 -- both below
+ * the 0.4 alpha-test cutoff, and alpha testing would throw both away (that
+ * bug is written up at length in nametag.js). Sign text has no background and
+ * no translucency: a texel is a glyph or it is nothing. So it takes the
+ * cutout path blocks.js's installAlphaPageMaterials note argues for, which
+ * costs no depth sorting and cannot flicker against the board behind it.
+ */
+
+/** Blocks per font pixel. Vanilla: 0.015625 * RENDER_SCALE, = (1/64) * (2/3). */
+const FONT_PX = 1 / 96
+
+/** SignBlockEntity.TEXT_LINE_HEIGHT and SignText.LINES, read from 1.21 source. */
+const LINE_HEIGHT = 10
+export const SIGN_LINES = 4
+
+/*
+ * Monocraft is monospaced at 6 font pixels of advance and a 9-pixel line box
+ * -- the same relationship hud.js, chat.js and nametag.js all rely on.
+ */
+const GLYPH_W = 6
+const GLYPH_H = 9
+
+/*
+ * SignBlockEntity.getMaxTextLineWidth() = 90. Vanilla enforces this in PIXELS
+ * in the edit screen, not in characters, and has no character cap at all
+ * below the 384-byte wire limit. Monocraft being monospaced turns 90 pixels
+ * into exactly 15 characters here, which is where the number everyone quotes
+ * comes from -- but the pixel is the real rule and it is the one applied.
+ */
+const MAX_LINE_WIDTH = 90
+const MAX_CHARS = Math.floor(MAX_LINE_WIDTH / GLYPH_W)
+
+/*
+ * SignRenderer.TEXT_OFFSET is Vec3(0, 0.33333334, 0.046666667), in BLOCKS,
+ * applied at the sign's pivot before the 2/3 scale. The z is the part that
+ * matters here: the board's front face is half of 4/3 of a pixel from the
+ * pivot plane, so the text sits 0.005 blocks -- four fifths of one twentieth
+ * of a pixel -- proud of the wood. That gap is the whole z-fighting fix and
+ * it is vanilla's number, not a tuned one.
+ */
+const TEXT_OFFSET_Y = 0.33333334
+const TEXT_INSET = 0.046666667 - (SIGN_GEOMETRY.BOARD_THICKNESS / 2) / 16
+
+/** A wall sign's pivot drops 0.3125 blocks; translateSign's magic number. */
+const WALL_PIVOT_DROP = 0.3125
+
+/** Canvas pixels per font pixel in the atlas. nametag.js's reasoning exactly. */
+const SUPERSAMPLE = 8
+
+/** Printable ASCII, and a 16-wide grid because 95 glyphs want six rows. */
+const FIRST_CHAR = 32
+const LAST_CHAR = 126
+const COLUMNS = 16
+const ROWS = Math.ceil((LAST_CHAR - FIRST_CHAR + 1) / COLUMNS)
+
+/** Vanilla's default sign text is DyeColor.BLACK, whose textColor is 0. */
+const DEFAULT_COLOUR = '#000000'
+
+const fontSpec = () => `${GLYPH_H * SUPERSAMPLE}px Monocraft, monospace`
+
+/**
+ * Every printable glyph, once, in a grid. Drawn white so a material can tint
+ * it: the alpha channel is the glyph and the colour is the sign's.
+ */
+function drawGlyphAtlas(texture) {
+  const w = COLUMNS * GLYPH_W * SUPERSAMPLE
+  const h = ROWS * GLYPH_H * SUPERSAMPLE
+  const ctx = texture.getContext()
+  ctx.clearRect(0, 0, w, h)
+  ctx.font = fontSpec()
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = 'rgb(255, 255, 255)'
+  for (let code = FIRST_CHAR; code <= LAST_CHAR; code++) {
+    const i = code - FIRST_CHAR
+    const cx = (i % COLUMNS) * GLYPH_W * SUPERSAMPLE
+    const cy = Math.floor(i / COLUMNS) * GLYPH_H * SUPERSAMPLE
+    /*
+     * The glyph's vertical middle is 4.5 font pixels down its own line box,
+     * which is the same anchor nametag.js uses (`1 + LINE_H / 2` on a canvas
+     * that starts one pixel above the box). Getting this wrong shifts every
+     * glyph in the world by the same amount, which reads as "the font is
+     * slightly low" rather than as a bug.
+     */
+    ctx.fillText(String.fromCharCode(code),
+      cx + (GLYPH_W * SUPERSAMPLE) / 2, cy + 4.5 * SUPERSAMPLE)
+  }
+  texture.update(false)
+}
+
+/* ------------------------------------------------------------------ *
+ * THE MIRROR TRAP, and this is the file it would poison.
+ *
+ * Babylon is left-handed: noa's forward at heading h is (sin h, 0, cos h), so
+ * a reader looking along +z has +x on their RIGHT. Three builds in this repo
+ * have shipped reversed text -- `4202` on Widener's frieze, a backwards
+ * `2026` on a hoarding, a mirrored `?` -- because a row of blocks stamped in
+ * source order runs right-to-left for half the walls in the world.
+ *
+ * So the reading direction is never assumed here, it is DERIVED. A reader
+ * stands on the +normal side of the board and looks along -normal, so their
+ * forward is -n and their right is forward turned a quarter clockwise:
+ *
+ *     right(h) = (cos h, 0, -sin h) = (forward.z, 0, -forward.x)
+ *     forward  = -n
+ *     right    = (-n.z, 0, n.x)
+ *
+ * Checked against the one case anybody can picture: a sign facing north has
+ * n = (0, 0, -1) in this world's FACINGS, the reader looks along +z, and the
+ * formula gives right = (1, 0, 0) -- text runs east, which is where the
+ * reader's right hand is. The other three fall out of the same line.
+ *
+ * And per docs/builds/README.md, a derivation is not a check. All four
+ * facings are screenshotted and read in test/76-signs.spec.js.
+ * ------------------------------------------------------------------ */
+const readingDirection = (normal) => [-normal[2], 0, normal[0]]
+
+/**
+ * Where the text plane sits, in world coordinates: the centre of the four
+ * lines, on the face of the board.
+ */
+function textAnchor(id, x, y, z) {
+  const normal = FACINGS[signFacing(id)]
+  const G = SIGN_GEOMETRY
+  // The axis the board faces along, and which way along it.
+  const a = normal[0] ? 0 : 2
+  const s = normal[a]
+  const base = [x, y, z]
+  const origin = [x + 0.5, 0, z + 0.5]
+
+  if (isWallSign(id)) {
+    // The wall plane in block-local coordinates, then outward to the board's
+    // face and the hair's breadth past it. Same construction as the wall
+    // torch's, for the same reason: derive from the vector, never the name.
+    const wall = (1 - s) / 2
+    origin[a] = base[a] + wall + s * (G.WALL_FRONT / 16 + TEXT_INSET)
+    origin[1] = y + 0.5 - WALL_PIVOT_DROP + TEXT_OFFSET_Y
+  } else {
+    origin[a] = base[a] + 0.5 + s * ((G.BOARD_THICKNESS / 2) / 16 + TEXT_INSET)
+    origin[1] = y + 0.5 + TEXT_OFFSET_Y
+  }
+  return { origin, right: readingDirection(normal), normal }
+}
+
+/**
+ * One sign's text as a quad per character.
+ *
+ * Built in LOCAL space around the anchor and positioned by the caller, so
+ * noa's origin rebasing (it shifts the whole scene every 25 blocks) moves it
+ * for free.
+ */
+function textVertexData(lines, right) {
+  const positions = [], uvs = [], indices = [], normals = []
+  for (let i = 0; i < SIGN_LINES; i++) {
+    const text = String(lines[i] ?? '').slice(0, MAX_CHARS)
+    if (!text) continue
+    /*
+     * Vanilla centres each line on `-font.width(line) / 2` and stacks the
+     * four on `i * 10 - 20`, which is the TOP of line i's box in font space.
+     * Font space is y-down and the renderer's scale negates it, so world-up
+     * is the negation.
+     */
+    const startU = -(text.length * GLYPH_W) / 2
+    const top = -(i * LINE_HEIGHT - 20)
+
+    for (let j = 0; j < text.length; j++) {
+      const code = text.charCodeAt(j)
+      if (code <= FIRST_CHAR || code > LAST_CHAR) continue   // space draws nothing
+      const g = code - FIRST_CHAR
+      const col = g % COLUMNS, row = Math.floor(g / COLUMNS)
+      const u0 = startU + j * GLYPH_W, u1 = u0 + GLYPH_W
+      const v0 = top, v1 = top - GLYPH_H
+
+      const base = positions.length / 3
+      for (const [u, v] of [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]) {
+        positions.push(right[0] * u * FONT_PX, v * FONT_PX, right[2] * u * FONT_PX)
+      }
+      /*
+       * V RUNS DOWN THE CANVAS, and assuming otherwise is what the first
+       * screenshot of this file caught: every glyph came out as some OTHER
+       * glyph, from the wrong row and upside down.
+       *
+       * nametag.js states the rule from the other side -- "a DynamicTexture's
+       * canvas is Y-DOWN and Babylon samples the plane's UVs Y-UP, so the
+       * glyphs come out upside down" -- and fixes it by flipping the whole
+       * texture with vScale. That is right for one glyph on one quad and
+       * wrong here: flipping the texture would flip the ATLAS, so the rows
+       * would swap places as well as the glyphs turning over. An atlas has to
+       * address the canvas in the canvas's own frame, so v is canvasY / H and
+       * the top of a cell has the SMALLER v.
+       */
+      const uMin = col / COLUMNS, uMax = (col + 1) / COLUMNS
+      const vTop = row / ROWS, vBottom = (row + 1) / ROWS
+      uvs.push(uMin, vTop, uMax, vTop, uMax, vBottom, uMin, vBottom)
+      indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
+      // Unlit, so these are decoration -- supplied anyway because Babylon
+      // computes bogus ones when they are missing and culling reads them.
+      for (let k = 0; k < 4; k++) normals.push(0, 0, 1)
+    }
+  }
+  const data = new VertexData()
+  data.positions = positions
+  data.uvs = uvs
+  data.indices = indices
+  data.normals = normals
+  return data
+}
+
+/* ------------------------------------------------------------------ *
+ * The registry.
+ *
+ * Module-level and writable BEFORE noa exists, because the callers that
+ * matter are builds: src/builds/* runs while the world is being stamped, and
+ * a build should not have to know whether the renderer is up yet. Entries set
+ * early are flushed when installSignText runs.
+ * ------------------------------------------------------------------ */
+
+/** "x,y,z" -> { lines, colour } */
+const texts = new Map()
+/** "x,y,z" -> { mesh } */
+const live = new Map()
+/** Coordinates with words waiting for a sign to appear under them. */
+const pending = new Set()
+
+let ctx = null
+
+const keyOf = (x, y, z) => `${x},${y},${z}`
+
+/**
+ * Put words on a sign.
+ *
+ * THIS IS THE CALL A BUILD MAKES. World coordinates, up to four lines, each
+ * truncated at vanilla's 90-pixel line width (15 Monocraft characters):
+ *
+ *     import { setSignText } from '../signText.js'
+ *     setSignText(-63, 137, 120, ['Stage 7', 'Patronus AI', '2026'])
+ *
+ * The sign block itself is placed the ordinary way -- `oak_sign` for a
+ * standing one, which resolves to a facing on placement, or one of the eight
+ * ids directly. Text set for a coordinate with no sign on it is kept and
+ * drawn; text on a coordinate that stops being a sign is dropped.
+ *
+ * @param {number} x @param {number} y @param {number} z world coordinates
+ * @param {string[]} lines up to four
+ * @param {{colour?: string}} [opts] CSS colour; vanilla's default is black
+ */
+export function setSignText(x, y, z, lines, opts = {}) {
+  const entry = {
+    lines: (Array.isArray(lines) ? lines : [lines]).slice(0, SIGN_LINES),
+    colour: opts.colour ?? DEFAULT_COLOUR,
+  }
+  texts.set(keyOf(x, y, z), entry)
+  if (ctx) renderSign(x, y, z, entry)
+}
+
+/** Take the words off, without touching the block. */
+export function clearSignText(x, y, z) {
+  const key = keyOf(x, y, z)
+  texts.delete(key)
+  pending.delete(key)
+  disposeSign(key)
+}
+
+/** For the spec, which has to assert on a non-empty sample before anything. */
+export function signTextStats() {
+  return {
+    signs: live.size,
+    /** One shared atlas, whatever the sign count. */
+    textures: ctx ? 1 : 0,
+    atlasBytes: ctx
+      ? COLUMNS * GLYPH_W * SUPERSAMPLE * ROWS * GLYPH_H * SUPERSAMPLE * 4 : 0,
+    vertices: [...live.values()].reduce((n, s) => n + s.mesh.getTotalVertices(), 0),
+  }
+}
+
+function disposeSign(key) {
+  const entry = live.get(key)
+  if (!entry) return
+  entry.mesh.dispose()
+  live.delete(key)
+}
+
+/** Colour -> material. One per distinct ink, not one per sign. */
+function materialFor(colour) {
+  let mat = ctx.materials.get(colour)
+  if (mat) return mat
+  mat = ctx.noa.rendering.makeStandardMaterial(`sign-text-${colour}`)
+  mat.diffuseTexture = ctx.atlas
+  /*
+   * Same three colour lines as nametag.js and crackOverlay.js, and the same
+   * reason: Babylon ADDS emissive and ambient rather than modulating them, so
+   * anything left at its default white pins the quad to white before the
+   * texture is sampled -- and this text is BLACK, which is the one colour
+   * that failure mode hides completely.
+   */
+  mat.diffuseColor = Color3.FromHexString(colour)
+  mat.emissiveColor = new Color3(0, 0, 0)
+  mat.ambientColor = new Color3(0, 0, 0)
+  mat.specularColor = new Color3(0, 0, 0)
+  mat.disableLighting = true
+  /*
+   * Off, so a sign read from behind shows nothing rather than nothing-shaped
+   * geometry, and so winding order cannot silently swallow a glyph. The board
+   * is opaque and occludes the back face anyway; vanilla draws a separate
+   * back text, which is out of scope here and noted in docs/FUTURE.md.
+   */
+  mat.backFaceCulling = false
+  mat.freeze()
+  ctx.materials.set(colour, mat)
+  return mat
+}
+
+function renderSign(x, y, z, entry) {
+  const key = keyOf(x, y, z)
+  disposeSign(key)
+  const signId = ctx.noa.getBlock(x, y, z)
+  /*
+   * THE TEXT CANNOT DRAW WITHOUT THE BLOCK, and that is not a limitation to
+   * work around -- the block id is the only thing that knows which way the
+   * board faces, which is the only thing that knows which way the words run.
+   *
+   * So an entry whose coordinate is not (yet) a sign is kept as PENDING and
+   * retried, rather than dropped or guessed at. Two things make it land:
+   * the setBlock hook below, for a sign placed by hand or by a command, and
+   * the tick retry, for a sign that arrives as terrain -- a build stamps into
+   * the chunk generator rather than through setBlock, so there is no write to
+   * hook and the chunk may not even be resident when the text is set.
+   */
+  if (!isSignId(signId)) { pending.add(key); return }
+  pending.delete(key)
+
+  const { origin, right } = textAnchor(signId, x, y, z)
+  const data = textVertexData(entry.lines, right)
+  if (data.indices.length === 0) return   // four blank lines is not a mesh
+
+  const mesh = new Mesh(`sign-text-${key}`, ctx.scene)
+  data.applyToMesh(mesh)
+  mesh.material = materialFor(entry.colour)
+  mesh.isPickable = false
+  // Static: noa's octree owns the frustum culling and the origin rebasing,
+  // which is the only reason this can be a plain world-space mesh at all.
+  ctx.noa.rendering.addMeshToScene(mesh, true, origin)
+  live.set(key, { mesh })
+}
+
+/**
+ * Wire the renderer up. Call once, after the blocks are registered.
+ *
+ * The setBlock wrap is the same pattern installAttachment and
+ * installPlacementOrientation use, and it is installed AFTER both so that the
+ * id it reads is the one that actually landed -- a wrap that ran first would
+ * see the canonical `oak_sign` rather than the facing variant it resolves to.
+ */
+export function installSignText(noa) {
+  const scene = noa.rendering.getScene()
+  const atlas = new DynamicTexture('sign-glyph-atlas', {
+    width: COLUMNS * GLYPH_W * SUPERSAMPLE,
+    height: ROWS * GLYPH_H * SUPERSAMPLE,
+  }, scene, false, Texture.NEAREST_SAMPLINGMODE)
+  atlas.hasAlpha = true
+  atlas.wrapU = atlas.wrapV = Texture.CLAMP_ADDRESSMODE
+  ctx = { noa, scene, atlas, materials: new Map() }
+  drawGlyphAtlas(atlas)
+
+  /*
+   * ...and again once the font has actually loaded, which is a trap the
+   * nametags do not have. A nametag redraws on every rename, so a tag drawn
+   * in the fallback monospace fixes itself the first time anybody is renamed.
+   * This atlas is drawn ONCE and every sign in the world samples it forever,
+   * so drawing it before Monocraft arrives would make every sign permanently
+   * wrong. Redrawing the same texture object needs no mesh rebuilt: the UVs
+   * are unchanged and the material already points at it.
+   */
+  document.fonts?.ready?.then(() => { if (ctx) drawGlyphAtlas(atlas) })
+
+  const originalSetBlock = noa.setBlock.bind(noa)
+  noa.setBlock = (id, x, y, z) => {
+    const result = originalSetBlock(id, x, y, z)
+    const key = keyOf(x, y, z)
+    const entry = texts.get(key)
+    if (!entry) return result
+    if (isSignId(noa.getBlock(x, y, z))) renderSign(x, y, z, entry)
+    else clearSignText(x, y, z)
+    return result
+  }
+
+  for (const [key, entry] of texts) {
+    const [x, y, z] = key.split(',').map(Number)
+    renderSign(x, y, z, entry)
+  }
+
+  /*
+   * The retry, and it costs nothing once the world has settled: the handler
+   * returns on its first line while `pending` is empty, which it is for every
+   * tick after the last build's chunks have meshed. Every 20 ticks rather
+   * than every tick because a chunk arriving one second late is invisible and
+   * a getBlock per pending sign per tick is not free at a hundred of them.
+   */
+  let tick = 0
+  noa.on('tick', () => {
+    if (pending.size === 0 || ++tick % 20) return
+    for (const key of [...pending]) {
+      const [x, y, z] = key.split(',').map(Number)
+      const entry = texts.get(key)
+      if (entry) renderSign(x, y, z, entry)
+      else pending.delete(key)
+    }
+  })
+}
+
+/** For tests and world switches: forget every sign in the world. */
+export function resetSignText() {
+  for (const key of [...live.keys()]) disposeSign(key)
+  texts.clear()
+  pending.clear()
+}

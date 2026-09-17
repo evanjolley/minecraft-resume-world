@@ -2,6 +2,7 @@ import { Engine } from 'noa-engine'
 
 import { registerBlocks, BLOCK_TYPES, BLOCK_SUPPORT } from './blocks.js'
 import { installAttachment } from './blockMeshes.js'
+import { installSignText, setSignText, clearSignText, signTextStats } from './signText.js'
 import { getVoxelID, terrainInfo, SPAWN } from './island.js'
 import { installPhysics, installSpeedModes, MC } from './physics.js'
 import { createSurvival } from './survival.js'
@@ -539,6 +540,17 @@ installAttachment(noa, BLOCK_SUPPORT, (x, y, z) => {
 })
 
 /*
+ * And signs say something, which is the other half of blockMeshes.js's sign.
+ *
+ * LAST of the three setBlock wraps on purpose. installPlacementOrientation
+ * turns a canonical `oak_sign` into one of eight facing variants and
+ * installAttachment can take it straight back off a wall that is not there;
+ * only after both have run is the id at a coordinate the id that is really
+ * going to be there, and the id is what tells the text which way to face.
+ */
+installSignText(noa)
+
+/*
  * F3. Installed after `drops` and `particles` because it counts both, and it
  * is handed `inputLock` to READ rather than to take: F3 is an overlay, not a
  * screen -- the world keeps ticking and you keep walking with it open. All the
@@ -889,6 +901,13 @@ window.game = {
    * real rather than rebuilt every frame.
    */
   held, itemModelStats,
+  /*
+   * Signs, for builds and for the test suite. `setSignText` is the call a
+   * build makes to label a plot; `signTextStats` is how a spec proves the
+   * per-sign cost is a vertex buffer and not a texture -- it reports ONE
+   * atlas however many signs are in the world, which is the claim.
+   */
+  signs: { setSignText, clearSignText, signTextStats },
   /*
    * Buckets, for the console and for the test suite: `ray` is the fluid pick
    * on its own, which is how a spec proves flowing water is refused without
