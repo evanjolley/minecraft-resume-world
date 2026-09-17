@@ -36,6 +36,7 @@
  * one or two blocks -- which is what these are.
  */
 import { KIND, at, onMap, hash, smoothNoise, nearSpawn, SPAWN_CLEAR } from './land.js'
+import { BIOME, DENSITY, speciesAt } from './biomes.js'
 
 /** How far from the path anything may grow. Two blocks of clear shoulder
  *  everywhere, and up to five where the noise thins the wood out. */
@@ -79,15 +80,24 @@ function pathDistance(model) {
   return d
 }
 
-/** The wood a region is made of. Five species, in bands that are nothing like
- *  the same size, so the changeover is not a grid. */
-function species(x, z) {
-  const v = smoothNoise(x, z, 41, 401)
-  if (v < 0.22) return 'spruce'
-  if (v < 0.42) return 'birch'
-  if (v < 0.72) return 'oak'
-  if (v < 0.86) return 'dark_oak'
-  return 'cherry'
+/**
+ * The wood a tree is made of, and it comes from the BIOME now.
+ *
+ * REPLACED -- a five-band noise field that had nothing to do with anything
+ * else in the world. It was the right answer while there was one biome: you
+ * walked out of birch and into spruce and the boundary was a thing you
+ * noticed, which is all a single landscape can offer. It is the wrong answer
+ * now, because the owner's complaint was that the surroundings were uniform,
+ * and a species field that ignores the place is uniform in the way that
+ * matters -- the same salad everywhere, just shuffled.
+ *
+ * `gap` is how deep inside its biome the column is (see src/builds/biomes.js),
+ * and it is what makes the birch forest soften to mixed woodland at its
+ * edges instead of stopping at a line.
+ */
+function species(model, x, z) {
+  const i = at(x, z)
+  return speciesAt(model.biome[i], x, z, model.gap[i])
 }
 
 /**
@@ -164,11 +174,66 @@ function tree(s, x, z, base, kind, model) {
     blob(x, base + h, z, 1.6, 41)
     return
   }
+  if (kind === 'jungle') {
+    /* Tall and bare up the trunk with the crown right at the top, which is
+     * the silhouette that makes a jungle read as a jungle from underneath --
+     * you are in a hall of trunks with a roof a long way up. */
+    const h = tall(n, 9, 13)
+    s.pillar(x, z, base, base + h - 1, log)
+    blob(x, base + h - 1, z, 3.1, 53)
+    blob(x, base + h + 1, z, 2.0, 59)
+    return
+  }
+  if (kind === 'mangrove') {
+    /* Short, and it stands on its roots. Four one-block legs around the
+     * trunk are the cheapest thing that reads as a mangrove, and the river
+     * is the only place they appear. */
+    const h = tall(n, 4, 6)
+    s.pillar(x, z, base, base + h - 1, log)
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (hash(x + dx, z + dz, 61) < 0.5) continue
+      if (onMap(x + dx, z + dz)) s.set(x + dx, base, z + dz, log)
+    }
+    blob(x, base + h, z, 2.6, 67)
+    return
+  }
   // oak
   const h = tall(n, 5, 8)
   s.pillar(x, z, base, base + h - 1, log)
   blob(x, base + h - 1, z, 2.7, 43)
   blob(x, base + h, z, 1.9, 47)
+}
+
+/*
+ * A BAMBOO STAND, which is what the bamboo jungle is actually made of.
+ *
+ * There is no bamboo PLANT in this block table -- the 683 keys are cubes,
+ * slabs, stairs, a torch and some signs -- but there is `bamboo_block`, which
+ * is vanilla's bundled-bamboo cube, and a 1x1 column of it eight high is a
+ * stalk. A handful of stalks at slightly different heights in a two-block
+ * radius is a clump, and clumps at the density below are a thicket you cannot
+ * see through, which is the whole experience of the biome.
+ *
+ * BAMBOO AND NOT CHERRY BLOSSOM, on the owner's instruction: "dont use cherry
+ * blossom for china, too on the nose". The agreed fallback if bamboo proved
+ * unworkable was meadow, and it was not needed.
+ */
+function bambooStand(s, x, z, base, model) {
+  const n = 3 + Math.floor(hash(x, z, 71) * 4)
+  for (let k = 0; k < n; k++) {
+    const dx = Math.round((hash(x, z, 401 + k) - 0.5) * 4)
+    const dz = Math.round((hash(x, z, 431 + k) - 0.5) * 4)
+    const px = x + dx, pz = z + dz
+    if (!onMap(px, pz)) continue
+    const j = at(px, pz)
+    if (model.kind[j] !== KIND.FIELD) continue
+    const foot = model.h[j]
+    const h = 5 + Math.floor(hash(px, pz, 457) * 8)
+    s.pillar(px, pz, foot, foot + h - 1, 'bamboo_block')
+    /* A frond on the tallest ones. Jungle leaves rather than nothing: a
+     * stalk that stops dead reads as a fencepost. */
+    if (h > 9) s.set(px, foot + h, pz, 'jungle_leaves')
+  }
 }
 
 /**
@@ -195,7 +260,24 @@ export function plantForest(s, model) {
       // Thickets and clearings. The exponent bites the low end harder, so a
       // clearing is genuinely empty rather than merely sparse.
       const density = smoothNoise(x, z, 28, 503) ** 1.6
-      if (hash(x, z, 61) > density * 0.95) continue
+      /*
+       * AND THE BIOME'S OWN SHARE OF IT. The noise decides where the wood is
+       * thick and where it opens out; DENSITY decides how much wood there is
+       * to be thick WITH. The plains take 14% of the candidate sites and the
+       * birch forest takes 92%, and that one multiplier is most of the
+       * difference between a prairie with trees in it and a forest -- more
+       * than any amount of choosing the right leaf block.
+       */
+      const biome = model.biome[j]
+      if (hash(x, z, 61) > density * (DENSITY[biome] ?? 0.5)) continue
+
+      /*
+       * THE TREELINE. Nothing grows on the top of a mountain, and a spruce
+       * standing in the snow at twelve blocks up is the single detail that
+       * would make the peaks read as a green hill with white paint on it.
+       * Twelve is where peaksGround switches from stone to snow.
+       */
+      if (biome === BIOME.PEAKS && model.h[j] >= 11) continue
 
       // Nothing may lean over a plot or into the water: a canopy is 4 blocks
       // across and the stamper's forbid guard would (correctly) throw.
@@ -204,7 +286,15 @@ export function plantForest(s, model) {
        * one thing in a plot that has to be legible from the path. */
       if (!clearOfReserved(model, x, z, 6)) continue
 
-      tree(s, x, z, model.h[j], species(x, z), model)
+      /* The bamboo jungle is mostly stalks and a few real trees through them,
+       * which is what the vanilla biome is. The roll is per site rather than
+       * per region so the two are interleaved rather than zoned. */
+      if (biome === BIOME.BAMBOO && hash(x, z, 73) < 0.72) {
+        bambooStand(s, x, z, model.h[j], model)
+        continue
+      }
+
+      tree(s, x, z, model.h[j], species(model, x, z), model)
     }
   }
 
@@ -222,6 +312,20 @@ function clearOfReserved(model, x, z, r) {
     }
   }
   return true
+}
+
+/*
+ * WHAT IS LYING ON THE FLOOR, per biome. Three blocks each, picked by the
+ * coordinate hash, so the litter is the same kind of thing the biome's
+ * surface is made of rather than a forest floor scattered over a snowfield.
+ */
+const LITTER = {
+  [BIOME.PLAINS]: ['coarse_dirt', 'dirt', 'podzol'],
+  [BIOME.BIRCH]: ['podzol', 'coarse_dirt', 'moss_block'],
+  [BIOME.BAMBOO]: ['moss_block', 'podzol', 'rooted_dirt'],
+  [BIOME.RIVERLANDS]: ['sand', 'gravel', 'clay'],
+  [BIOME.HILLS]: ['gravel', 'coarse_dirt', 'andesite'],
+  [BIOME.PEAKS]: ['snow_block', 'gravel', 'stone'],
 }
 
 /*
@@ -246,14 +350,48 @@ function groundCover(s, model, dist) {
       const base = model.h[j]
       const near = d <= 4
       const roll = hash(x, z, 67)
-      const wood = species(x, z)
+      const wood = species(model, x, z)
+      const biome = model.biome[j]
 
-      // Leaf litter: a change of GROUND rather than something standing on it,
-      // which is what stops the verge reading as mown grass with props on it.
+      /*
+       * Leaf litter: a change of GROUND rather than something standing on it,
+       * which is what stops the verge reading as mown grass with props on it.
+       *
+       * IT IS THE BIOME'S LITTER NOW. The three blocks below were podzol,
+       * coarse dirt and moss everywhere, which is a forest floor -- correct
+       * for the birch wood, wrong on a prairie and absurd on a snowfield.
+       * Each biome names its own three, and the peaks name snow, which is how
+       * the treeline gets a ragged edge instead of a contour line.
+       */
       if (kind === KIND.FIELD && smoothNoise(x, z, 6, 601) > (near ? 0.62 : 0.74)) {
-        model.surface[j] = hash(x, z, 71) < 0.4 ? 'podzol'
-          : hash(x, z, 73) < 0.5 ? 'coarse_dirt' : 'moss_block'
+        const mix = LITTER[biome] ?? LITTER[BIOME.BIRCH]
+        model.surface[j] = mix[Math.floor(hash(x, z, 71) * mix.length)]
         s.set(x, base - 1, z, model.surface[j])
+      }
+
+      /*
+       * A BOULDER, and it is the only ground cover that is not made of wood.
+       * The windswept hills and the peaks have almost no trees by design --
+       * the wind is the reason there are none -- and a biome whose ground
+       * cover is "bushes and fallen logs" with the bushes and logs turned off
+       * is bare ground. Two or three stone blocks in a heap is what is
+       * actually lying about up there.
+       */
+      if ((biome === BIOME.HILLS || biome === BIOME.PEAKS) && roll < (near ? 0.05 : 0.022)) {
+        const rock = hash(x, z, 77) < 0.5 ? 'cobblestone'
+          : hash(x, z, 79) < 0.5 ? 'stone' : 'andesite'
+        s.set(x, base, z, rock)
+        if (hash(x, z, 83) < 0.35 && onMap(x + 1, z) && model.kind[at(x + 1, z)] === KIND.FIELD) {
+          s.set(x + 1, model.h[at(x + 1, z)], z, rock)
+        }
+        continue
+      }
+
+      /* Bamboo shoots: one or two blocks of stalk on their own, away from
+       * the stands. Undergrowth in a bamboo jungle is more bamboo. */
+      if (biome === BIOME.BAMBOO && roll < (near ? 0.09 : 0.05)) {
+        s.pillar(x, z, base, base + (hash(x, z, 89) < 0.5 ? 1 : 2), 'bamboo_block')
+        continue
       }
 
       if (roll < (near ? 0.055 : 0.02)) {
