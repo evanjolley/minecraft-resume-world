@@ -1237,6 +1237,55 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
 
 ## Also worth building
 
+- **Where the corpus lives, and getting his own writing out of the loop.**
+  Evan's ask, 2026-09-17: *"i dont want to store my own words in a public
+  github. Id rather have it distilled down to the facts, maybe vector, maybe rag
+  for the agent, but the context its pulling is after its been 'downloaded' by
+  ai. Dont want my writing stored. Or just have none of it stored in github and
+  all an external service."*
+
+  **First, what is already true, because it is better than he thinks.**
+  `corpus/` has **never been committed** — verified across the whole history,
+  not just HEAD. His answers, the derived profile and
+  `worker/prompt.generated.js` are gitignored and local. The one place the rule
+  was broken is a tracked research doc, and that is `DECISIONS.md` #4.
+
+  **The reframe: distillation is the privacy control, not location.**
+  `corpus/profile.md` already opens *"written from Evan's 71 answers, NOT quoted
+  from them"* — his own instruction when it was built. The only artefact holding
+  his actual sentences is `corpus/answers.json`. So what he is describing is
+  **dump → distil → store only the distillate**, with the raw text never leaving
+  his machine. That is independent of where the distillate ends up, and it is
+  most of the ask.
+
+  **Recommended: move the distillate to Cloudflare KV or D1.** The Worker is
+  already on Cloudflare, so no new vendor, and it costs approximately nothing at
+  this size. It gives him literally "none of it in github, all in an external
+  service." The second benefit will matter more day to day: **updating a fact
+  stops requiring a code deploy.** Today `scripts/build-prompt.mjs` compiles the
+  corpus into a bundle, so changing one sentence means rebuilding and
+  redeploying the Worker — and he is about to iterate on this heavily.
+
+  It also interacts with a known snag: the CI `publish` job runs strict
+  `npm run prompt`, which dies without `corpus/`, so CI cannot deploy today
+  (`docs/DEPLOYMENT.md` sets out three options). **A store dissolves that rather
+  than working around it** — the deploy stops needing the corpus at all.
+
+  **REJECTED FOR NOW: vector search and RAG.** The corpus is a few thousand
+  tokens. `lookupCorpus` does word-overlap retrieval with label words scored
+  double and it demonstrably works. Embeddings solve retrieval over a corpus too
+  large to scan, which this is not until the dumps are perhaps ten times bigger,
+  and would add an embedding step, a second service and a cost line to search
+  something that fits in one prompt. **The valuable half of the RAG idea is
+  already built**: facts sit behind a lookup tool rather than in the resident
+  prompt, so growth is free until used. That was the expensive decision and it
+  is made. Revisit when a lookup starts missing obvious hits — a symptom worth
+  waiting for rather than predicting.
+
+  **Also whenever this is touched:** `answers.json` is the only verbatim Evan in
+  existence. Once a dump is distilled, the raw input should be deleted or filed
+  off the machine deliberately, not left beside the distillate by habit.
+
 - **Importing real Minecraft builds.** Build in creative with WorldEdit,
   export a litematic, map block ids, paint onto the island. The authoring
   story for all the content above, and materially less speculative than it was:
