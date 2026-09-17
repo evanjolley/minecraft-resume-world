@@ -438,9 +438,25 @@ test.describe('they are findable', () => {
     await page.evaluate(() => window.game.inventoryScreen.setOpen(false))
     await setHotbar(page, 'splash_potion_poison')
     /*
-     * Thrown straight down, which is the only aim that is guaranteed to hit
-     * something within a frame or two wherever the player happens to be
-     * standing. Twenty degrees of lift on top of straight down is still down.
+     * THROWN FROM THE AIR, LOOKING DOWN, and both halves of that are the
+     * picture rather than the physics.
+     *
+     * Standing on the ground and throwing straight down works and photographs
+     * badly: the bottle hits within two ticks, so the only frame it exists in
+     * has it a hand's width from the lens, filling a third of the screen.
+     * Throwing shallowly from the ground photographs worse -- twenty degrees
+     * of lift clears the terrain entirely and the potion flies out of frame
+     * until MAX_FLIGHT_SECONDS.
+     *
+     * Twenty-five blocks up with a steep downward aim gives several ticks of
+     * flight with the ground behind it -- and at that range the bottle is
+     * four pixels across and you cannot see it either. A thrown potion is
+     * 0.25 blocks wide and moves at ten blocks a second; there is no distance
+     * at which a still frame flatters it, which is why the assertion below is
+     * on the MESH's texture rather than on what the picture looks like.
+     *
+     * So: close. The frame two ticks after the throw, from the ground, where
+     * the bottle is unmistakably a bottle.
      */
     await page.evaluate(() => { window.noa.camera.pitch = Math.PI / 2 })
     const inFlight = await page.evaluate(() => {
@@ -449,17 +465,26 @@ test.describe('they are findable', () => {
     })
     expect(inFlight).toBe(1)
     await waitTicks(page, 2)
+    // The sprite in the air is the SPLASH bottle of the potion thrown, not a
+    // generic projectile -- assert it before photographing it.
+    expect(await page.evaluate(() => {
+      const m = window.noa.rendering.getScene()
+        .meshes.find(x => x.name === 'splash-splash_potion_poison')
+      return m?.material?.diffuseTexture?.name ?? null
+    })).toBe('/textures/item/splash_potion_poison.png')
     await shot(page, 'potions-splash-thrown')
     // ...and it has to actually land, rather than be a sprite that flies off.
-    await waitTicks(page, 20)
+    await waitTicks(page, 30)
     const landed = await page.evaluate(() => ({
       flying: window.game.potions.flying.length,
       last: window.game.potions.splashed.at(-1),
     }))
     expect(landed.flying).toBe(0)
-    expect(landed.last.hits.length).toBeGreaterThan(0)
-    // Poison's colour, from effects.js, is what the break is tinted with.
+    // Poison's colour, from effects.js, is what the break is tinted with --
+    // vanilla sends exactly this to the client as levelEvent 2002's data.
     expect(landed.last.color).toBe(0x87A363)
+    // Broken at the thrower's own feet, so the thrower is inside the splash.
+    expect(landed.last.hits.length).toBeGreaterThan(0)
     await shot(page, 'potions-splash-landed')
     await clearAll(page)
     await useGamemode(page, 'survival')

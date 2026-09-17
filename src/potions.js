@@ -620,8 +620,18 @@ export function installPotions(noa, {
     import('@babylonjs/core/Meshes/Builders/planeBuilder'),
     import('@babylonjs/core/Materials/Textures/texture'),
     import('@babylonjs/core/Maths/math.color'),
-  ]).then(([plane, tex, color]) => {
-    gfx = { CreatePlane: plane.CreatePlane, Texture: tex.Texture, Color3: color.Color3 }
+    /*
+     * These two are local and would resolve under node on their own --
+     * playerModel.js would not, because it reaches Babylon statically, and it
+     * is in this list for the same reason the three above are.
+     */
+    import('./entityLight.js'),
+    import('./playerModel.js'),
+  ]).then(([plane, tex, color, light, model]) => {
+    gfx = {
+      CreatePlane: plane.CreatePlane, Texture: tex.Texture, Color3: color.Color3,
+      trackEntityLight: light.trackEntityLight, keepMaterialLive: model.keepMaterialLive,
+    }
   })
 
   /* Resolved lazily, INSIDE the closure, for the cycle reason at the top of
@@ -771,6 +781,19 @@ export function installPotions(noa, {
     m.material.useAlphaFromDiffuseTexture = true
     m.material.specularColor = new gfx.Color3(0, 0, 0)
     m.material.backFaceCulling = false
+    /*
+     * WITHOUT THESE THE BOTTLE IS BLACK, and it took a screenshot to see it:
+     * a standard material in this scene has no ambient of its own, so a mesh
+     * that is never handed a light level renders as a dark blob rather than
+     * as a potion. itemEntity.js hit exactly this with dropped ingots and its
+     * note explains the compromise -- the probe is the PLAYER's position, not
+     * the sprite's, because a shared material carries one brightness. For a
+     * thrown potion that is even less wrong than it is for a dropped item:
+     * the thing is a few blocks from the person who threw it and in the air
+     * for under a second.
+     */
+    gfx.trackEntityLight(m.material, () => noa.ents.getPosition(noa.playerEntity))
+    gfx.keepMaterialLive(m.material)
     m.isPickable = false
     m.alwaysSelectAsActiveMesh = true
     m.setEnabled(false)
