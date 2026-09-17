@@ -16,6 +16,29 @@ export const GL_FLAGS = process.env.NO_GL_FLAGS ? [] : [
   '--use-gl=angle',
   '--use-angle=swiftshader',
   '--enable-unsafe-swiftshader',
+  /*
+   * --mute-audio, because the owner could hear the suite.
+   *
+   * The comment on helpers/audio.js says headless Chromium has no audio
+   * device and therefore nothing can listen -- true of a plain headless run,
+   * and NOT true of every way this suite gets launched. A headed run (which
+   * agents reach for whenever pointer lock or a real user gesture matters)
+   * has a very real audio device, and it is the machine the owner is playing
+   * on. Thirty specs firing footsteps and block breaks out of a background
+   * browser is the result.
+   *
+   * SAFE FOR THE SOUND SPECS, and that is why it is a flag rather than a
+   * change to sounds.js: helpers/audio.js observes the graph being BUILT --
+   * it patches AudioBufferSourceNode's start() and connect() and hashes the
+   * decoded PCM -- so it never reads output level. Muting the device leaves
+   * every one of those assertions looking at exactly what it looked at
+   * before.
+   *
+   * Rejected: muting in sounds.js behind an automation check. That makes the
+   * thing under test behave differently when tested, which is the one change
+   * a sound suite must never make.
+   */
+  '--mute-audio',
 ]
 
 /*
