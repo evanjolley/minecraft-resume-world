@@ -2,6 +2,7 @@ import {
   FACINGS, SHAPE_BOXES, SHAPE_ROTATION, PASS_THROUGH_SHAPES, buildShapeMesh,
   createMaterialCache, facingFromNormal, installNonCubeCollision,
   installPlacementOrientation, installThinInstanceUploadFix, SIGN_FACINGS,
+  SIGN_SEGMENTS, segmentFromHeading, segmentNormal, signShapeKey,
 } from './blockMeshes.js'
 import { EMISSION } from './blockLight.js'
 
@@ -1075,7 +1076,7 @@ NON_CUBE_VARIANTS.set(TORCH_ID, (_facing, _half, normal) => {
 /* ------------------------------------------------------------------ *
  * Signs, which are the first blocks in this world that can SAY something.
  *
- * Eight ids: four standing facings and four wall facings, all oak. The
+ * Twenty ids: sixteen standing rotations and four wall facings, all oak. The
  * geometry and its vanilla provenance are in blockMeshes.js; what belongs
  * here is which of the torch's three new capabilities a sign reuses, and the
  * answer turned out to be two of three rather than three of three:
@@ -1112,16 +1113,38 @@ NON_CUBE_VARIANTS.set(TORCH_ID, (_facing, _half, normal) => {
  * plank texture by the same slice rule every slab and stair already uses. It
  * costs the atlas nothing: shape blocks pass no material to noa.
  *
- * FOUR FACINGS, NOT SIXTEEN, accepted on the terms docs/FUTURE.md item 1 set
- * out. blockMeshes.js has the argument.
+ * SIXTEEN ROTATIONS, which this section said was four until Evan reported
+ * "only bidrection, should face based on the angle I place them at".
+ * blockMeshes.js has the argument and the reason the old one dissolved; what
+ * belongs here is that the sixteen are ids, and ids are what a segment index
+ * turns into. Segment s is SIGN_ID + s, so the arithmetic that was a Map
+ * lookup by compass name is now addition.
  *
  * APPENDED LAST, after the torches. Ids are save data.
  * ------------------------------------------------------------------ */
 const SIGN_ID = 660
 
-/** facing -> block id, for both families. Built once, read by everything. */
-const STANDING_SIGN = new Map(SIGN_FACINGS.map((f, i) => [f, SIGN_ID + i]))
-const WALL_SIGN = new Map(SIGN_FACINGS.map((f, i) => [f, SIGN_ID + 4 + i]))
+/*
+ * THE IDS MOVED, and the note above says ids are save data, so this is the
+ * one thing here that needs defending rather than explaining.
+ *
+ * Nothing in this world persists a voxel by id. Terrain ships as a patch with
+ * a NAME-keyed palette (docs/TERRAIN.md), builds stamp by block key, and no
+ * placed block survives a reload -- there is no save file to invalidate. The
+ * rule the note states is still the right rule for the day one exists; what
+ * it is protecting does not exist yet, and the alternative was twelve new
+ * rotations appended at 668 with the four originals stranded at 660..663 in a
+ * different order from the other twelve. That is a permanent lie about what a
+ * segment index means, traded for a compatibility nobody can spend.
+ *
+ * Wall signs therefore move from 664..667 to 676..679. test/76-signs.spec.js
+ * hardcodes both and is meant to fail loudly when they change, which it did.
+ */
+
+/** segment 0..15 -> block id. Addition, but named so the seam is findable. */
+const STANDING_SIGN = (segment) => SIGN_ID + segment
+/** facing -> block id, for the four wall variants that sit after them. */
+const WALL_SIGN = new Map(SIGN_FACINGS.map((f, i) => [f, SIGN_ID + SIGN_SEGMENTS + i]))
 
 /*
  * The canonical is the NORTH standing sign, and it keeps the bare key
@@ -1131,14 +1154,16 @@ const WALL_SIGN = new Map(SIGN_FACINGS.map((f, i) => [f, SIGN_ID + 4 + i]))
  * block that cannot be placed and `oak_sign_north` the thing recipes name.
  */
 const SIGNS = [
-  ...SIGN_FACINGS.map((facing, i) => ({
-    id: STANDING_SIGN.get(facing), key: i === 0 ? 'oak_sign' : `oak_sign_${facing}`,
-    name: 'Oak Sign', all: 'oak_planks', shape: `sign_${facing}`,
+  ...Array.from({ length: SIGN_SEGMENTS }, (_, s) => ({
+    id: STANDING_SIGN(s), key: s === 0 ? 'oak_sign' : `oak_sign_r${s}`,
+    name: 'Oak Sign', all: 'oak_planks', shape: signShapeKey(s),
     // Vanilla's strength(1.0), and axe-preferred like every other wood.
     hardness: T(1, false),
-    // Only the canonical is ever an ITEM -- the other three drop it -- so the
-    // sprite flags go on the one entry that reaches items.js's BLOCK_ITEMS.
-    ...(i === 0 ? { flatItem: true, flatFrom: 'item' } : { drops: SIGN_ID }),
+    // Only the canonical is ever an ITEM -- the other fifteen drop it -- so
+    // the sprite flags go on the one entry that reaches items.js's
+    // BLOCK_ITEMS. Segment 0 is canonical because vanilla's default state is
+    // ROTATION=0; it is the board facing south, which is this world's +z.
+    ...(s === 0 ? { flatItem: true, flatFrom: 'item' } : { drops: SIGN_ID }),
   })),
   ...SIGN_FACINGS.map((facing) => ({
     id: WALL_SIGN.get(facing), key: `oak_wall_sign_${facing}`,
@@ -1165,19 +1190,23 @@ const SIGNS = [
  * Both are read off FACINGS by negating the vector, so the east/west flip in
  * this world is applied once rather than remembered twice.
  */
-const OPPOSITE = new Map(SIGN_FACINGS.map((facing) => {
-  const d = FACINGS[facing]
-  const back = SIGN_FACINGS.find((o) => {
-    const v = FACINGS[o]
-    return v[0] === -d[0] && v[2] === -d[2]
-  })
-  return [facing, back]
-}))
-
-NON_CUBE_VARIANTS.set(SIGN_ID, (facing, _half, normal) => {
+NON_CUBE_VARIANTS.set(SIGN_ID, (_facing, _half, normal, heading) => {
   const wall = facingFromNormal(normal)
   if (wall) return WALL_SIGN.get(wall)
-  return STANDING_SIGN.get(OPPOSITE.get(facing))
+  /*
+   * `heading` rather than `facing`, and that is Evan's fourth report in one
+   * argument. `facing` has already been rounded to a compass name, so a sign
+   * planted while looking north-east would square up to north whatever this
+   * line did with it. The half turn that used to be the OPPOSITE map lives
+   * inside segmentFromHeading now, which is also where vanilla puts it
+   * (`convertToSegment(getRotation() + 180)`).
+   *
+   * A placement with no heading at all -- /setblock, /fill -- still reaches
+   * here, because installPlacementOrientation passes the camera's heading
+   * whether or not there was a click. Sixteen-way /fill is as odd as
+   * four-way /fill was and no odder; the note on that seam covers it.
+   */
+  return STANDING_SIGN(segmentFromHeading(heading))
 })
 
 /*
@@ -1185,8 +1214,8 @@ NON_CUBE_VARIANTS.set(SIGN_ID, (facing, _half, normal) => {
  * it. Identical in shape to the torch's rule, which is why installAttachment
  * took a sign without a line changing: one neighbour, at a fixed offset.
  */
+for (let s = 0; s < SIGN_SEGMENTS; s++) BLOCK_SUPPORT.set(STANDING_SIGN(s), [0, -1, 0])
 for (const facing of SIGN_FACINGS) {
-  BLOCK_SUPPORT.set(STANDING_SIGN.get(facing), [0, -1, 0])
   BLOCK_SUPPORT.set(WALL_SIGN.get(facing), FACINGS[facing].map(v => (v ? -v : 0)))
 }
 
@@ -1194,12 +1223,26 @@ for (const facing of SIGN_FACINGS) {
  * Is this id a sign? Exported for signText.js, which has to know when a
  * coordinate has stopped being one so it can take the text off it.
  */
-export const isSignId = (id) => id >= SIGN_ID && id < SIGN_ID + 8
-/** facing -> the direction the board faces, for the text renderer. */
-export const signFacing = (id) =>
-  isSignId(id) ? SIGN_FACINGS[(id - SIGN_ID) % 4] : null
+export const isSignId = (id) => id >= SIGN_ID && id < SIGN_ID + SIGN_SEGMENTS + 4
+/**
+ * The UNIT VECTOR the board faces, for the text renderer.
+ *
+ * A vector rather than a compass name, which is the change sixteen rotations
+ * forces on every reader: twelve of the sixteen have no name. signText.js
+ * only ever used the name to look the vector up, so this is the same fact
+ * handed over one step later -- and its mirror derivation (`right = (-n.z, 0,
+ * n.x)`) was already written against a vector rather than a name, which is
+ * why that file needed no new reasoning to take twelve more angles.
+ */
+export const signNormal = (id) => {
+  if (!isSignId(id)) return null
+  return isWallSign(id)
+    ? FACINGS[SIGN_FACINGS[id - SIGN_ID - SIGN_SEGMENTS]]
+    : segmentNormal(id - SIGN_ID)
+}
 /** A wall sign hangs its board off the wall; a standing one is centred. */
-export const isWallSign = (id) => id >= SIGN_ID + 4 && id < SIGN_ID + 8
+export const isWallSign = (id) =>
+  id >= SIGN_ID + SIGN_SEGMENTS && id < SIGN_ID + SIGN_SEGMENTS + 4
 
 export const BLOCK_TYPES = normaliseHardness(
   [...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER, ...FLUID_FLOW_BLOCKS, ...TORCHES,

@@ -212,10 +212,11 @@ on effort.
    left of it is small enough to read in a paragraph, so the argument has
    been replaced by the outcome and the remainder.
 
-   **What shipped.** Eight block ids (660–667): a standing oak sign in four
-   facings and an oak wall sign in four, craftable from six planks and a
-   stick, placeable on the ground or on a wall, mineable, and dropping one
-   `oak_sign` whichever of the eight you break. The geometry is transcribed
+   **What shipped.** Twenty block ids (660–679): a standing oak sign in
+   **sixteen rotations** and an oak wall sign in four facings, craftable from
+   six planks and a stick, placeable on the ground or on a wall, mineable,
+   and dropping one `oak_sign` whichever of the twenty you break. It was
+   eight ids in four facings until Evan played with it; see below. The geometry is transcribed
    from 1.21 source rather than remembered — `models/block/oak_sign.json` is
    a decoy carrying nothing but a particle texture, and every visible pixel
    comes from `SignRenderer`, read out of `Yeet-Masta/MCP-1.21` and
@@ -224,12 +225,32 @@ on effort.
    and half a block tall on a 4/3-pixel post, poking 4/3 of a pixel out of
    the top of its own cell exactly as vanilla's does.
 
-   **Four rotations, not sixteen**, as this entry allowed. The reason turned
-   out to be better than "`headingToFacing` only has four": all four shapes
-   stay axis-aligned, so none needs `SHAPE_ROTATION` — and a rotated shape is
-   the one thing in `blockMeshes.js` whose collision and hitbox must be
-   declared separately from its mesh. Sixteen rotations is twelve shapes
-   drawn one way and aimed at another.
+   **Sixteen rotations, and this entry used to argue for four.** The old
+   argument was good: all four facings stay axis-aligned, so none needs
+   `SHAPE_ROTATION` — and a rotated shape is the one thing in
+   `blockMeshes.js` whose collision and hitbox must be declared separately
+   from its mesh. Evan's report was "only bidrection, should face based on
+   the angle I place them at", and the cost the old note had already named
+   out loud (a sign planted facing north-east squares up to north) is exactly
+   what he was looking at.
+
+   What dissolved the argument was vanilla's own answer rather than a harder
+   version of the work: `SignBlock.SHAPE` is **one** `Block.box(4,0,4,12,16,12)`
+   shared by all sixteen states, with no `Shapes.rotateHorizontal` around it.
+   You aim at the column of air the sign stands in, so the outline does not
+   rotate and there is nothing to declare that four rotations were not
+   declaring already. The collision half is empty (`.noCollission()`), so
+   there is no collider to disagree with a mesh either. Placement takes the
+   raw heading through a new fourth argument to `installPlacementOrientation`'s
+   resolver, quantised by `Math.round(deg * 16/360) & 15` on the yaw turned
+   half way round — which is `RotationSegment.convertToSegment(rot + 180)`,
+   verified against `sis1cat/minecraftsodium-1.21.8`.
+
+   One side effect worth knowing because it changes pixels: the mesher cuts a
+   face's UVs from its box, so the four old facings sampled the plank texture
+   along whichever axis each board spanned. All sixteen are now one base shape
+   turned sixteen ways, so every sign shows the same grain — which is what
+   vanilla does and what four facings only looked like they did.
 
    **The text budget this entry flagged has been counted, and the answer was
    not the obvious one.** A canvas per sign at `nametag.js`'s 8x supersample

@@ -626,7 +626,7 @@ installAttachment(noa, BLOCK_SUPPORT, (x, y, z) => {
  * And signs say something, which is the other half of blockMeshes.js's sign.
  *
  * LAST of the three setBlock wraps on purpose. installPlacementOrientation
- * turns a canonical `oak_sign` into one of eight facing variants and
+ * turns a canonical `oak_sign` into one of twenty rotation/facing variants and
  * installAttachment can take it straight back off a wall that is not there;
  * only after both have run is the id at a coordinate the id that is really
  * going to be there, and the id is what tells the text which way to face.

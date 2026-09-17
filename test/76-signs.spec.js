@@ -34,8 +34,22 @@ import { shot } from './helpers/shots.js'
  * Block ids duplicated rather than imported, the same rule the rest of the
  * suite follows: a renumber should fail here loudly.
  */
-const SIGN = { north: 660, south: 661, east: 662, west: 663 }
-const WALL_SIGN = { north: 664, south: 665, east: 666, west: 667 }
+/*
+ * SIXTEEN STANDING IDS NOW, one per 22.5-degree segment, and the four with
+ * compass names are the ones this file already had. Segment s faces along
+ * noa's forward at s * 22.5 degrees: 0 is +z (south), 4 is +x (west here),
+ * 8 is -z (north), 12 is -x (east). Wall signs follow the sixteen.
+ *
+ * These moved -- standing north was 660 and is 668, and the wall four were
+ * 664..667 -- which is exactly what a duplicated id table is FOR. It failed
+ * loudly. See test/82-sign-rotation.spec.js for the sixteen themselves.
+ */
+const SIGN_BASE = 660
+const SEGMENT = { south: 0, west: 4, north: 8, east: 12 }
+const SIGN = Object.fromEntries(
+  Object.entries(SEGMENT).map(([name, s]) => [name, SIGN_BASE + s]))
+const WALL_SIGN = Object.fromEntries(
+  ['north', 'south', 'east', 'west'].map((f, i) => [f, SIGN_BASE + 16 + i]))
 
 /** Mid-air, over the spawn column, for the reasons 66-torch.spec.js gives. */
 const PY = 200
@@ -252,7 +266,10 @@ test.describe('the sign block', () => {
     await page.evaluate(([id, x, y, z]) => window.noa.setBlock(id, x, y, z),
       [SIGN.north, CX + 2, PY + 1, CZ + 2])
     // Placement resolves through the canonical id, which is what a hotbar
-    // click writes -- so write THAT and see which of the eight lands.
+    // click writes -- so write THAT and see which of the twenty lands. The
+    // canonical is SEGMENT 0 now rather than the north-facing variant, which
+    // is vanilla's default ROTATION=0 and is why the id below is SIGN.south
+    // while the expectation below it is still north.
     await page.evaluate(([id, x, y, z]) => {
       window.noa.targetedBlock = { normal: [0, 1, 0], position: [x, y - 1, z] }
       window.noa._pickResult.position[1] = y
@@ -314,6 +331,24 @@ test.describe('sign text', () => {
       const facings = {
         north: [0, 0, -1], south: [0, 0, 1], west: [1, 0, 0], east: [-1, 0, 0],
       }
+      /*
+       * THE HEADING IS NOT DECORATION HERE, and it caught this test out when
+       * signs went to sixteen rotations. `SIGN.south` is SEGMENT 0, which is
+       * the CANONICAL id -- and installPlacementOrientation rewrites the
+       * canonical id of every oriented family on its way through setBlock, by
+       * the camera's heading. So writing "the south-facing sign" while the
+       * camera pointed somewhere else wrote a different rotation and the test
+       * read a mirrored board. The other three ids are variants and pass
+       * through untouched, which is exactly why only one of the four failed.
+       *
+       * Looking the right way for each is also the more honest test: a player
+       * places a sign by facing it, and all four now go through the resolver
+       * instead of one of them being special.
+       */
+      const headingFacing = {
+        north: HEADING.southPlusZ, south: HEADING.northMinusZ,
+        west: HEADING.eastMinusX, east: HEADING.westPlusX,
+      }
       let checked = 0
       for (const [name, n] of Object.entries(facings)) {
         /*
@@ -325,7 +360,10 @@ test.describe('sign text', () => {
          */
         const x = CX + 2, y = PY + 1, z = CZ - 2 + checked
         await setBlock(page, ID.stone, x, y - 1, z)
+        await look(page, { heading: headingFacing[name], pitch: 0.4 })
         await setBlock(page, SIGN[name], x, y, z)
+        expect(await getBlock(page, x, y, z), `${name} is the id it was given`)
+          .toBe(SIGN[name])
         await setText(page, x, y, z, ['AB'])
         await waitTicks(page, 2)
         const first = await page.evaluate(([a, b, c]) => {

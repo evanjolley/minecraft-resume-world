@@ -3,8 +3,8 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
-import { FACINGS, SIGN_GEOMETRY } from './blockMeshes.js'
-import { isSignId, isWallSign, signFacing } from './blocks.js'
+import { SIGN_GEOMETRY } from './blockMeshes.js'
+import { isSignId, isWallSign, signNormal } from './blocks.js'
 
 /*
  * SIGN TEXT, and the whole file is an answer to one constraint.
@@ -162,8 +162,17 @@ function drawGlyphAtlas(texture) {
  * formula gives right = (1, 0, 0) -- text runs east, which is where the
  * reader's right hand is. The other three fall out of the same line.
  *
- * And per docs/builds/README.md, a derivation is not a check. All four
- * facings are screenshotted and read in test/76-signs.spec.js.
+ * AND THE OTHER TWELVE, since blocks.js grew sixteen standing rotations. This
+ * line needed no change to take them, which is the payoff of having written
+ * it as a vector rotation instead of a table of four names: it is a quarter
+ * turn about y, and a quarter turn about y is a quarter turn about y at 22.5
+ * degrees as much as at 90. What DOES change is that `normal` is no longer
+ * one of four axis vectors, so nothing downstream may ask "which axis is
+ * this" -- see textAnchor.
+ *
+ * And per docs/builds/README.md, a derivation is not a check. Four compass
+ * facings and four off-axis rotations are screenshotted and read in
+ * test/76-signs.spec.js and test/82-sign-rotation.spec.js.
  * ------------------------------------------------------------------ */
 const readingDirection = (normal) => [-normal[2], 0, normal[0]]
 
@@ -172,23 +181,39 @@ const readingDirection = (normal) => [-normal[2], 0, normal[0]]
  * lines, on the face of the board.
  */
 function textAnchor(id, x, y, z) {
-  const normal = FACINGS[signFacing(id)]
+  const normal = signNormal(id)
   const G = SIGN_GEOMETRY
-  // The axis the board faces along, and which way along it.
-  const a = normal[0] ? 0 : 2
-  const s = normal[a]
-  const base = [x, y, z]
   const origin = [x + 0.5, 0, z + 0.5]
 
   if (isWallSign(id)) {
-    // The wall plane in block-local coordinates, then outward to the board's
-    // face and the hair's breadth past it. Same construction as the wall
-    // torch's, for the same reason: derive from the vector, never the name.
+    /*
+     * A WALL sign is still one of four, and it has to be: it hangs on a block
+     * face, and a block has four vertical faces. So this branch keeps the
+     * axis arithmetic -- the wall plane in block-local coordinates, then
+     * outward to the board's face and the hair's breadth past it. Same
+     * construction as the wall torch's, and the same reason: derive from the
+     * vector, never the name.
+     */
+    const a = normal[0] ? 0 : 2
+    const s = normal[a]
     const wall = (1 - s) / 2
-    origin[a] = base[a] + wall + s * (G.WALL_FRONT / 16 + TEXT_INSET)
+    origin[a] = [x, y, z][a] + wall + s * (G.WALL_FRONT / 16 + TEXT_INSET)
     origin[1] = y + 0.5 - WALL_PIVOT_DROP + TEXT_OFFSET_Y
   } else {
-    origin[a] = base[a] + 0.5 + s * ((G.BOARD_THICKNESS / 2) / 16 + TEXT_INSET)
+    /*
+     * A STANDING sign is one of sixteen, twelve of which are off-axis, so the
+     * step out of the board is along the NORMAL rather than along an axis.
+     * `normal[a] ? ...` was the old form and it is now a bug waiting to
+     * happen: at 22.5 degrees both components are non-zero and picking one of
+     * them would put the text on the diagonal of the board it belongs to.
+     *
+     * For the four compass segments this is arithmetically identical to what
+     * it replaced -- one component is exactly 0 and the other exactly +-1 --
+     * which is why the existing four-facing screenshots still read.
+     */
+    const out = (G.BOARD_THICKNESS / 2) / 16 + TEXT_INSET
+    origin[0] = x + 0.5 + normal[0] * out
+    origin[2] = z + 0.5 + normal[2] * out
     origin[1] = y + 0.5 + TEXT_OFFSET_Y
   }
   return { origin, right: readingDirection(normal), normal }

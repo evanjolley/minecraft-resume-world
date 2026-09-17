@@ -310,25 +310,72 @@ for (const facing of Object.keys(FACINGS)) {
  * Vanilla does this; a sign with a block directly above it visibly clips
  * into it. Clamping to 16 would have been the tidy-looking wrong answer.
  *
- * SIXTEEN ROTATIONS ARE NOT REPRODUCED -- there are four. Vanilla's standing
- * sign stores `rotation` 0..15 and `RotationSegment` turns the model by
- * 22.5-degree steps; this world's placement seam offers `headingToFacing`,
- * which answers with one of four compass names, and docs/FUTURE.md item 1
- * accepts four explicitly. The cost is real and worth naming: a sign placed
- * while facing north-east squares up to north instead of splitting the
- * difference. What it buys is that all four standing shapes stay
- * AXIS-ALIGNED, so none of them needs SHAPE_ROTATION -- and a rotated shape
- * is the one thing in this file whose collision and hitbox have to be
- * declared separately, because buildShapeMesh turns finished vertices rather
- * than boxes. Sixteen rotations means twelve shapes that are drawn one way
- * and aimed at another. Four is not a shortcut around the hard case; it is
- * the whole of the easy case.
+ * SIXTEEN ROTATIONS, and this section used to say four.
  *
- * FACING NAMES THE DIRECTION THE BOARD FACES -- the way a reader stands.
- * Same convention as the wall torch above (the direction it points, away
- * from whatever holds it) and it is derived from the FACINGS vector rather
- * than from the name, because this world's east is -x and a table typed out
- * per name would be mirrored the moment anybody trusted it.
+ * Evan's fourth report on signs was "only bidrection, should face based on
+ * the angle I place them at", and he is describing exactly what the old note
+ * here predicted out loud: a sign planted while facing north-east squares up
+ * to north instead of splitting the difference.
+ *
+ * The old note declined sixteen for a reason that was good and turned out to
+ * be answerable. It said a rotated shape "is the one thing in this file whose
+ * collision and hitbox have to be declared separately, because buildShapeMesh
+ * turns finished vertices rather than boxes", and that sixteen rotations
+ * therefore meant twelve shapes drawn one way and aimed at another.
+ *
+ * WHAT DISSOLVES IT IS VANILLA'S OWN ANSWER, which is that a standing sign's
+ * outline does not rotate AT ALL:
+ *
+ *     SignBlock.java     SHAPE = Block.box(4, 0, 4, 12, 16, 12)
+ *
+ * One constant, no `Shapes.rotateHorizontal`, shared by all sixteen states.
+ * You aim at the COLUMN OF AIR the sign stands in, which is the note under
+ * TARGET_BOXES below and is the only way a sign across a path is clickable.
+ * So the "declared separately" cost the old note was pricing is a cost this
+ * family was already paying with four rotations -- TARGET_BOXES already had
+ * a sign entry, and it is the same box for sixteen as it was for four.
+ *
+ * And the collision half is empty: signs are `.noCollission()` and live in
+ * PASS_THROUGH_SHAPES, so there is no collider to disagree with a mesh. The
+ * hard case is not being solved here. It genuinely is not present.
+ *
+ * VANILLA'S NUMBERS, verified from `sis1cat/minecraftsodium-1.21.8` rather
+ * than remembered (and NOT from the 1.8.9 mirror, which has produced two
+ * wrong corrections in this repo):
+ *
+ *   StandingSignBlock.getStateForPlacement
+ *     ROTATION = RotationSegment.convertToSegment(ctx.getRotation() + 180)
+ *   SegmentedAnglePrecision(4)   -> 16 segments, mask 15
+ *     fromDegrees(f) = Math.round(f * 16/360) & 15
+ *   AbstractSignRenderer.render
+ *     translateSign(pose, -signBlock.getYRotationDegrees(state), state)
+ *
+ * The `+ 180` is the same fact blocks.js's OPPOSITE map encoded: a sign you
+ * have just planted faces BACK at you. Sixteen segments is that idea at four
+ * times the resolution, so the negation moves from a name lookup to an angle.
+ *
+ * ONE BASE SHAPE, TURNED SIXTEEN WAYS, rather than sixteen box lists. Four
+ * facings could be written as four axis-aligned box lists because four
+ * facings are axis-aligned; twelve of sixteen are not, and a box list cannot
+ * hold a rotation -- that is what axis-aligned means. So segment 0 is built
+ * as boxes and the other fifteen are the same vertices turned about the
+ * block's centre by 22.5-degree steps, which is what the wall torch above
+ * already does for its tilt.
+ *
+ * A SIDE EFFECT WORTH KNOWING, because it changes pixels: this mesher cuts a
+ * face's UVs from its BOX, so the four old facings sampled the plank texture
+ * along whichever axis each board spanned -- subtly different wood on a north
+ * sign and an east one. All sixteen now share segment 0's cut, so every sign
+ * in the world shows the same grain, which is what vanilla does and what the
+ * old arrangement only looked like it did.
+ *
+ * SEGMENT NAMES THE DIRECTION THE BOARD FACES, as an angle rather than a
+ * name: segment s faces along noa's forward at heading s * 22.5 degrees. The
+ * four that have compass names still land on them -- 0 is south, 4 is west,
+ * 8 is north, 12 is east -- and those are this world's names, not vanilla's,
+ * because east is -x here. Deriving from the heading rather than from a typed
+ * table is the same discipline the FACINGS note above insists on, and at
+ * sixteen entries a typed table would be sixteen chances to mirror it.
  * ------------------------------------------------------------------ */
 
 /**
@@ -370,8 +417,13 @@ function signAxes(facing) {
 
 const px = (v) => v / 16
 
-function standingSignBoxes(facing) {
-  const { a, p } = signAxes(facing)
+/**
+ * Segment 0's boxes: the board facing +z, which is this world's south and is
+ * noa's forward at heading 0. Every other segment is these vertices turned.
+ */
+function standingSignBoxes() {
+  // a is the axis the board faces along (+z), p the one it spans (x).
+  const a = 2, p = 0
   const G = SIGN_GEOMETRY
   const board = [0, 0, 0, 0, 0, 0]
   const post = [0, 0, 0, 0, 0, 0]
@@ -404,11 +456,75 @@ function wallSignBoxes(facing) {
   return [box]
 }
 
-/** The four facings a sign can take, in the order blocks.js assigns ids. */
+/** The four facings a WALL sign can take, in the order blocks.js assigns ids. */
 export const SIGN_FACINGS = ['north', 'south', 'east', 'west']
 
+/** Vanilla's ROTATION_16, and the mask its arithmetic is done under. */
+export const SIGN_SEGMENTS = 16
+const SEGMENT_RADIANS = (Math.PI * 2) / SIGN_SEGMENTS
+const SEGMENT_DEGREES = 360 / SIGN_SEGMENTS
+
+/**
+ * The unit vector a segment's board faces, which is noa's forward at that
+ * segment's heading: forward(h) = (sin h, 0, cos h).
+ *
+ * Rounded to zero at 1e-12, because the four compass segments have to come
+ * out EXACTLY axis-aligned. Math.cos(Math.PI) is -1 but Math.sin(Math.PI) is
+ * 1.2e-16, and signText.js's wall-sign branch and every spec that compares a
+ * normal to FACINGS would be comparing against a number that is nearly but
+ * not quite zero.
+ */
+export function segmentNormal(segment) {
+  const h = segment * SEGMENT_RADIANS
+  const snap = (v) => (Math.abs(v) < 1e-12 ? 0 : v)
+  return [snap(Math.sin(h)), 0, snap(Math.cos(h))]
+}
+
+/**
+ * Which segment a sign planted by a player at this heading takes.
+ *
+ * Vanilla is `convertToSegment(getRotation() + 180)`, i.e. round the yaw
+ * turned half way round into sixteenths. The half turn is the "a sign faces
+ * back at you" rule, and it is applied here ONCE rather than being applied to
+ * an angle and then again to a name.
+ */
+export function segmentFromHeading(heading) {
+  return Math.round((heading + Math.PI) / SEGMENT_RADIANS) & (SIGN_SEGMENTS - 1)
+}
+
+/**
+ * Turning the sign is the LAST thing that happens to it, about the centre of
+ * its own cell, exactly as vanilla's `translate(0.5,0.5,0.5)` then
+ * `mulPose(YP.rotationDegrees(-getYRotationDegrees))` does.
+ *
+ * The sign of the angle is not a guess. rotateVertices about axis 1 moves
+ * (z, x) as (u, v), so a point at z = 1 goes to (z cos, x = sin) -- which is
+ * forward(deg) precisely. Segment s must face forward(s * 22.5), so the
+ * angle is +s * 22.5 and not -s * 22.5. The four compass segments are the
+ * check: segment 8 comes out at (0, 0, -1), which is north, and north is the
+ * facing a player looking south used to get from the OPPOSITE map.
+ */
+const signRotation = (segment) => ({
+  axis: 1, deg: segment * SEGMENT_DEGREES, origin: [0.5, 0, 0.5],
+})
+
+/** Shape keys. `sign_r<segment>` for standing, `sign_wall_<facing>` on a wall. */
+export const signShapeKey = (segment) => `sign_r${segment}`
+
+const SIGN_BASE_BOXES = standingSignBoxes()
+for (let s = 0; s < SIGN_SEGMENTS; s++) {
+  /*
+   * The SAME box list object for all sixteen, which is safe only because
+   * nothing downstream mutates it and is the point: sixteen copies would be
+   * sixteen places for the board to drift. The rotation is what differs, and
+   * segment 0 declares deg 0 rather than opting out, so every standing sign
+   * takes the identical code path and the TARGET_BOXES invariant below
+   * checks all sixteen instead of fifteen.
+   */
+  SHAPE_BOXES[signShapeKey(s)] = SIGN_BASE_BOXES
+  SHAPE_ROTATION[signShapeKey(s)] = signRotation(s)
+}
 for (const facing of SIGN_FACINGS) {
-  SHAPE_BOXES[`sign_${facing}`] = standingSignBoxes(facing)
   SHAPE_BOXES[`sign_wall_${facing}`] = wallSignBoxes(facing)
 }
 
@@ -794,8 +910,11 @@ export const PASS_THROUGH_SHAPES = new Set([
    * OAK_SIGN and OAK_WALL_SIGN rows), so a sign is walked through exactly
    * like a torch. Nothing in this file changed to accept them.
    */
-  ...['north', 'south', 'east', 'west'].flatMap(
-    (f) => [`sign_${f}`, `sign_wall_${f}`]),
+  ...SIGN_FACINGS.map((f) => `sign_wall_${f}`),
+  // Sixteen standing rotations, generated from the same constant the shapes
+  // are, so a seventeenth would be in this set without anyone remembering to
+  // add it -- which is the failure mode a hand-typed list of four had.
+  ...Array.from({ length: SIGN_SEGMENTS }, (_, s) => signShapeKey(s)),
 ])
 
 /** Minecraft's player step height: onto a slab, never onto a full block. */
@@ -1154,8 +1273,17 @@ for (const facing of Object.keys(FACINGS)) {
  * pixels deep against the board's one and a third. A sixth of a pixel of
  * slack in vanilla's own numbers, transcribed rather than tidied.
  */
+/*
+ * ONE BOX FOR ALL SIXTEEN, and that is vanilla rather than a simplification.
+ * `SignBlock.SHAPE` is a single constant with no `Shapes.rotateHorizontal`
+ * around it, so a sign turned 22.5 degrees is aimed at through the same
+ * axis-aligned column as an unturned one. This is the fact that made sixteen
+ * rotations affordable at all -- see the section head above.
+ */
+for (let s = 0; s < SIGN_SEGMENTS; s++) {
+  TARGET_BOXES[signShapeKey(s)] = [[4 / 16, 0, 4 / 16, 12 / 16, 1, 12 / 16]]
+}
 for (const facing of SIGN_FACINGS) {
-  TARGET_BOXES[`sign_${facing}`] = [[4 / 16, 0, 4 / 16, 12 / 16, 1, 12 / 16]]
   const { a, p, s, wall } = signAxes(facing)
   const lo = [0, 0, 0], hi = [0, 0, 0]
   lo[p] = 0; hi[p] = 1
@@ -1342,7 +1470,8 @@ function halfFromTarget(normal, hitY) {
 
 /**
  * @param {*} noa
- * @param {Map<number, (facing: string, half: string, normal: number[]) => number>} variantOf
+ * @param {Map<number, (facing: string, half: string, normal: number[],
+ *        heading: number) => number>} variantOf
  *        canonical block id -> resolver for the id to place instead
  *
  * The resolver gets the clicked face's NORMAL as well, because not every
@@ -1352,6 +1481,14 @@ function halfFromTarget(normal, hitY) {
  * because the face is the wall it hangs on. Both answers are the same
  * question asked of different data, so both are passed and each family reads
  * the one it means.
+ *
+ * AND THE RAW HEADING, which the sign is the first family to want. `facing`
+ * is the heading already thrown away down to four names, and a sign has
+ * sixteen rotations -- so quantising here and re-expanding there would cost
+ * exactly the precision Evan reported missing. Passed ALONGSIDE `facing`
+ * rather than instead of it: stairs and torches are genuinely four-valued and
+ * making each of them redo `headingToFacing` is how four copies of a compass
+ * table get born.
  */
 export function installPlacementOrientation(noa, variantOf) {
   const originalSetBlock = noa.setBlock.bind(noa)
@@ -1370,9 +1507,10 @@ export function installPlacementOrientation(noa, variantOf) {
     // `targetedBlock` itself rounds away.
     const hitY = target ? noa._pickResult.position[1] : 0
 
-    const facing = headingToFacing(noa.camera.heading)
+    const heading = noa.camera.heading
     return originalSetBlock(
-      resolve(facing, halfFromTarget(normal, hitY), normal), x, y, z)
+      resolve(headingToFacing(heading), halfFromTarget(normal, hitY), normal, heading),
+      x, y, z)
   }
 }
 
