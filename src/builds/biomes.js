@@ -25,8 +25,9 @@
  *
  * BAMBOO AND NOT CHERRY BLOSSOM for Bilibili, on the owner's instruction:
  * "dont use cherry blossom for china, too on the nose". The agreed fallback
- * if bamboo proved unworkable was meadow, and it is NOT being taken -- but
- * read BAMBOO_STALK below before you believe the jungle is finished.
+ * if bamboo proved unworkable was meadow, and it was never needed -- the
+ * plant is a real non-cube block as of today. Read BAMBOO below before you
+ * place one; there is a recipe and getting it wrong gives bare sticks.
  * ------------------------------------------------------------------------
  * HOW A COLUMN GETS ITS BIOME: WARPED, WEIGHTED VORONOI.
  *
@@ -305,35 +306,58 @@ export function groundOf(biome, x, z, h) {
  * hat on it, and you see the whole thing side-on from the path.
  */
 /*
- * THE BAMBOO STALK, AND IT IS A PLACEHOLDER. Read this before changing it.
+ * THE BAMBOO STALK, AND THE RECIPE FOR BUILDING ONE.
  *
- * WHAT THIS BLOCK ACTUALLY IS: `bamboo_block` is the Block of Bamboo from
- * 1.20 -- a solid cube of bundled bamboo, a building material in the same
- * family as `bamboo_planks` and `bamboo_mosaic`, the bamboo equivalent of a
- * hay bale. IT IS NOT THE PLANT. Vanilla's bamboo is a thin cross-shaped
- * stalk about two pixels wide with leaf fronds, drawn from `bamboo_stalk`,
- * `bamboo_small_leaves` and `bamboo_large_leaves` -- three textures this
- * repo does not extract, on a non-cube block this repo does not register.
+ * WHAT THIS USED TO SAY, recorded because a confidently wrong comment about
+ * what a block IS is the expensive kind: it claimed a column of
+ * `bamboo_block` was a bamboo stalk. It is not. `bamboo_block` is the 1.20
+ * Block of Bamboo -- a solid cube of bundled cane, a building material in the
+ * same family as `bamboo_planks` and `bamboo_mosaic`. A column of them is a
+ * chunky green pillar and the owner found that out by looking at the world.
  *
- * AN EARLIER VERSION OF THIS FILE SAID THE OPPOSITE, in as many words, and
- * the owner found it by looking at the world: a column of these is a chunky
- * solid pillar and reads as one. The comment is recorded here rather than
- * quietly deleted because a wrong comment about what a block IS is the
- * expensive kind -- the next reader has no reason to doubt it.
+ * THE REAL PLANT EXISTS NOW. It is thirteen ids, and the shape of the table
+ * is the whole recipe -- three leaf states across, four horizontal-offset
+ * variants down:
  *
- * SO THE GROVE IS TUNED FOR WHAT THE BLOCK IS. src/builds/flora.js plants
- * FEWER stalks, TALLER, with a jungle frond on top, and lets real jungle
- * trees carry most of the biome -- which is also what a vanilla bamboo
- * jungle mostly is. It reads as a grove of thick bamboo poles, which is an
- * honest thing made of the blocks that exist, rather than as a thicket of
- * bamboo, which it is not.
+ *              none                small                         large
+ *   v0  bamboo               bamboo_leaves_small           bamboo_leaves_large
+ *   v1  bamboo_1             bamboo_leaves_small_1         bamboo_leaves_large_1
+ *   v2  bamboo_2             bamboo_leaves_small_2         bamboo_leaves_large_2
+ *   v3  bamboo_3             bamboo_leaves_small_3         bamboo_leaves_large_3
  *
- * WHEN THE REAL PLANT LANDS -- a separate pass owns src/blocks.js,
- * src/blockMeshes.js and the texture build -- this constant is the one word
- * that changes here, and the two numbers in flora.js's bambooStand are the
- * only other thing that wants revisiting.
+ * Three rules, all of them vanilla's `growBamboo`:
+ *
+ *   1. A STALK IS A COLUMN OF SEPARATE BLOCKS, up to sixteen tall.
+ *   2. LEAVES ONLY AT THE TOP. The top block is `_leaves_large`, the one
+ *      under it `_leaves_small`, and everything below that is bare cane.
+ *   3. ONE OFFSET SUFFIX PER STALK, ALL THE WAY UP. The four variants are a
+ *      quarter-block horizontal wander so a stand does not read as a grid;
+ *      mixing suffixes WITHIN a stalk makes that stalk zigzag. Pick the
+ *      suffix from the stalk's own coordinates, as vanilla does.
+ *
+ * `bamboo_sapling` is the ground sprout and is worth scattering under them.
+ *
+ * WORTH KNOWING BEFORE YOU PLANT A THICKET: the cane has no collision at all
+ * (deliberate -- this mesher's translate moves vertices and not the collision
+ * boxes, so the honest choice was no collider rather than an invisible post
+ * beside the visible cane), it does not grow, and the bare cane is opaque and
+ * stays on the opaque atlas page, so only the two leafy blocks in each stalk
+ * pay for cutout. A dense stand is cheaper than it looks.
  */
-export const BAMBOO_STALK = 'bamboo_block'
+export const BAMBOO = {
+  /** The bare cane, by offset variant 0..3. */
+  cane: ['bamboo', 'bamboo_1', 'bamboo_2', 'bamboo_3'],
+  small: ['bamboo_leaves_small', 'bamboo_leaves_small_1',
+    'bamboo_leaves_small_2', 'bamboo_leaves_small_3'],
+  large: ['bamboo_leaves_large', 'bamboo_leaves_large_1',
+    'bamboo_leaves_large_2', 'bamboo_leaves_large_3'],
+  sapling: 'bamboo_sapling',
+}
+
+/** The block the bamboo jungle is CENSUSED by, which has to be one key and
+ *  has to be one every stalk contains. Every stalk taller than two has bare
+ *  cane in it and only the bamboo jungle has any. */
+export const BAMBOO_STALK = BAMBOO.cane[0]
 
 export function subsurfaceOf(biome) {
   if (biome === BIOME.PEAKS) return 'stone'

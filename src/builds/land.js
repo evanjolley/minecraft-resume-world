@@ -152,6 +152,19 @@ function emptyModel() {
      */
     biomeNear: new Uint8Array(n),
     gap: new Float32Array(n),
+    /*
+     * WHICH COLUMNS ALREADY HAVE SOMETHING GROWING IN THEM.
+     *
+     * The forest pass plants trunks and bamboo stalks, and then the ground
+     * cover pass walks the same map putting bushes, logs and young cane on
+     * it. Neither knew about the other, which was invisible while everything
+     * involved was one block tall and stopped being invisible the day bamboo
+     * became a real plant: a young two-block shoot landed in a column a
+     * mature stalk already occupied, and the result was a stalk with LEAVES
+     * IN THE MIDDLE OF IT -- which is the one thing vanilla's own bamboo rule
+     * says cannot happen.
+     */
+    standing: new Uint8Array(n),
     /** What a RAISED column is filled with under its surface block. Dirt
      *  everywhere a meadow would have dirt; stone where a mountain would have
      *  stone, because a twenty-block dirt cliff with a snow hat on it is what

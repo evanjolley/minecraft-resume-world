@@ -36,7 +36,7 @@
  * one or two blocks -- which is what these are.
  */
 import { KIND, at, onMap, hash, smoothNoise, nearSpawn, SPAWN_CLEAR } from './land.js'
-import { BIOME, DENSITY, speciesAt, BAMBOO_STALK } from './biomes.js'
+import { BIOME, DENSITY, speciesAt, BAMBOO } from './biomes.js'
 
 /** How far from the path anything may grow. Two blocks of clear shoulder
  *  everywhere, and up to five where the noise thins the wood out. */
@@ -205,38 +205,59 @@ function tree(s, x, z, base, kind, model) {
 }
 
 /*
- * A BAMBOO GROVE, AND IT IS A GROVE RATHER THAN A THICKET ON PURPOSE.
+ * A BAMBOO THICKET, and it is a thicket again now that bamboo is bamboo.
  *
- * `BAMBOO_STALK` is a solid cube -- read the long note on it in
- * src/builds/biomes.js, which is there because this file's first version
- * claimed it was a plant and the owner found out by looking. A wall of solid
- * cubes at thicket density is not bamboo; it is a wall.
+ * It was a sparse grove of two or three poles for exactly as long as the only
+ * bamboo-ish block in this game was `bamboo_block`, which is a solid cube --
+ * see the long note on BAMBOO in src/builds/biomes.js. A wall of solid cubes
+ * at thicket density is not bamboo, it is a wall, so the stand was thinned
+ * until it read as an honest thing made of the blocks that existed.
  *
- * So: TWO OR THREE poles per stand, not seven, and TALLER, because the thing
- * that makes a one-block column read as a stalk rather than as a post is its
- * proportion. A frond of jungle leaves on top of each, because the real plant
- * has leaves and a pole that stops dead reads as a fencepost. The rest of the
- * biome's cover is real jungle trees, which is also what most of a vanilla
- * bamboo jungle is.
+ * The blocks that exist changed. The real plant is a thin cross-shaped cane
+ * that you CAN plant at thicket density and should, so the numbers go back:
+ * six to eleven stalks in a five-block square, six to fifteen tall.
  *
- * WHEN THE REAL PLANT LANDS, the two numbers below are what wants revisiting
- * -- a thin cross-shaped stalk CAN be planted at thicket density, and should
- * be.
+ * THE THREE RULES, and each one is a way to get bare sticks if you skip it:
+ *
+ *   - LEAVES ONLY AT THE TOP. `_leaves_large` on the top block,
+ *     `_leaves_small` immediately under it, bare cane all the way down.
+ *   - ONE OFFSET VARIANT PER STALK. The four variants wander a quarter block
+ *     sideways; picking a fresh one per BLOCK makes the stalk zigzag, so the
+ *     variant is hashed from the stalk's own column and used for every block
+ *     in it.
+ *   - IT IS A COLUMN OF SEPARATE BLOCKS, not a pillar of one key, which is
+ *     why this cannot use `s.pillar` any more.
  */
 function bambooStand(s, x, z, base, model) {
-  const n = 2 + Math.floor(hash(x, z, 71) * 2)
+  const n = 6 + Math.floor(hash(x, z, 71) * 6)
   for (let k = 0; k < n; k++) {
-    const dx = Math.round((hash(x, z, 401 + k) - 0.5) * 4)
-    const dz = Math.round((hash(x, z, 431 + k) - 0.5) * 4)
+    const dx = Math.round((hash(x, z, 401 + k) - 0.5) * 5)
+    const dz = Math.round((hash(x, z, 431 + k) - 0.5) * 5)
     const px = x + dx, pz = z + dz
     if (!onMap(px, pz)) continue
     const j = at(px, pz)
     if (model.kind[j] !== KIND.FIELD) continue
     const foot = model.h[j]
-    const h = 9 + Math.floor(hash(px, pz, 457) * 6)
-    s.pillar(px, pz, foot, foot + h - 1, BAMBOO_STALK)
-    /* A frond on every one of them, not just the tall ones. */
-    s.set(px, foot + h, pz, 'jungle_leaves')
+    const h = 6 + Math.floor(hash(px, pz, 457) * 10)
+    /* The variant, per stalk and from the stalk's own coordinates -- so it is
+     * the same every page load and the same for every block in the column. */
+    const v = Math.floor(hash(px, pz, 463) * 4) & 3
+    for (let y = 0; y < h - 2; y++) s.set(px, foot + y, pz, BAMBOO.cane[v])
+    s.set(px, foot + h - 2, pz, BAMBOO.small[v])
+    s.set(px, foot + h - 1, pz, BAMBOO.large[v])
+    model.standing[j] = 1
+  }
+  /* And a couple of sprouts on the floor between them. A stand of mature cane
+   * with nothing coming up under it reads as a fence; the sapling is what
+   * makes it look like it grew there. */
+  for (let k = 0; k < 3; k++) {
+    const px = x + Math.round((hash(x, z, 467 + k) - 0.5) * 6)
+    const pz = z + Math.round((hash(x, z, 479 + k) - 0.5) * 6)
+    if (!onMap(px, pz)) continue
+    const j = at(px, pz)
+    if (model.kind[j] !== KIND.FIELD || model.standing[j]) continue
+    s.set(px, model.h[j], pz, BAMBOO.sapling)
+    model.standing[j] = 1
   }
 }
 
@@ -250,6 +271,7 @@ function bambooStand(s, x, z, base, model) {
  */
 export function plantForest(s, model) {
   const dist = pathDistance(model)
+  const stands = []
 
   for (let cz = 0; cz < 256; cz += 4) {
     for (let cx = 0; cx < 256; cx += 4) {
@@ -290,20 +312,31 @@ export function plantForest(s, model) {
        * one thing in a plot that has to be legible from the path. */
       if (!clearOfReserved(model, x, z, 6)) continue
 
-      /* The bamboo jungle is mostly stalks and a few real trees through them,
-       * which is what the vanilla biome is. The roll is per site rather than
-       * per region so the two are interleaved rather than zoned. */
-      /* Under half the sites, so the jungle trees between them are what you
-       * mostly walk through. It was 0.85 while this thought it was planting
-       * a plant. */
-      if (biome === BIOME.BAMBOO && hash(x, z, 73) < 0.42) {
-        bambooStand(s, x, z, model.h[j], model)
+      /*
+       * The bamboo jungle is mostly stalks with real jungle trees standing
+       * through them, which is what the vanilla biome is. Four sites in five;
+       * it was cut to under half while the only available block was a solid
+       * cube and the stand had to be sparse to be honest.
+       *
+       * DEFERRED TO A SECOND PASS, and that is not tidiness. A tree's canopy
+       * is written with `s.set` and will overwrite whatever is in the column,
+       * so a jungle tree planted at a later grid cell was cropping the tops
+       * off stalks planted at an earlier one -- leaving a four-block cane
+       * with no leaves on it, which is a green stick. Planting all the trees
+       * first and the bamboo afterwards inverts which one wins, and a stalk
+       * coming up THROUGH a canopy is a thing bamboo actually does.
+       */
+      if (biome === BIOME.BAMBOO && hash(x, z, 73) < 0.80) {
+        stands.push([x, z, model.h[j]])
         continue
       }
 
       tree(s, x, z, model.h[j], species(model, x, z), model)
+      model.standing[j] = 1
     }
   }
+
+  for (const [x, z, base] of stands) bambooStand(s, x, z, base, model)
 
   groundCover(s, model, dist)
 }
@@ -350,6 +383,9 @@ function groundCover(s, model, dist) {
       const j = at(x, z)
       const kind = model.kind[j]
       if (kind !== KIND.FIELD && kind !== KIND.BANK) continue
+      /* Something is already growing here -- a trunk or a mature stalk. See
+       * `standing` in src/builds/land.js for the bug that motivated it. */
+      if (model.standing[j]) continue
       if (nearSpawn(x, z, SPAWN_CLEAR)) continue
       const d = dist[j]
       if (d === 0) continue
@@ -401,9 +437,21 @@ function groundCover(s, model, dist) {
         continue
       }
 
-      /* No loose two-block shoots. With a real bamboo plant they would be
-       * young stalks; with a solid cube they are kerbstones dropped in a
-       * wood, and they were the thing closest to the camera in every frame. */
+      /* Loose young cane away from the stands -- a two-block stalk is what
+       * vanilla bamboo looks like before it grows, and it is the one piece of
+       * undergrowth a bamboo jungle actually has. It was cut entirely while
+       * this was placing solid cubes, which read as kerbstones dropped in a
+       * wood and were the thing closest to the camera in every frame. */
+      if (biome === BIOME.BAMBOO && roll < (near ? 0.08 : 0.04)) {
+        const v = Math.floor(hash(x, z, 463) * 4) & 3
+        if (hash(x, z, 487) < 0.4) {
+          s.set(x, base, z, BAMBOO.sapling)
+        } else {
+          s.set(x, base, z, BAMBOO.small[v])
+          s.set(x, base + 1, z, BAMBOO.large[v])
+        }
+        continue
+      }
 
       if (roll < (near ? 0.055 : 0.02)) {
         s.set(x, base, z, `${wood}_leaves`)                 // a bush

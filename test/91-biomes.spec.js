@@ -46,7 +46,7 @@ import { CHAPTERS, LAND_ORIGIN_X, LAND_ORIGIN_Z, landPlot } from '../src/builds/
  * of the path, and the box only covered the western one. A spec that
  * approximates the rule it is checking is checking a different rule.
  */
-import { biomeField, BIOME, BIOME_NAME, BAMBOO_STALK } from '../src/builds/biomes.js'
+import { biomeField, BIOME, BIOME_NAME, BAMBOO, BAMBOO_STALK } from '../src/builds/biomes.js'
 import { SPINE, sampleSpine } from '../src/builds/spine.js'
 
 const SHOTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screenshots')
@@ -182,6 +182,73 @@ test.describe('the landscape', () => {
     expect(census.ch1.tally[BAMBOO_STALK] ?? 0, 'bamboo in Omaha').toBeLessThan(bamboo / 8)
     expect(census.ch1.tally.snow_block ?? 0, 'snow in Omaha').toBeLessThan(snow / 8)
     expect(census.ch2.tally[BAMBOO_STALK] ?? 0, 'bamboo at Harvard').toBeLessThan(bamboo / 4)
+  })
+
+  test('every bamboo stalk is built the way bamboo grows', async ({ page }) => {
+    test.setTimeout(120_000)
+    await waitTicks(page, 5)
+
+    /*
+     * THREE RULES OUT OF VANILLA'S growBamboo, and each one is a way to get
+     * bare green sticks instead of bamboo:
+     *
+     *   1. Leaves only at the TOP -- large on the last block, small on the
+     *      one under it, bare cane all the way down.
+     *   2. One horizontal-offset variant per stalk, every block of it. The
+     *      four variants wander a quarter block sideways; a stalk that mixes
+     *      them zigzags.
+     *   3. It is a column of separate blocks, so a stalk is found by walking
+     *      up from the ground rather than by asking for one key.
+     *
+     * The second rule is the one a screenshot cannot settle -- a quarter
+     * block at twenty paces is nothing -- and the first one WAS broken and a
+     * census found it: the ground-cover pass put a two-block young shoot in a
+     * column a mature stalk already occupied, and the stalk came out with
+     * leaves in the middle of it.
+     */
+    const stalks = await page.evaluate(([bamboo]) => {
+      const v = window.game.voxelAt
+      const t = window.game.terrain
+      const keyOf = new Map()
+      const key = (id) => {
+        let k = keyOf.get(id)
+        if (k === undefined) { k = window.game.blockKey(id); keyOf.set(id, k) }
+        return k
+      }
+      const isBamboo = (k) => k === 'bamboo' || /^bamboo(_[123])?$/.test(k)
+        || /^bamboo_leaves_(small|large)(_[123])?$/.test(k)
+      let found = 0, blocks = 0
+      const bad = []
+      for (let pz = 0; pz < t.depth; pz++) {
+        for (let px = 0; px < t.width; px++) {
+          const col = []
+          for (let y = 136; y <= 175; y++) {
+            const k = key(v(px - t.originX, y, pz - t.originZ))
+            if (!isBamboo(k)) { if (col.length) break; continue }
+            col.push(k)
+          }
+          if (col.length < 3) continue           // a sapling or a young shoot
+          found++
+          blocks += col.length
+          const suffix = (k) => (k.match(/_([123])$/) ?? [, '0'])[1]
+          const bare = (k) => !k.includes('leaves')
+          const want = col.map((k, i) =>
+            i === col.length - 1 ? 'large' : i === col.length - 2 ? 'small' : 'cane')
+          const got = col.map(k => k.includes('_large') ? 'large'
+            : k.includes('_small') ? 'small' : bare(k) ? 'cane' : '?')
+          const sameVariant = col.every(k => suffix(k) === suffix(col[0]))
+          if (got.join() !== want.join() || !sameVariant) {
+            if (bad.length < 5) bad.push({ px, pz, col })
+          }
+        }
+      }
+      return { found, blocks, bad }
+    }, [BAMBOO])
+
+    // The sample, before the claim. No bamboo is a very well-formed bamboo.
+    expect(stalks.found, 'no bamboo stalks in the world').toBeGreaterThan(200)
+    expect(stalks.blocks).toBeGreaterThan(1_500)
+    expect(stalks.bad, `malformed stalks: ${JSON.stringify(stalks.bad)}`).toEqual([])
   })
 
   test('nothing is steep, and every plot is flat', async ({ page }) => {
