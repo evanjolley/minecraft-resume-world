@@ -313,12 +313,21 @@ const isOrientationVariant = (b) => b.shape !== undefined && b.drops !== undefin
  * and where vanilla keeps the art: there is no textures/item/torch.png in the
  * game, the item model points at `block/torch`, and ITEM_TEXTURES below tells
  * the build to resolve it out of `block/` for exactly that reason.
+ *
+ * `block/` IS ONLY THE DEFAULT, which the sign is what proved. A torch's flat
+ * art lives under block/ because its item model borrows the block face; a
+ * sign has a real `item/oak_sign.png` of its own, which is the normal case
+ * for an `item/generated` model and happens to be the rarer one here. So a
+ * block may say `flatFrom: 'item'`. The texture NAME is still the block key
+ * in both cases, which is why there is one knob rather than two -- the day a
+ * flat block item's sprite is named something other than its key, that is
+ * when a second one is worth adding, and not before.
  */
 const BLOCK_ITEMS = BLOCK_TYPES
   .filter(b => !b.fluid && !b.invisible && !isOrientationVariant(b))
   .map(b => ({
     id: b.id, key: b.key, name: b.name, places: b.id, block: b,
-    ...(b.flatItem ? { flat: true, texture: b.key, from: 'block' } : {}),
+    ...(b.flatItem ? { flat: true, texture: b.key, from: b.flatFrom ?? 'block' } : {}),
   }))
 
 const NON_BLOCK = [...MATERIALS, ...UNPLACEABLE, ...TOOLS, ...ARMOR, ...GEAR]

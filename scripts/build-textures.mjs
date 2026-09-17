@@ -180,6 +180,58 @@ async function deriveParticleFromTorch(torchPng, out) {
     .png().toFile(join(OUT, 'particle', `${out}.png`))
 }
 
+/* ------------------------------------------------------------------ *
+ * THE SIGN ITEM SPRITE, for CE only.
+ *
+ * Vanilla ships `item/oak_sign.png` and fromVanilla() below picks it up with
+ * no special case at all -- it is an ordinary `item/` sprite and the jar's
+ * whole item directory is already unzipped. This exists because CE DOES NOT
+ * HAVE ONE, in either directory: `textures-src/ce/item/` is an 89-file subset
+ * with nothing sign-shaped in it, and CE has no `entity/` beyond steve.png,
+ * which is the same hole that made the torch's flame a crop of CE's own torch
+ * (deriveParticleFromTorch above). Without this the deployed build -- which
+ * is the CE one -- would hold a sign whose sprite 404s in three renderers.
+ *
+ * So the SILHOUETTE is vanilla's, read straight off its own sprite's alpha
+ * channel (a 13x9 board at y 2..10, on a 3x5 post at x 7..9), and the PIXELS
+ * are CE's oak planks. That is not a coincidence dressed up as a rule: the
+ * board this world actually renders is cut from `oak_planks` too, by the same
+ * slice every slab uses (blocks.js's sign note). The CE item therefore shows
+ * the material the CE block is made of, which is the strongest version of the
+ * "right family, wrong pack" rule the substitutes above already follow.
+ *
+ * Rejected: drawing a sign by hand at 16x16. It would look better and it is
+ * new art pretending to be a derivative -- the exact thing the flame's note
+ * refuses, and the thing NOTICE.txt should not have to cover.
+ *
+ * Rejected: colour-shifting some other CE item through CE_ITEM_SUBSTITUTES,
+ * which is how every other gap here is filled. Nothing in that 89-file subset
+ * is a board on a post; a tinted stick is a worse lie than a real plank in
+ * the right outline.
+ */
+const SIGN_SPRITE_MASK = { board: [2, 2, 13, 9], post: [7, 11, 3, 5] }
+
+async function deriveSignFromPlanks(planksPng, out) {
+  const { data, info } = await sharp(planksPng).ensureAlpha()
+    .resize(TILE, TILE, { kernel: 'nearest' })
+    .raw().toBuffer({ resolveWithObject: true })
+  // Start fully transparent and copy the plank pixel back in where vanilla's
+  // sprite has one, so the plank art keeps its own position and grain rather
+  // than being stretched into the outline.
+  const px = Buffer.alloc(info.width * info.height * 4)
+  for (const [x0, y0, w, h] of Object.values(SIGN_SPRITE_MASK)) {
+    for (let y = y0; y < y0 + h; y++) {
+      for (let x = x0; x < x0 + w; x++) {
+        const i = (y * info.width + x) * 4
+        data.copy(px, i, i, i + 4)
+      }
+    }
+  }
+  await sharp(px, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .png().toFile(out)
+  return out
+}
+
 function looksComplete() {
   const dir = join(PUBLIC, 'textures')
   if (!existsSync(MARKER)) return false
@@ -899,6 +951,13 @@ async function fromCE() {
     if (from === 'block') return join(CE_SRC, 'block', `${name}.png`)
     const direct = join(CE_SRC, 'item', `${name}.png`)
     if (existsSync(direct)) return direct
+    // See deriveSignFromPlanks: CE has no sign art anywhere, so the outline
+    // is vanilla's and the pixels are CE's own planks.
+    if (name === 'oak_sign') {
+      mkdirSync(join(OUT, 'item'), { recursive: true })
+      return deriveSignFromPlanks(join(CE_SRC, 'block', 'oak_planks.png'),
+        join(OUT, 'item', '.tmp-oak_sign.png'))
+    }
     const s = CE_ITEM_SUBSTITUTES[name]
     if (!s) return null
     const base = join(CE_SRC, 'item', `${s.from}.png`)

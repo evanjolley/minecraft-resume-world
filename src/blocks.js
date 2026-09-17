@@ -1090,12 +1090,21 @@ NON_CUBE_VARIANTS.set(TORCH_ID, (_facing, _half, normal) => {
  *     every voxel of an id one shared set of vertices, and every sign says
  *     something different). So the flag is left off, which also keeps the
  *     board on the cheaper opaque path with backface culling ON.
- *   - `flatItem`, NO, and for a duller reason: vanilla's sign item really is
- *     an `item/generated` sprite, but its art is `item/oak_sign.png` and this
- *     world's texture pipeline has never extracted it. Marking the flag
- *     without the art gets a missing sprite in three renderers. A sign in the
- *     hand is a little oak cube until someone adds the texture; recorded as a
- *     divergence rather than hidden.
+ *   - `flatItem`, YES, now that the art exists. This entry used to read NO,
+ *     and the reason was never about signs: vanilla's sign item really is an
+ *     `item/generated` sprite, but its art is `item/oak_sign.png` and the
+ *     texture pipeline had never extracted it, so the flag would have got a
+ *     missing sprite in three renderers. Evan's first two reports on signs
+ *     were both that gap seen from the outside -- "wood block texture in
+ *     hand" and "clipped texture in inventory" are one bug, the fallback to
+ *     `oak_planks` being drawn as a cube and then cropped to a slot.
+ *     scripts/build-textures.mjs extracts the sprite now, so the flag goes
+ *     on and the divergence closes.
+ *
+ *     `flatFrom: 'item'` is the one new word. A torch's flat sprite comes out
+ *     of `block/` because that is where vanilla's own item model points; a
+ *     sign's comes out of `item/`, which is the ordinary place and the reason
+ *     the default could stay `block`.
  *
  * TEXTURE: `oak_planks`, which is not a substitute for a sign texture so much
  * as an honest reading of one. Vanilla's `entity/signs/oak.png` is a 64x32
@@ -1127,7 +1136,9 @@ const SIGNS = [
     name: 'Oak Sign', all: 'oak_planks', shape: `sign_${facing}`,
     // Vanilla's strength(1.0), and axe-preferred like every other wood.
     hardness: T(1, false),
-    ...(i === 0 ? {} : { drops: SIGN_ID }),
+    // Only the canonical is ever an ITEM -- the other three drop it -- so the
+    // sprite flags go on the one entry that reaches items.js's BLOCK_ITEMS.
+    ...(i === 0 ? { flatItem: true, flatFrom: 'item' } : { drops: SIGN_ID }),
   })),
   ...SIGN_FACINGS.map((facing) => ({
     id: WALL_SIGN.get(facing), key: `oak_wall_sign_${facing}`,
