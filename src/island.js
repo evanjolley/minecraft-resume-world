@@ -60,6 +60,11 @@
  * chunks, enough that the far side is a walk rather than a glance.
  */
 import { decode } from './terrainFormat.js'
+/* Plot geometry only -- a plain data module with no imports of its own, which
+ * is why island.js may read it and scripts/terrain/verify.mjs still runs in
+ * node. src/builds/index.js, which pulls in blocks.js and Babylon with it, is
+ * imported by src/flatworld.js instead. See the note at the top of that file. */
+import { SPAWN_PATCH_X, SPAWN_PATCH_Z, ORIGIN_X, ORIGIN_Z } from './builds/plots.js'
 
 /*
  * WHERE EVERY WORLD SITS, in one table.
@@ -98,6 +103,31 @@ import { decode } from './terrainFormat.js'
  *                    branch in spawnFor, because "why is one world different"
  *                    is a question you should be able to answer by reading the
  *                    row.
+ * `spawnX/spawnZ`    the WORLD coordinate a visitor arrives at, as a block
+ *                    index; spawnFor adds the half that centres them in it.
+ *                    Absent means the origin column, which is what every
+ *                    world did before there was anything to arrive AT.
+ *
+ * THE OVERWORLD'S SPAWN IS NO LONGER THE ORIGIN, and that is the one thing in
+ * this table that will surprise a reader of the old comments. The world is a
+ * timeline now: eight stages down one road, oldest first. Arriving at the
+ * origin would drop a visitor in the middle of stage 4's front garden, facing
+ * nothing, with no way to tell that the place has a direction. So spawn is
+ * the SOUTH END OF THE ROAD, under the arch, with the whole timeline running
+ * away north in front of them.
+ *
+ * The number comes from src/builds/plots.js rather than being written here,
+ * because it is a property of the road and the road may move. What stays here
+ * is the translation: the plot table thinks in patch indices (0..127) and
+ * this table thinks in world coordinates, and the subtraction that connects
+ * them belongs at the boundary.
+ *
+ * WHAT THIS COSTS, honestly: "spawn is (0, 0) in every world" was a real
+ * invariant and several specs lean on it -- test/08-death.spec.js asserts you
+ * respawn at x=0.5, z=0.5. They are asserting the old world. The Nether and
+ * the mountains keep the origin, so the portal register that src/dimensions.js
+ * argues for is untouched; it is only the overworld's arrival point that
+ * moved, and it moved because the overworld finally has somewhere to arrive.
  *
  * THE NETHER'S ROW IS THE OLD CONSTANTS, UNCHANGED, and deliberately still
  * shares the overworld's origin. src/dimensions.js argues at length for the
@@ -107,7 +137,10 @@ import { decode } from './terrainFormat.js'
  * its spawn landed somewhere arbitrary.
  */
 export const WORLDS = {
-  overworld: { size: 128, originX: 87, originZ: 56, surfaceY: 136, drop: 2 },
+  overworld: {
+    size: 128, originX: 87, originZ: 56, surfaceY: 136, drop: 2,
+    spawnX: SPAWN_PATCH_X - ORIGIN_X, spawnZ: SPAWN_PATCH_Z - ORIGIN_Z,
+  },
   nether: { size: 128, originX: 87, originZ: 56, surfaceY: 75, drop: 1 },
   /*
    * Seed 434533485056755, patch corner (-112, 0), 256 blocks square.
@@ -199,7 +232,10 @@ export const PATCH_SIZE = WORLDS.overworld.size
  */
 export const SURFACE_Y = WORLDS.overworld.surfaceY
 
-export const SPAWN = [0.5, SURFACE_Y + 2, 0.5]
+/** Where main.js releases the player at boot. Derived from the same row
+ *  spawnFor reads rather than rebuilt from constants, because the two
+ *  disagreeing is a bug whose symptom is "sometimes you start in a wall". */
+export const SPAWN = spawnFor('overworld')
 
 /*
  * The Nether's spawn height, as chosen by scripts/terrain/nether.mjs's own
@@ -454,10 +490,17 @@ export function bounds(name = current) {
 /** Where a world puts you when you arrive in it. Centre of the spawn column,
  *  feet on its floor -- so it is (0.5, _, 0.5) in every world by construction,
  *  because every world's origin IS its spawn column. */
-export const spawnFor = (name) => {
+/* A function DECLARATION, where this was an arrow constant. SPAWN above is
+ * defined two hundred lines earlier and calls it; only a declaration hoists.
+ * The alternative -- moving SPAWN down here -- reorders a file whose reading
+ * order is deliberate. */
+export function spawnFor(name) {
   const g = WORLDS[name]
   if (!g) throw new Error(`unknown world ${JSON.stringify(name)}`)
-  return [0.5, g.surfaceY + g.drop, 0.5]
+  /* `?? 0` and not a required field: the Nether and the mountains genuinely
+   * do arrive at their origin, and a row that says so by staying silent is
+   * easier to read than three rows that all say `spawnX: 0`. */
+  return [(g.spawnX ?? 0) + 0.5, g.surfaceY + g.drop, (g.spawnZ ?? 0) + 0.5]
 }
 
 /*

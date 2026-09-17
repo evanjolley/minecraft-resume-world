@@ -1,6 +1,15 @@
 import { test, expect } from './fixtures.js'
 import { ID, MIN_X, MAX_X, MIN_Z, MAX_Z, SURFACE_Y, getBlock } from './helpers/world.js'
 import { shot } from './helpers/shots.js'
+/* The plot table, read rather than copied. src/builds/plots.js is plain data
+ * with no imports of its own, which is why a spec (and src/island.js) may
+ * read it without dragging Babylon in. */
+import { SPAWN_PATCH_X, SPAWN_PATCH_Z, ORIGIN_X, ORIGIN_Z } from '../src/builds/plots.js'
+
+/** A column inside the world and outside every plot: patch (1, 1), in the
+ *  margin the road and the eight stages all stop short of. */
+const BARE_X = 1 - ORIGIN_X
+const BARE_Z = 1 - ORIGIN_Z
 
 test.describe('world generation', () => {
   test('the page boots with no errors, failed requests or 404s', async ({ bootErrors }) => {
@@ -53,9 +62,18 @@ test.describe('world generation', () => {
       // The corner, which is where a "and" that should be an "or" shows up.
       expect(await gen(MIN_X - 1, SURFACE_Y - 1, MIN_Z - 1)).toBe(ID.barrier)
 
-      // ...and the wall is really standing in the world, not only in the
-      // generator: the near edge is inside the load range, so noa agrees.
-      expect(await getBlock(page, MAX_X + 1, SURFACE_Y - 1, 0)).toBe(ID.barrier)
+      /*
+       * ...and the wall is really standing in the world, not only in the
+       * generator: noa has to agree about the edge nearest the player.
+       *
+       * WHICH EDGE THAT IS HAS CHANGED. This read the +X edge back when spawn
+       * was the patch origin. Spawn is now the south end of the road, eight
+       * blocks from the +Z edge and ninety from that one -- and noa answers 0
+       * for a chunk it has not loaded, which is also air, so the old probe
+       * would have gone quietly vacuous rather than failing.
+       */
+      expect(await getBlock(page, SPAWN_PATCH_X - ORIGIN_X, SURFACE_Y - 1, MAX_Z + 1))
+        .toBe(ID.barrier)
     })
 
   test('the barrier is solid but draws nothing and cannot be targeted',
@@ -99,11 +117,29 @@ test.describe('world generation', () => {
        * is a list this test can be read against, so a typo in the preset fails
        * here instead of rendering as a slightly wrong hillside.
        */
-      expect(await getBlock(page, 0, SURFACE_Y, 0)).toBe(ID.air)
-      expect(await getBlock(page, 0, SURFACE_Y - 1, 0)).toBe(ID.grass)
-      expect(await getBlock(page, 0, SURFACE_Y - 2, 0)).toBe(ID.dirt)
-      expect(await getBlock(page, 0, SURFACE_Y - 3, 0)).toBe(ID.dirt)
-      expect(await getBlock(page, 0, SURFACE_Y - 4, 0)).toBe(ID.bedrock)
+      /*
+       * READ AT A MARGIN COLUMN, and that is the change the builds forced.
+       *
+       * This used to probe the spawn column at world (0, 0). Two things about
+       * that column are no longer true: spawn is not there any more (it is the
+       * south end of the road -- see WORLDS.overworld in src/island.js), and
+       * (0, 0) is patch (87, 56), which is the middle of stage 4's plot and
+       * will have a building on it within the day.
+       *
+       * BARE_X/BARE_Z is patch (1, 1): inside the world, outside every plot in
+       * src/builds/plots.js and outside the road, and it will stay that way
+       * because the stamper throws if anybody writes outside their plot. The
+       * claim the test is making is unchanged -- the ground is Classic Flat --
+       * it is only being asked somewhere the answer is still about the ground.
+       */
+      const gen = (x, y, z) =>
+        page.evaluate(([a, b, c]) => window.game.voxelAt(a, b, c), [x, y, z])
+
+      expect(await gen(BARE_X, SURFACE_Y, BARE_Z)).toBe(ID.air)
+      expect(await gen(BARE_X, SURFACE_Y - 1, BARE_Z)).toBe(ID.grass)
+      expect(await gen(BARE_X, SURFACE_Y - 2, BARE_Z)).toBe(ID.dirt)
+      expect(await gen(BARE_X, SURFACE_Y - 3, BARE_Z)).toBe(ID.dirt)
+      expect(await gen(BARE_X, SURFACE_Y - 4, BARE_Z)).toBe(ID.bedrock)
 
       /*
        * Below the bedrock, read through the GENERATOR rather than through
@@ -117,10 +153,7 @@ test.describe('world generation', () => {
        * would in fact be resident. Asking the generator anyway keeps the test
        * honest the day the preset gets thicker.)
        */
-      const gen = (x, y, z) =>
-        page.evaluate(([a, b, c]) => window.game.voxelAt(a, b, c), [x, y, z])
-
-      expect(await gen(0, SURFACE_Y - 5, 0)).toBe(ID.air)
+      expect(await gen(BARE_X, SURFACE_Y - 5, BARE_Z)).toBe(ID.air)
 
       // FLAT means flat: the same ladder in a far corner of the patch, not
       // just under spawn. This is the assertion the imported world could not
@@ -145,13 +178,34 @@ test.describe('world generation', () => {
     expect(await page.evaluate(() => window.game.terrain.source)).toBe('generated')
   })
 
-  test('the player comes to rest standing on the grass, not inside it', async ({ page }) => {
-    const [x, y, z] = await page.evaluate(() =>
-      [...window.noa.ents.getPositionData(window.noa.playerEntity).position])
-    expect(y).toBeCloseTo(SURFACE_Y, 2)
-    expect(x).toBeCloseTo(0.5, 3)
-    expect(z).toBeCloseTo(0.5, 3)
-  })
+  test('the player comes to rest on the road, at the south end of the timeline',
+    async ({ page }) => {
+      /*
+       * REWRITTEN, NOT RELAXED. The claim that matters here -- your feet end
+       * up ON the ground at SURFACE_Y rather than sunk into it -- is asserted
+       * exactly as before. What moved is where the ground is: the world is a
+       * timeline now, eight stages up one road, and arriving at the origin
+       * would have dropped a visitor in the middle of stage 4 facing nothing.
+       * Spawn is the south end of the road, under the arch.
+       *
+       * The coordinate is READ FROM src/builds/plots.js rather than written
+       * here, because a test that hardcodes it would pass while disagreeing
+       * with the world -- and the whole reason the number lives in the plot
+       * table is that the road may move.
+       */
+      const [x, y, z] = await page.evaluate(() =>
+        [...window.noa.ents.getPositionData(window.noa.playerEntity).position])
+      expect(y).toBeCloseTo(SURFACE_Y, 2)
+      expect(x).toBeCloseTo(SPAWN_PATCH_X - ORIGIN_X + 0.5, 3)
+      expect(z).toBeCloseTo(SPAWN_PATCH_Z - ORIGIN_Z + 0.5, 3)
+
+      // ...and it is the road he is standing on, not the lawn beside it: the
+      // paving replaces the grass block rather than sitting on top of it, so
+      // "rests on the ground at SURFACE_Y" and "the road is walkable" are the
+      // same assertion.
+      expect(await getBlock(page, Math.floor(x), SURFACE_Y - 1, Math.floor(z)))
+        .not.toBe(ID.grass)
+    })
 
   test('the world renders something other than a blank canvas', async ({ page }) => {
     // Visual by nature: "did WebGL initialise and did terrain mesh" has no

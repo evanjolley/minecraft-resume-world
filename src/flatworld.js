@@ -50,6 +50,7 @@
  * not a repeated column, but it is still 128x128 columns of block ids, which
  * is this structure with the sharing below turned off.
  */
+import { stampBuilds } from './builds/index.js'
 
 /*
  * Minecraft's own Classic Flat preset, from minecraft.wiki's Superflat page:
@@ -118,7 +119,7 @@ export const FLAT_PRESETS = {
  *                       barrier wall -- so it is the build height.
  * @returns the same object shape src/terrainFormat.js's decode() returns
  */
-export function flatPatch({ preset, width, depth, surfaceY, ceilingY }) {
+export function flatPatch({ preset, width, depth, surfaceY, ceilingY, builds = stampBuilds }) {
   const layers = preset.layers
   const thickness = layers.reduce((n, l) => n + l.height, 0)
   const yMin = surfaceY - thickness
@@ -163,5 +164,34 @@ export function flatPatch({ preset, width, depth, surfaceY, ceilingY }) {
    */
   const cols = new Array(width * depth).fill(column)
 
-  return { magic: 'GEN1', width, depth, yMin, yTop, palette, cols }
+  const world = { magic: 'GEN1', width, depth, yMin, yTop, palette, cols }
+
+  /*
+   * AND THEN THE BUILDS, which is the only thing in this file that is not
+   * about superflat ground.
+   *
+   * This is the last moment the world is mutable. src/island.js installs it
+   * on the next line of its caller and from then on it is read only -- six
+   * million reads to mesh it, and never a write. So a structure is columns
+   * rewritten ONCE, here, and getVoxelID stays two subtractions and an array
+   * read forever. See the long note at the top of src/builds/index.js for the
+   * two alternatives (a runtime chunk hook, a setBlock storm at boot) and why
+   * both are worse than they look.
+   *
+   * WHY A PARAMETER rather than a bare call: `builds: null` gives you the
+   * empty superflat world back, which is what a spec that wants to measure
+   * the ground wants, and it is how the dimension table would turn the builds
+   * off for a second generated dimension without this file learning about
+   * dimensions. It defaults ON because the world having a road in it is the
+   * normal case now, and a default of "empty" would mean the day somebody
+   * adds a generated dimension they silently get an empty overworld too.
+   *
+   * SHARED COLUMN, HANDLED: the stamper clones a column the first time it
+   * writes to it. Read the COPY ON WRITE note in src/builds/stamp.js before
+   * writing anything that touches `cols` -- every column here is the SAME
+   * Uint16Array, and one careless write moves the ground under the whole map.
+   */
+  if (builds) builds(world, surfaceY)
+
+  return world
 }

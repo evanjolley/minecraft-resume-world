@@ -16,7 +16,22 @@
  * than at sea level.
  */
 export const SURFACE_Y = 136
-export const SPAWN = [0.5, SURFACE_Y + 2, 0.5]
+
+/*
+ * WHERE resetWorld PUTS THE PLAYER, and it is no longer the world origin.
+ *
+ * The overworld is a timeline now -- eight stages either side of one road,
+ * see src/builds/plots.js -- and its spawn is the south end of that road:
+ * patch (63, 120), which is world (-24, 64). The origin, where this used to
+ * be, is patch (87, 56), which is the middle of stage 4's plot and will have
+ * a building standing on it.
+ *
+ * Duplicated from src/island.js rather than imported, like the block ids and
+ * the passphrase below and for the same reason: if somebody moves spawn,
+ * these tests should FAIL rather than quietly follow it. test/01-world.spec.js
+ * reads the real value out of src/builds/plots.js and asserts the game agrees.
+ */
+export const SPAWN = [-23.5, SURFACE_Y + 2, 64.5]
 
 /**
  * World bounds, in world coordinates, mirroring island.js. The patch is
