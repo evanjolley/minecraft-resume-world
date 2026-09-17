@@ -308,40 +308,39 @@ on effort.
      coordinate with no dimension in the key, so `/world` shows another
      world's labels. Nothing places signs outside `claude-opus-5-1` yet.
 
-2. **The light engine is half built, and sky light is the missing half.**
-   This entry used to read "there is no light engine" and cost it at two to
-   four days. **The block half now ships** — `src/blockLight.js` — so what
-   follows is the corrected version, and two of the things the old entry
-   asserted turned out to be wrong in a way worth keeping on the record.
+2. **SHIPPED — the light engine is whole, and a cave is dark at noon.**
+   This entry has been rewritten twice and is now an outcome. Sky light landed
+   (`c5d3856..e705a96`): a sealed room measures **0.0262 at noon** against
+   **0.3808 outdoors** at the same noon, and the shaft rule is vanilla's —
+   seeded at 15 in open columns, propagated DOWN with no decay at all,
+   sideways at 1 per block, rendered as `max(skyLight * daylight, blockLight)`.
 
-   **What the four symptoms did.** Glowstone lighting nothing
-   (`docs/REPORTED.md` #5) is fixed. F3's missing Client/Server Light lines
-   (`src/debugScreen.js`) and a player in a cave lit as if outdoors
-   (`src/entityLight.js`) are both still open, but they are now a wiring job
-   against `window.blockLight.getBlockLight` rather than a feature. A torch
-   lighting nothing (#3) is closed: the torch is a block now (2026-09-16) and
-   it lights, off the `EMISSION.torch` this engine already carried.
+   **What it cost and what it corrected.** 30.0 → 29.4 fps. Terrain vertex
+   count at spawn came out **identical to the pre-sky-light baseline**, because
+   the quad-split criterion was re-derived in terms of *variation* rather than
+   brightness — a quad whose corners agree interpolates correctly and stays
+   merged, which is the common case outdoors. Two claims in the original plan
+   were wrong and the corrections are in `docs/lighting.md`: the mesher is
+   reachable **on the noa instance** so nothing was vendored, and the engine
+   rides vertex colour **alpha** rather than the AO-premultiplied RGB lane.
 
-   **Two claims here were wrong, and the correction is the useful part.** The
-   old entry said noa's terrain mesher "is a closed module that takes no
-   callbacks — so per-voxel light data means editing that file, which means
-   vendoring noa". It does not. `meshChunk` is reachable **on the noa
-   instance**, so it can be wrapped, the finished vertex buffers read back and
-   rewritten, and `npm update` still works. Nothing was vendored. The old entry
-   also planned to ride the vertex colour RGB lane that ambient occlusion
-   premultiplies into; the shipped engine uses the **alpha** channel instead,
-   which leaves AO untouched rather than sharing with it.
+   **Two real bugs fell out and are still open**, recorded in `docs/HEALTH.md`
+   §9 and not chased since:
 
-   **What remains is sky light**, and it is the reason caves are still bright.
-   Vanilla seeds 15 in every column open to the sky, propagates DOWN with no
-   decay, sideways at the usual 1 per block, and renders at
-   `max(skyLight * daylight, blockLight)` — only the first term following
-   `src/sky.js`. The BFS, the store, the dirty tracking and the vertex writeback
-   all exist and are tested, so this is a second channel through a pipe that is
-   already laid. The two genuinely new pieces are the no-decay downward rule
-   and the fact that a block edit dirties a whole column rather than a radius.
-   Detail in "Also worth building" below; `docs/lighting.md` is the original
-   diagnosis and is now partly historical.
+   - **Sky light depends on build order.** Build a sealed room, then build 16
+     blocks away, and the sealed pool reads **sky 8 instead of 0** — measured
+     twice. Built last it reads 0. A sealed interior must not care what is
+     built near it afterwards, so this is a genuine fault in the removal or
+     re-propagation path.
+   - **~37% dimming at altitude.** A pad at y=240 photographs 0.2925 against
+     ground level at noon, and it reproduces at baseline `e705a96` — it
+     predates the sky light work. It means **specs at altitude may be
+     photographing wrong-looking scenes and passing.**
+
+   Also still true: entity lighting and the F3 lines are wired, but **object
+   meshes are not lit by `blockLight.js` at all**. Signs and paintings render
+   at full brightness in a sealed dark room. For a photograph that is arguably
+   correct and was chosen deliberately; for a sign it is a divergence.
 
 3. **Dropped non-block items are flat planes.** `itemModel.js` now extrudes
    item sprites for the hand, and the same mesh is reusable in
@@ -458,35 +457,59 @@ on effort.
    omission. **The known consequence is that `/dimension nether` 404s in a
    deployed build**, which `src/dimensions.js` reports to the player rather
    than failing silently, and which was already true before any of this.
-8. **Interview Evan, on tape.** The question set already exists and does not
-    need designing — this item is doing the interview, not building one.
-    `docs/ai-evan/03-corpus.md` ends with **43 questions in six groups, A
-    through F**, budgeted at 75–100 minutes and split cleanly into two
-    sittings at group C. They are written to be **recorded and transcribed,
-    not typed**, and that constraint is the whole design: typed answers come
-    out in written register, and written register is the one thing a
-    spoken-voice corpus cannot be built out of. Group A is the fast one —
-    15 minutes, answer without thinking — and it is the group that produces
-    the canonical fact record everything else is checked against.
+8. **SUPERSEDED — the interview became a brain dump, and there is no audio.**
+   This entry asked for a recorded interview and said it should start that
+   week. Evan ruled otherwise on 2026-09-17: *"i am just going to brain dump a
+   shit ton of info into claude, jave it sort, build out the db. There doesnt
+   need to be any audio file infra or anything like that."*
 
-    That fact record is the deliverable that matters, for a reason that doc
-    found rather than assumed: **the served resume PDF and every other
-    artifact disagree about Evan's current job title.** A PDF is a document a
-    human reads once and forgives. An agent is a thing that repeats the wrong
-    title to a recruiter at 3am with nobody in the room. Question 2 of Group A
-    resolves it, and a contract missing from the PDF entirely is question 3.
-    The full argument is there; it is not repeated here.
+   **So there is no recording schedule, no transcription step and no audio
+   pipeline**, and nothing above should be read as asking for one. The analysis
+   in `docs/ai-evan/03-corpus.md` about interviews and meeting transcripts
+   stays as a record of options that were weighed, not as a plan.
 
-    It sits this late in a list ordered by how much it waits on Evan because
-    it waits on him completely. Nothing has to be built first, no decision
-    blocks it, and it unblocks both the content and the agent — which is why
-    "Sequencing" below moves it off this list and onto the critical path.
-9. **Content on the island.** No resume content exists. This has been the
-    real gap for the entire life of this project, through every engine feature
-    above, and it is still the gap. It now has a **shape**, though, which it
-    has never had before: **one build per resume point**. That is Evan's
-    answer, and section 2 argues that the builds and the route between them
-    are one feature rather than two.
+   **What is actually needed from him is prose, in any shape.** He does not
+   format it; asking him for markdown headings would be asking him to do the
+   sorting, which is the part being delegated. A model sorts it into
+   `corpus/extra/*.md` chunks with a `Source:` field, and the machinery for
+   that shipped — see "Where the corpus lives" under "Also worth building"
+   for the storage question he has parked.
+
+   **The one thing still owed from the original question set** is E3, the
+   refusal phrasings, and it is still the most valuable gap in the corpus:
+   him saying "I don't know", "I'd rather not get into that" and "Evan can
+   answer that, want to grab time?" in his own words. Refusing-to-not-know is
+   the best-documented persona failure there is, and the person asking is
+   often a recruiter. **Two minutes of that is worth more than anything else
+   outstanding**, and a brain dump can carry it as easily as a recording could.
+
+9. **NO LONGER TRUE, and this is the biggest change on the page — content
+   exists.** This entry read "No resume content exists. This has been the
+   gap since the beginning." It is not the gap any more.
+
+   **What exists now.** A 256×256 overworld with a **winding path 413 blocks
+   long** through **six biomes** — plains, birch forest, bamboo jungle, river,
+   windswept hills, jagged peaks — chosen so the world gets more dramatic as
+   the life does, ending in a literal climb up a literal mountain. Six
+   chapters alternate left and right off that path with **61–84 blocks between
+   spur mouths**, against the first attempt's 28 and no spurs at all. New York
+   sits on an island cut off the river. Every plot is sketched, bordered and
+   labelled with a real sign.
+
+   **And chapter 1 is built**: Millard North High School, from the owner's own
+   photographs plus the architect's project page, with the 2016 renovation's
+   double-height commons behind the glass — which the architect's page
+   confirms is the point of that whole project. A painting of the real
+   photograph hangs beside it on a display wall, so a visitor can compare.
+
+   **What remains is the other five chapters**, and the machinery is now
+   proven rather than speculative: a stamping API, a plot table, real signs,
+   paintings with a custom-image pipeline, and a house rule that makes
+   parallel work safe — *resize your own plot, nudge the path, grow the
+   island, never change anything inside another chapter.*
+
+   The archive of the first attempt lives at `/world claude-opus-5-1` and is
+   asserted byte-identical by digest on every run.
 
 ## Sequencing
 
@@ -521,28 +544,33 @@ flight makes swapping to the mountain seed a row rather than a rebuild. So
 island is empty and it costs a rebuild once it is not, which is the same shape
 the old warning had, minus the licence.
 
-1. **Do the interview** (item 8). It should start this week, because **it
-   blocks on nothing and nothing blocks on it**. It is 75–100 minutes of Evan
-   talking into a recorder, it needs no code, and it does not care which world
-   wins. It is first among the things that produce the site's substance because
-   writing resume content before the fact record exists means writing content
-   that has to be checked against a document that disagrees with itself.
-2. **Signs** (item 1). The delivery surface. This is the one that reorders the
-   list: "content on the island" has been sitting at the top of the substance
-   half of this file for the whole project, and the world has no mechanism for
-   displaying a sentence. A build with no text in it is a shape. Signs are
-   days, not weeks, and every piece of content authored after them is cheaper.
-3. **Content on the island** (item 9). Blocked on nothing technical once 1
-   and 2 are done, and it is the whole point. Everything else on this list
-   makes the world more elaborate; only this makes it worth visiting. The
-   shape is **one build per resume point** — see section 2 — and the authoring
-   story is in "Also worth building" below.
-4. **The credits surface** (item 7). Cheap, small, and it stops being optional
-   the moment anything is served. Do it alongside content rather than after.
-5. **Deploy.** The platform is decided and the pipeline is built and exercised
-   on every push — see `docs/DEPLOYMENT.md`. What is missing is a Cloudflare
-   account, two repository secrets, and a decision about the domain. Nothing
-   is live, so no visitor has ever seen any of this.
+**REORDERED 2026-09-17.** The first three entries here were "do the interview,
+then signs, then content", and **all three have moved**. Signs shipped. The
+interview became a brain dump with no audio. Content stopped being hypothetical
+the moment Millard North went up. What follows is the list as it now stands.
+
+1. **The other five chapters** (item 9). Chapter 1 is built and the machinery
+   is proven — stamping API, plot table, signs, paintings, a biome map anchored
+   to the plot table, and a house rule that makes parallel work safe. This is
+   the whole point of the project and nothing technical blocks it. Each chapter
+   is a research pass plus a build pass, and the owner has a reference-photo
+   workflow that worked: his own pictures plus whatever the architect or the
+   institution publishes.
+2. **The brain dump** (item 8). Blocks nothing and nothing blocks it, which is
+   why it used to be first — but it is prose now, not a recording session, so
+   it can happen in fragments whenever he feels like it rather than needing an
+   afternoon. **E3, the refusal phrasings, is the one piece genuinely worth
+   chasing**; everything else is additive.
+3. **The credits surface** (item 7). Cheap, small, and it stops being optional
+   the moment anything is served. `DECISIONS.md` #3 has the obligation and
+   `DECISIONS.md` #4 has a second thing to settle before shipping publicly.
+4. **Deploy.** The pipeline is built and green again — push now runs build plus
+   an 8-second smoke, and the full suite moved to tags and manual dispatch.
+   What is missing is a Cloudflare account, two secrets, and a domain. **Note
+   `publish` runs strict `npm run prompt`, which dies without `corpus/`**, so
+   adding the secrets is not sufficient — see `docs/DEPLOYMENT.md` for the
+   three options, and "Where the corpus lives" below for the move that
+   dissolves the problem rather than working around it.
 
 **After a first ship**, in the order they earn their keep:
 
@@ -1236,6 +1264,91 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
   takes before it goes is unanswered, and it is the half that matters.
 
 ## Also worth building
+
+- **The CE deploy is losing a feature per day, and it is now a class rather
+  than a list.** Every feature shipped in the last two days has hit the same
+  wall: `textures-src/ce/` is an 89-file subset with **no plant cross-sprites,
+  no `mob_effect/`, no `particle/`, nothing bottle-shaped and nothing
+  sign-shaped**, and the free sound set is 31 files of footsteps. The
+  workarounds so far, each honest and each a compromise:
+
+  - **torch flame** — cropped from CE's own torch art
+  - **signs** — vanilla's silhouette stamped onto CE's plank pixels
+  - **potions** — five files copied unmodified from upstream PixelPerfectionCE
+  - **bamboo** — cane borrowed from a birch log; **the leaves come out as fat
+    bushy tops** because CE has no frond, and hand-drawing one is new art
+    pretending to be a derivative
+  - **effect icons** — no substitute possible, so a deployed site shows the
+    **colour swatch** rather than the 39 real icons
+  - **potion sounds** — no gulp, no glass, no bowstring, so **`build:deploy`
+    ships a silent potion**, with a re-pitched UI click rejected as a
+    fabricated sound with no author for `NOTICE.txt`
+
+  **The decision that is actually owed is not per-asset.** It is whether the
+  public build ships CE at all, and `DECISIONS.md` #3 already carries the
+  attribution half of the same question. Sourcing 39 icons and three sound
+  effects under a compatible licence is a real afternoon, and it is the kind
+  of afternoon that never gets scheduled because each individual gap looks
+  small.
+
+- **Potions: three waves still owed, and seventeen bottles deliberately
+  missing.** Wave one (the effect engine) and wave two (58 drinkable and splash
+  potions) shipped. What is left:
+
+  - **The brewing stand**, with its own screen, blaze-powder fuel and the
+    recipe tree. Until it exists, the three brewing intermediates (mundane,
+    thick, awkward) are correctly absent — they would be grey bottles leading
+    nowhere.
+  - **Lingering potions** and area-effect clouds.
+  - **Seventeen potions withheld on purpose**, each with its reason asserted by
+    a spec: Strength and Weakness need melee; Night Vision needs a light floor
+    in `sky.js`; Invisibility needs model hiding in `playerModel.js`; Luck
+    needs loot that rolls; the four mob-death effects need mobs. **A potion
+    whose effect nothing consumes is a potion that lies**, and that principle
+    is worth keeping when the temptation arrives to ship a full-looking set.
+  - **`effects.js` wants one small change**: `give()` has nowhere to put a
+    magnitude scale, so a splashed Instant Damage at half potency has to route
+    around it. A sixth argument, or an exported `applyInstant(entity, key, amp,
+    scale)`.
+
+- **A canopy in this engine is a hollow shell one quad thick**, and that is the
+  real reason leaves read as see-through. noa's greedy mesher opens with
+  `if (id0 === id1) continue` — it never draws a face between two voxels of the
+  same id — where vanilla's canopy is nine layers of quads because every
+  leaf-to-leaf boundary is drawn.
+
+  **Backface culling therefore has to stay OFF against vanilla**: measured
+  **14.3% sky visible inside a nine-block canopy with culling on, against 2.1%
+  with it off.** The far shell is standing in for interior layers noa refuses
+  to mesh, and the double-sided flag — which arrived by accident, as a side
+  effect of a change made for water — turns out to be load-bearing.
+
+  Not fixable in `blocks.js`. It is a mesher question, and the honest options
+  are teaching the mesher to draw same-id boundaries for a class of blocks
+  (expensive, and it is the thing greedy meshing exists to avoid) or accepting
+  the shell and tuning around it, which is where it stands.
+
+- **Cross-spec pollution is now the most common source of red**, and every
+  instance found so far is a shared page that one spec left in a state the
+  next one did not expect. Known live:
+  `23-debug-screen` → `66-torch`; `01-world` → `51-worlds` (and now
+  `85-millard-north`/`91-biomes` → `51-worlds`, three tests); `58-glowstone`
+  leaving three glowstones for `65-sky-light`; `57-flowing-water`'s audio test
+  failing only in a batch. Each passes alone.
+
+  `docs/HEALTH.md` §2 calls this a class rather than a list and it has only
+  grown since. **The fix is a real teardown contract, not another workaround**,
+  and it is worth doing before the suite gets big enough that nobody runs it.
+
+- **Small, real, and each already diagnosed:** a placed sign cannot be
+  re-opened for editing (the seam exists — `interact.js` calls
+  `fx.useBlock(id, position)`, which is how a crafting table opens); a
+  painting's selection outline is per-cell rather than the whole rectangle;
+  bamboo has no `age` thickness, no growth and no 45° sapling rotation
+  (`rescale:true` needs a scale term `rotateVertices` does not have); and
+  `test/12-sounds.spec.js:351` **passes and can no longer fail** — `DROP_X`
+  flipped sign when the terrain stopped being mirrored and the literal did not
+  follow, so the player lands on plain grass and the sound plays anyway.
 
 - **Where the corpus lives, and getting his own writing out of the loop.**
   Evan's ask, 2026-09-17: *"i dont want to store my own words in a public
