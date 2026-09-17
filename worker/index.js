@@ -203,7 +203,7 @@ export function lookupCorpus(topic, chunks = CHUNKS) {
   return scored.slice(0, 3).map((s) => s.c)
 }
 
-function runLookup(input, chunks) {
+export function runLookup(input, chunks) {
   const hits = lookupCorpus(input?.topic, chunks)
   if (!hits.length) {
     /* The empty result is WORDED, not empty. A bare `[]` invites a model to
@@ -211,7 +211,22 @@ function runLookup(input, chunks) {
      * abstention instruction arriving at the moment it is needed. */
     return 'Nothing in the corpus covers that. You do not know it. Say so.'
   }
-  return hits.map((h) => `## ${h.label}\n${h.text}`).join('\n\n')
+  /*
+   * THE SOURCE LINE IS RENDERED, NOT OPTIONAL.
+   *
+   * corpus/profile.md is Evan's own account of himself; corpus/extra/ is
+   * researched public fact off a school district's website or Wikipedia.
+   * Those are different trust classes and the model has to be able to tell,
+   * because profile.md section 4 turns on never handing a recruiter a
+   * confident invention -- and "the district website says 2,534 students"
+   * presented as "Evan says" is that failure with a citation attached.
+   *
+   * Emitted as a `source:` line rather than folded into the text so it reads
+   * as metadata about the passage rather than as another sentence in it. The
+   * fallback exists only for an older generated prompt on disk; the builder
+   * refuses to emit a corpus/extra/ chunk without one.
+   */
+  return hits.map((h) => `## ${h.label}\nsource: ${h.source ?? 'unlabelled, treat with care'}\n${h.text}`).join('\n\n')
 }
 
 /* ------------------------------------------------------------------ *

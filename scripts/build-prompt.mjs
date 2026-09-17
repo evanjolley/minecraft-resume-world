@@ -545,14 +545,26 @@ export function buildPrompt({ profile, answers = {} }) {
   /* Lookup chunks: the record, one per labelled paragraph, plus the long form
    * of the character section, plus anything in corpus/extra/. */
   const chunks = []
+  /* Everything out of profile.md is Evan's own account of himself, and saying
+   * so is what makes the corpus/extra/ sources mean anything by contrast. A
+   * provenance field that only ever appears on the researched chunks is not a
+   * distinction, it is a footnote the model can ignore. */
+  const FROM_EVAN = 'Evan, in his own words. He is the source for anything about himself.'
   for (const p of labelledParagraphs(record)) {
-    chunks.push({ id: slug(p.label ?? 'record'), label: p.label ?? 'Record', text: plain(p.text) })
+    chunks.push({
+      id: slug(p.label ?? 'record'), label: p.label ?? 'Record',
+      source: FROM_EVAN, text: plain(p.text),
+    })
   }
   for (const p of labelledParagraphs(character)) {
     const label = p.label ?? topicSentence(p.text)
-    chunks.push({ id: slug(label), label, text: plain(p.text) })
+    chunks.push({ id: slug(label), label, source: FROM_EVAN, text: plain(p.text) })
   }
-  for (const extra of extraFiles()) chunks.push(...extra)
+  /* `chunks.push(...extra)` until corpus/extra/ first had a file in it, at
+   * which point it threw "Spread syntax requires ...iterable" -- extraFiles()
+   * already flattens, so `extra` is one chunk object and not a list of them.
+   * A seam nothing had ever run through, which is why test/55 now runs one. */
+  chunks.push(...extraFiles())
 
   /* Drop the section leads. profile.md opens each section with a sentence
    * about what the section is for ("Facts the agent may state"), which has no
@@ -574,8 +586,15 @@ export function buildPrompt({ profile, answers = {} }) {
       + keep.map((s) => `${s.title.toUpperCase()}\n${plain(s.body)}`).join('\n\n'),
     RULES,
     ABSTENTION,
+    /* Two sentences of provenance, and no more than two. The trust classes
+     * are a real distinction the model has to honour, but resident tokens are
+     * the bill (docs/ai-evan/02-operations.md) and the enforcement lives in
+     * the rendered `source` line on every hit, not in a lecture up here. */
     'WHAT YOU CAN LOOK UP\n\ncorpus_lookup searches these topics. Call it with a '
-      + 'plain-English topic, not a keyword.\n'
+      + 'plain-English topic, not a keyword. Every passage comes back stamped with '
+      + 'its source, and the stamp matters: some of it is Evan in his own words, '
+      + 'some is researched public fact about a place or a company, and you never '
+      + 'turn the second kind into something he told you.\n'
       + chunks.map((c) => `- ${c.label}`).join('\n'),
     TAIL,
   ]
@@ -600,9 +619,14 @@ export function buildPrompt({ profile, answers = {} }) {
       system = system.replace(new RegExp(src, 'gi'), '[withheld]')
     }
     for (const c of chunks) {
-      if (new RegExp(src, 'i').test(c.text)) {
-        redactions.push([c.id, term])
-        c.text = c.text.replace(new RegExp(src, 'gi'), '[withheld]')
+      /* `source` is redacted alongside `text` because the worker renders it
+       * to the model on every hit. A citation is still a string that reaches
+       * a visitor, and the gate downstream does not care where it came from. */
+      for (const field of ['text', 'source']) {
+        if (new RegExp(src, 'i').test(c[field])) {
+          redactions.push([c.id, term])
+          c[field] = c[field].replace(new RegExp(src, 'gi'), '[withheld]')
+        }
       }
     }
   }
@@ -616,16 +640,91 @@ export function buildPrompt({ profile, answers = {} }) {
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48)
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** corpus/extra/*.md, split on `##`, so the corpus can grow without a code
- *  change. Nothing is there yet; docs/ai-evan/03-corpus.md wants transcripts. */
+/*
+ * corpus/extra/*.md, split on `##`, so the corpus can grow without a code
+ * change. docs/ai-evan/03-corpus.md wants transcripts; the first thing to
+ * actually land here was researched public fact about the places Evan is
+ * from, which is what forced the provenance rule below.
+ *
+ * EVERY CHUNK MUST DECLARE A SOURCE, AND THE BUILD DIES IF ONE DOES NOT
+ * --------------------------------------------------------------------
+ * corpus/profile.md is written from Evan's own answers. Everything that came
+ * out of it is first-person knowledge: he said it, so the agent may say it.
+ * Facts about Millard North or Omaha did not come from him -- they came off
+ * a school district's website -- and that is a DIFFERENT TRUST CLASS. An
+ * agent that cannot tell the two apart will eventually tell a recruiter that
+ * Evan said something a web page said, which is the exact failure profile.md
+ * section 4 exists to prevent.
+ *
+ * So provenance is a FIELD, not a sentence in the prose. Every chunk carries
+ * `source`, worker/index.js renders it above the text on every lookup, and a
+ * chunk in corpus/extra/ without one stops the build. Prose can be edited
+ * away by accident and a missing field cannot: the parse fails loudly instead
+ * of shipping an unattributed fact.
+ *
+ * FORMAT, and it is the same one a transcript will use:
+ *
+ *   Source: <trust class>. <where it came from>, <when>.   <- file default,
+ *                                                             before any ##
+ *   ## Topic
+ *   Source: ...            <- optional, overrides the file default
+ *   Facts, in prose.
+ *
+ * Rejected: a `provenance:` key in YAML front matter. It is a second syntax
+ * and a parser to go with it, for one string per file, in a directory whose
+ * whole point is that Evan can drop a markdown file into it.
+ *
+ * Rejected: leaving provenance in the body text. It survives `plain()` fine,
+ * but nothing checks it is there, nothing stops it being reworded into
+ * something that reads like a fact, and the model sees no structural
+ * difference between "Source: ..." and the sentence after it.
+ */
+const SOURCE_RE = /^\s*Source:\s*(.+)$/im
+
+/** Pull the `Source:` line out of a body, returning [source|null, rest]. */
+function takeSource(body) {
+  const m = SOURCE_RE.exec(body)
+  if (!m) return [null, body]
+  return [m[1].trim(), body.replace(m[0], '').trim()]
+}
+
+/** `## Title` split that PRESERVES the title's case, unlike sections(), whose
+ *  keys are lowercased so profile.md can be looked up by name. An index line
+ *  reading "- millard north high school" is not what the model should see. */
+function splitOnHeadings(md) {
+  return md.split(/^##\s+/m).slice(1).map((part) => {
+    const nl = part.indexOf('\n')
+    return { title: part.slice(0, nl).trim(), body: part.slice(nl + 1).trim() }
+  })
+}
+
 function extraFiles() {
   const dir = join(CORPUS, 'extra')
   if (!existsSync(dir)) return []
-  return readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => {
+  return readdirSync(dir).filter((f) => f.endsWith('.md')).sort().map((f) => {
     const md = readFileSync(join(dir, f), 'utf8')
-    return [...sections(md).entries()].map(([title, body]) => ({
-      id: slug(`${f.replace(/\.md$/, '')}-${title}`), label: title, text: plain(body),
-    }))
+    /* Anything before the first `##` is the file preamble. Its Source line,
+     * if any, is the default for every chunk in the file -- which is what
+     * makes a transcript cheap to add: one line at the top, then headings. */
+    const preamble = md.split(/^##\s+/m)[0]
+    const [fileSource] = takeSource(preamble)
+
+    return splitOnHeadings(md).map(({ title, body }) => {
+      const [own, rest] = takeSource(body)
+      const source = own ?? fileSource
+      if (!source) {
+        die(`corpus/extra/${f}: the chunk "${title}" has no Source: line, and the `
+          + 'file has no default one before its first heading. Every chunk in '
+          + 'corpus/extra/ must say where it came from and when -- see the '
+          + 'extraFiles() comment in scripts/build-prompt.mjs.')
+      }
+      return {
+        id: slug(`${f.replace(/\.md$/, '')}-${title}`),
+        label: title,
+        source: plain(source),
+        text: plain(rest),
+      }
+    })
   }).flat()
 }
 
@@ -696,16 +795,20 @@ function emitStub() {
     'your corpus and cannot answer.',
   ].join('\n')
 
+  /* Both trust classes are represented, so CI exercises the rendering of a
+   * `source` line rather than a chunk that happens not to have one. */
   const chunks = [
     {
       id: 'stub-one',
       label: 'Placeholder',
+      source: 'Nobody. This is a stub and it has no source.',
       text: 'A stub chunk. It exists so corpus_lookup has something to score '
         + 'and rank, and it says nothing true about anyone.',
     },
     {
       id: 'stub-two',
       label: 'Second Placeholder',
+      source: 'Also nobody. Invented on 1 January 1970.',
       text: 'A second stub chunk, so ranking between two candidates is a real '
         + 'operation rather than a list of one.',
     },

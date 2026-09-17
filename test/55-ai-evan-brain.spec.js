@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-import { handleAgent, CAPS, lookupCorpus, PROMPT_IS_STUB } from '../worker/index.js'
+import { handleAgent, CAPS, lookupCorpus, runLookup, PROMPT_IS_STUB } from '../worker/index.js'
 import { createGate } from '../worker/allowlist.js'
 import { buildPrompt } from '../scripts/build-prompt.mjs'
 
@@ -279,6 +279,49 @@ test('the lookup ranks the labelled topic above a passing mention', () => {
 })
 
 /* ------------------------------------------------------------------ *
+ * Provenance
+ * ------------------------------------------------------------------ *
+ *
+ * corpus/profile.md is Evan's own account of himself. corpus/extra/ is
+ * researched public fact -- a school district's enrollment number off its
+ * website -- and the two are different trust classes. profile.md section 4
+ * turns on never handing a recruiter something confident and wrong, and
+ * "the district site says 2,534" served as "Evan says" is exactly that.
+ *
+ * So `source` is a field on every chunk, the builder refuses to emit a
+ * corpus/extra/ chunk without one, and the Worker renders it on every hit.
+ * These three tests cover those three claims.
+ */
+
+test('a lookup result carries its source, so the model can tell who said it', () => {
+  const chunks = [{
+    id: 'a', label: 'Schools', source: 'A district website, fetched yesterday.',
+    text: 'Some researched fact about a building.',
+  }]
+  const out = runLookup({ topic: 'schools' }, chunks)
+  expect(out).toContain('source: A district website, fetched yesterday.')
+  /* Above the text, not appended to it: a citation trailing a paragraph
+   * reads as the last sentence of the paragraph. */
+  expect(out.indexOf('source:')).toBeLessThan(out.indexOf('Some researched fact'))
+})
+
+test('the builder refuses a corpus/extra chunk with no source', () => {
+  test.skip(!haveCorpus, 'corpus/ is local only')
+  const dir = join(ROOT, 'corpus', 'extra')
+  const tmp = join(dir, `__unsourced-${process.pid}.md`)
+  const hadDir = existsSync(dir)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(tmp, '## An Unsourced Topic\nA fact nobody will admit to having found anywhere.\n')
+  try {
+    expect(() => buildPrompt({ profile: readFileSync(PROFILE, 'utf8'), answers: {} }))
+      .toThrow(/no Source: line/)
+  } finally {
+    rmSync(tmp, { force: true })
+    if (!hadDir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/* ------------------------------------------------------------------ *
  * The prompt builder, against the real corpus
  * ------------------------------------------------------------------ */
 
@@ -315,6 +358,24 @@ test.describe('the prompt built from the real corpus', () => {
       for (let i = 0; i + 5 <= w.length; i++) {
         expect(everything).not.toContain(w.slice(i, i + 5).join(' '))
       }
+    }
+  })
+
+  test('every chunk says where it came from, in both trust classes', () => {
+    const { chunks } = real()
+    for (const c of chunks) expect(c.source, `chunk ${c.id} has no source`).toBeTruthy()
+    /* Both classes present, or the distinction is not being tested at all --
+     * a corpus that is entirely one kind would pass a weaker assertion. */
+    const kinds = new Set(chunks.map((c) => /own words/i.test(c.source)))
+    expect(kinds).toEqual(new Set([true, false]))
+  })
+
+  test('the researched chunks are dated, so a stale fact is visible as stale', () => {
+    const { chunks } = real()
+    const researched = chunks.filter((c) => !/own words/i.test(c.source))
+    expect(researched.length).toBeGreaterThan(0)
+    for (const c of researched) {
+      expect(c.source, `chunk ${c.id} cites no date`).toMatch(/\b20\d\d\b/)
     }
   })
 

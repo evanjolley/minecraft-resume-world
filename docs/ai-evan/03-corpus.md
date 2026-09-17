@@ -912,3 +912,95 @@ because none of them depended on the name.
 still reachable by anyone who clones. Scrubbing that means rewriting published
 history and force-pushing, which is Evan's call and not one to make quietly on
 his behalf. Recorded here so the decision is visible rather than assumed.
+
+---
+
+## `corpus/extra/` — the file format, and the trust classes
+
+Added 2026-09-17, when the first material that **did not come from Evan** landed in
+the corpus: researched public fact about Millard North, Millard Public Schools, Omaha,
+Boys State, Harvard, Bilibili and the companies he has worked for. Wikipedia and a
+school district's website, not him.
+
+That is the whole reason the format exists. `corpus/profile.md` opens with *"written
+from Evan's 71 answers"*, and everything built from it is first-person knowledge — he
+said it, so the agent may say it. A district website saying an enrolment number is a
+**different trust class**, and an agent that cannot tell the two apart will eventually
+tell a recruiter that Evan said something a web page said. Section 4 of the profile
+exists to prevent exactly that, and *"the person asking is often a recruiter"* is the
+reason it is not a cosmetic distinction.
+
+### The format
+
+`scripts/build-prompt.mjs` splits every `corpus/extra/*.md` on `##` headings, one
+lookup chunk per heading. Each chunk must declare a source.
+
+```markdown
+Source: <trust class>. <where it came from>, <when>.   <- file default, before any ##
+
+Optional preamble prose. Dropped; it is for whoever opens the file.
+
+## Topic Heading
+Source: ...            <- optional, overrides the file default for this chunk
+The facts, in plain prose.
+```
+
+Three things about it are load-bearing:
+
+1. **The build dies on a chunk with no source.** Not a warning. Prose can be edited
+   away by accident and a missing field cannot — the parse fails loudly instead of
+   shipping an unattributed fact. `test/55-ai-evan-brain.spec.js` proves it.
+2. **`source` is a field on the chunk, not a sentence in its text.** `worker/index.js`
+   renders it as its own `source:` line *above* the body on every lookup hit, so the
+   model sees metadata about the passage rather than another sentence in it. Chunks
+   built from `profile.md` get one too — a field that only ever appears on the
+   researched chunks is a footnote the model can ignore, not a distinction.
+3. **Every researched source carries a date**, also enforced by a spec. An agent that
+   says "as of what a school district published in September 2026" ages gracefully;
+   one that states a 2026 enrolment figure flat is wrong in a year and nobody notices.
+
+The resident prompt pays two sentences for this, in the lookup index, and nothing more.
+The enforcement is in the rendered line, not in a lecture.
+
+### Where sources disagree
+
+Record **both**, in the chunk, and say they disagree. Millard North's enrolment is
+2,534 (Wikipedia, 2023–24) or 2,572 (Public School Review, 2026–27); Boys Nation's
+founding year is 1935 by the Legion's own page and 1947 by Wikipedia's. Silently
+picking one is how a corpus acquires a confident error that nothing downstream can
+catch. Where a fact could not be verified at all, say so **in the chunk** — an
+explicit "not known here, do not guess" is retrievable and an omission is not.
+
+### What a transcript file should look like when it arrives
+
+Evan is recording long-form audio about his life. That is the soft information the
+facts above cannot supply, and this directory is where it lands. The format above was
+designed for it, so nothing needs rethinking — but **do not drop a raw transcript in**.
+This document already argues, three times from three directions, that distillation
+beats dumping (Amazon's 75%-less-data result, Haggerty's summarise-don't-paste,
+Shipper's transcript cleanup). A raw 90-minute transcript is ~8,000 tokens of unedited
+speech and it produces answers that are subtly wrong.
+
+So: one file per recording, named for its subject rather than its date
+(`high-school.md`, not `recording-3.md` — the filename prefixes every chunk id).
+
+```markdown
+Source: Evan, in his own words, recorded 2026-10-02 and cut down from the transcript.
+
+## Millard North, what it was actually like
+Two to six paragraphs. His account, tightened. Not his sentences verbatim
+unless a sentence is genuinely the point.
+
+## The soccer trip to Italy
+...
+```
+
+Per chunk, aim for **one topic a visitor would ask about**, 600–2,000 characters.
+Chunks under 60 characters are dropped by the builder. Retrieval is word overlap with
+label words scored double, so the heading should contain the words someone would use
+to ask — `lookupCorpus` has no idea that "school" and "Millard North" are related
+unless one of them says so.
+
+Keep the raw audio and the raw transcript **out of the repository**, the same as the
+answers. The distilled file is the artefact; the recording is the source material for
+it.
