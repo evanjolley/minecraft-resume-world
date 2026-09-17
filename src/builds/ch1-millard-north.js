@@ -96,6 +96,9 @@
  * Nothing factual is invented. The licence is in how a fact is drawn.
  */
 import { textRows, textWidth } from './font.js'
+import { hangPainting } from '../paintingArt.js'
+import { PAINTINGS } from '../paintings.js'
+import { setSignText } from '../signText.js'
 
 /*
  * THE PALETTE, and it is a much shorter list than it wants to be.
@@ -209,6 +212,7 @@ export function build(s) {
   eastWing(s)
   interiors(s)
   plaza(s)
+  photograph(s)
   eggs(s)
 }
 
@@ -904,7 +908,13 @@ function plaza(s) {
   const seats = [
     [10, 25], [12, 24], [17, 26], [21, 25], [22, 24], [27, 26], [31, 25],
     [35, 26], [39, 25], [44, 26], [48, 25], [49, 24], [54, 26], [57, 25],
-    [14, 21], [19, 20], [46, 21], [51, 20], [55, 21],
+    /* [55, 21] WAS IN THIS LIST AND IS NOW [50, 21]. It sat two blocks in
+     * front of the photograph's label and hid it from anywhere on the entry
+     * axis -- a charcoal cube exactly the height of a sign, directly in the
+     * sightline. Moved rather than deleted, because the scatter is the whole
+     * reason these are hand-placed, and 50 pairs it with 51 the way the
+     * photographs show them. See photograph(). */
+    [14, 21], [19, 20], [46, 21], [51, 20], [50, 21],
   ]
   for (const [x, z] of seats) s.set(x, 0, z, P.seat)
 
@@ -943,6 +953,159 @@ function plaza(s) {
     s.pillar(x, 61, 0, 15, P.silver)
     s.box([x - 1, 16, 61], [x + 1, 16, 61], P.lamp)
   }
+}
+
+/* ====================================================================== *
+ * THE PHOTOGRAPH OF THE REAL SCHOOL.
+ *
+ * The brief, verbatim: "I want to put up a 2x3 or whatever size makes sense
+ * painting of millardnorth2.webp in front of the build so that people can
+ * compare what AI built to the real thing."
+ *
+ * The painting system answers everything except WHERE, so where is the only
+ * decision in this section -- and it has three constraints that pull against
+ * each other.
+ *
+ *   1. IT HAS TO BE WHERE SOMEBODY ALREADY IS. The visitor comes off the spur
+ *      at local (65, 6), walks the paved strip down the path side of the plot
+ *      and steps onto the plaza at about (59, 16). That is the spot where
+ *      they first stop and look at the building, and this is four blocks off
+ *      that line.
+ *   2. IT MUST NOT STAND IN FRONT OF THE THING IT IS ASKING YOU TO COMPARE,
+ *      which is the obvious way to get this exactly wrong. Everything in the
+ *      head-on view is between x 28 and x 52 -- canopy x 30..50, pavilion
+ *      x 32..48 -- so this sits at x 52..58, east of all of it, against the
+ *      planting in front of the east wing. From the entry axis it is at the
+ *      edge of the frame; from the arrival it is about 19 degrees off the
+ *      building and much closer, which is the shot the brief actually asks
+ *      for: the photograph and the building in one view.
+ *   3. IT HAS TO BE READABLE. Custom painting art is 128 px per block and
+ *      reads clearly at ten; from the plaza edge this is about eight, and
+ *      from the arrival about sixteen, which is a walk rather than a squint.
+ *
+ * REJECTED -- hanging it on the building, which needs no new structure at
+ * all. Every surface on this front is glass, brick pier or the tan panel of a
+ * wing, and a photograph fixed to one of them reads as part of the school
+ * rather than as a note ABOUT the school. The comparison is a caption, and a
+ * caption does not go inside the picture.
+ *
+ * REJECTED -- the planted island in the drop-off loop at (22..44, 4..7),
+ * which is the one thing every visitor walks straight at. It is across the
+ * drive from the plaza, it is dead centre of the composition, and a wall
+ * there is precisely what constraint 2 forbids.
+ *
+ * REJECTED -- freestanding with no wall, floating. Paintings are blocks here
+ * (see src/paintingArt.js's header), so six of them in mid-air would be six
+ * blocks in mid-air; and every cell needs something solid behind it or
+ * installAttachment pops the picture off on the next tick.
+ * ====================================================================== */
+
+/** The row in src/paintings.js this hangs, and `npm run paintings` is what
+ *  turns it into a PNG. Named once and read for its SIZE below rather than
+ *  copied as a 3 and a 2 -- that file's header is explicit that a painting's
+ *  dimensions live in exactly one place, and a wall built around a stale copy
+ *  of them is a picture with a brick down one side. */
+const PHOTO = 'millard_north'
+
+/**
+ * A low display wall at the east end of the plaza, with the photograph on it.
+ *
+ * Runs AFTER plaza() in build(), because the last thing plaza() does is
+ * scatter mulch and ornamental grass over x 52..63, z 24..27 -- this stands
+ * on the north edge of that bed and has to be the later write.
+ */
+function photograph(s) {
+  const art = PAINTINGS.get(PHOTO)
+
+  /*
+   * TWO BLOCKS OF WALL EACH SIDE OF THE PICTURE AND ONE COURSE TOP AND
+   * BOTTOM. That proportion is what makes a wall read as a mount rather than
+   * as a wall that happens to have a picture on it, and it is the proportion
+   * the school's own sign panel over the doors already uses (DOOR +/- 2).
+   *
+   * Everything else is derived from it, so the wall re-centres itself if the
+   * row in src/paintings.js ever changes size.
+   */
+  const MARGIN = 2
+  const BACK = 24                  // the wall plane: the plaza's last paved row
+  const FACE = BACK - 1            // the picture, on its north face
+  const x0 = 52
+  const x1 = x0 + art.w + MARGIN * 2 - 1              // 52..58, seven blocks
+  const yLow = 1                                      // the picture's bottom row
+  const yTop = yLow + art.h                           // the cap, one above it
+
+  /* The footing and the base course, in the charcoal of the seat blocks and
+   * the pavilion's column bases -- so the wall grows out of the plaza rather
+   * than being set down on it. y = -1 replaces the paving, per the README. */
+  s.box([x0, -1, BACK], [x1, yLow - 1, BACK], P.dark)
+  /* The body, in the school's own brick: the same block as the base course
+   * of the wing four blocks behind it and as the colonnade's piers across
+   * the plaza, which is what keeps a new object on a finished plaza from
+   * reading as somebody else's furniture. */
+  s.box([x0, yLow, BACK], [x1, yTop - 1, BACK], P.brick)
+  /* And the cap, in the polished andesite that copes every parapet on the
+   * building. */
+  s.box([x0, yTop, BACK], [x1, yTop, BACK], P.coping)
+
+  /*
+   * A LANTERN IN EACH END OF THE CAP.
+   *
+   * NOT for the picture: object meshes take no block light at all, so the
+   * photograph is drawn unlit and stays legible at midnight -- deliberate,
+   * and docs/builds/README.md records it. But the WALL is ordinary terrain
+   * and goes black with everything else, and an unlit wall at night is a
+   * photograph floating in a void with no reason for being there. Sea
+   * lanterns because they are already the plaza's light, on the poles and on
+   * the flagpole tops.
+   */
+  s.set(x0, yTop, BACK, P.lamp)
+  s.set(x1, yTop, BACK, P.lamp)
+
+  /*
+   * THE PICTURE. One call: it writes the six frame blocks AND registers the
+   * art from one set of numbers, which is why it takes the stamper.
+   *
+   * [x, y, z] is the BOTTOM-LEFT CELL AS A VIEWER SEES IT and 'north' is the
+   * way the PICTURE LOOKS, not the wall it is stuck to. The wall is at z =
+   * BACK, so the picture in front of it at z = FACE looks north, up the plaza
+   * at the arriving visitor -- the same way the building faces, which is what
+   * lets one frame hold both.
+   *
+   * The viewer's right on a north-facing wall is +x (paintingArt.js derives
+   * it; the file header explains why it is derived and never remembered), so
+   * bottom-left is the LOW-x end and the rectangle grows east from there.
+   */
+  hangPainting(s, [x0 + MARGIN, yLow, FACE], 'north', PHOTO)
+
+  /*
+   * THE LABEL, and it is here because a stranger needs it.
+   *
+   * A visitor who has never seen Millard North sees a photograph of a school
+   * in front of a model of a school and has no way to know which is the
+   * claim. Two lines fix that. The words are the owner's own -- "compare what
+   * AI built to the real thing".
+   *
+   * IT IS A REAL SIGN, not letters stamped into a wall, which is the other
+   * way this repo writes words: setSignText renders glyphs on a mesh and its
+   * mirror derivation is the same one paintingArt.js uses, so this is not a
+   * fifth chance to ship the README's reversed text. The screenshot in
+   * test/88-photograph.spec.js is what actually checks that, per the same
+   * README: a derivation is not a check.
+   *
+   * The sign block is placed the ordinary way and then labelled, which is the
+   * two-step hangPainting exists to avoid -- a sign gets away with it because
+   * a sign is one block and there is only one coordinate to agree on. It goes
+   * in the base course under the middle cell of the picture, so it is under
+   * the centre of the photograph rather than under the centre of the wall;
+   * for a 3-wide picture those are the same block, and for an even-width one
+   * the picture is what it belongs to.
+   *
+   * WORLD COORDINATES, because setSignText has no plot -- and s.toWorld is
+   * the conversion that knows which of the two surveys this plot is in.
+   */
+  const cx = x0 + MARGIN + Math.floor(art.w / 2)
+  s.set(cx, 0, FACE, 'oak_wall_sign_north')
+  setSignText(...s.toWorld(cx, 0, FACE), ['Millard North', 'The real thing'])
 }
 
 /* ====================================================================== *

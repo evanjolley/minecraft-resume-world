@@ -41,7 +41,9 @@
  * the first time it is written to, and `touched` remembers which.
  */
 import { BLOCK_TYPES } from '../blocks.js'
-import { plot as findPlot, toPatch, toWorld, width, depth } from './plots.js'
+import {
+  plot as findPlot, toPatch, toWorld, toLandWorld, LAND_ALL, width, depth,
+} from './plots.js'
 
 /*
  * Every legal block key, for the typo check. A Set because the check runs once
@@ -89,6 +91,33 @@ export function stamper(world, plotId, opts = {}) {
 
   const w = width(p)
   const d = depth(p)
+
+  /*
+   * WHICH SURVEY THIS PLOT IS IN, and therefore which origin `toWorld` below
+   * subtracts.
+   *
+   * There are two: the archive's 128 patch has its origin at 87/56, the
+   * overworld's 256 patch at 128/16, and plots.js carries a conversion for
+   * each. This function took the archive's unconditionally, which was
+   * invisible for as long as the only caller was a comment -- toWorld existed
+   * "so that a build can print a /tp command for its own front door", and
+   * nothing in eight archive builds ever called it.
+   *
+   * IT STOPPED BEING A COMMENT when paintings landed. `hangPainting` writes
+   * its frame blocks through `s.set`, in plot-local, and then registers the
+   * PICTURE at `s.toWorld(...)` because the renderer runs against a live
+   * world and has no plot -- so a painting hung from an overworld chapter put
+   * its six blocks in the right place and its art 41 blocks west and 40
+   * blocks north of them, on a coordinate that is not a painting. The
+   * symptom is six empty frames: the art never draws, because `render` keeps
+   * an entry whose cells are not there PENDING forever.
+   *
+   * Identity, not `p.x1 > 127`: a chapter row is the same object the table
+   * exports, so asking the table is asking the thing that knows. A plot in
+   * neither table (a test double) falls back to the archive's origin, which
+   * is what every caller got before this line existed.
+   */
+  const worldOf = LAND_ALL[p.id] === p ? toLandWorld : toWorld
 
   /*
    * State that must be SHARED with any stamper made by `at()` below.
@@ -321,7 +350,7 @@ export function stamper(world, plotId, opts = {}) {
     /** Patch coordinates of a plot-local point, for a comment or an error. */
     toPatch: (x, y, z) => toPatch(p, x + ox, y + oy, z + oz),
     /** World coordinates -- what /tp takes -- of a plot-local point. */
-    toWorld: (x, y, z) => toWorld(...toPatch(p, x + ox, y + oy, z + oz)),
+    toWorld: (x, y, z) => worldOf(...toPatch(p, x + ox, y + oy, z + oz)),
   }
 
   return api
