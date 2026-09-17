@@ -68,6 +68,31 @@
  * Mascot the Mustangs, colours blue, silver and green, first Nebraska public
  * high school to offer the IB Diploma Programme, 42 state championships.
  *
+ * AND THE ARCHITECT'S OWN PAGE, which is the source that changed a decision:
+ * bcdm.net/portfolio/millard-north-high-school -- "Main Entry/Office Addition
+ * & Renovation", BCDM Architects for Millard Public Schools, 2016,
+ * $9,754,000, five phases over two years with the school open throughout. The
+ * scope is exactly the part of the building this model builds: the entrance
+ * was replaced to fix circulation and security, and what went in was "a
+ * double-height commons space with tall glass panels for natural lighting"
+ * plus new administration and a 212-seat testing centre, connecting the two
+ * storeys that had not been connected.
+ *
+ * SO THE COMMONS IS NOT A GUESS. The double-height hall behind the curtain
+ * wall was drawn from the photographs before that page was found, and the
+ * page says it is the point of the whole 2016 project -- which is why the
+ * tall bay under the pavilion is carved up to y = 15 rather than stopping at
+ * the colonnade's ceiling, and why the interior a visitor walks into first is
+ * the one room the architects would name if you asked them.
+ *
+ * WHAT COULD NOT BE FOUND: a site plan, a floor plan, or satellite imagery.
+ * WebSearch was exhausted and WebFetch cannot reach a tile server, so the
+ * FOOTPRINT HERE IS NOT MEASURED -- it is the massing the photographs show,
+ * compressed. The frontage is drawn from what is visible; the depth is
+ * invented to the extent that the building's real plan is unknown to this
+ * file, and the comment above about building "the front, not the school" is
+ * the honest form of that.
+ *
  * Nothing factual is invented. The licence is in how a fact is drawn.
  */
 import { textRows, textWidth } from './font.js'
