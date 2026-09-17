@@ -268,6 +268,12 @@ import { flatPatch, FLAT_PRESETS } from './flatworld.js'
  * so the node-verifier argument that keeps this import out of island.js does
  * not apply here. */
 import { stampBuilds } from './builds/index.js'
+/* The overworld's own landscape, which is a DIFFERENT survey of a different
+ * sized world -- see the second half of src/builds/plots.js. It is imported
+ * here for the same reason stampBuilds is: `builds` is a field on the
+ * dimension row, so the one fact that distinguishes two generated worlds is
+ * visible in the table that defines them. */
+import { stampLand } from './builds/land.js'
 import { BLOCK_TYPES } from './blocks.js'
 import { installPortals } from './portals.js'
 
@@ -345,17 +351,21 @@ export const DIMENSIONS = {
       width: PATCH_SIZE, depth: PATCH_SIZE,
       surfaceY: SURFACE_Y, ceilingY: CEILING_Y,
       /*
-       * AND NOTHING STANDING ON IT. This is the owner's world to build in,
-       * which is what he asked for when he saw the AI-built one: bare ground,
-       * the barrier, nothing stamped, spawn in the middle of it.
+       * AND A LANDSCAPE ON IT, which is what this line used to say `null` for.
        *
-       * `null` rather than deleting the seam: flatPatch has taken a `builds`
-       * parameter since the day the stamper landed and its note says in as
-       * many words that null gives you the empty world back and that this is
-       * how a dimension row would turn the builds off. No mechanism was
-       * invented to do this; the seam was already cut.
+       * The bare superflat was the right answer for one brief -- "the owner's
+       * world to build in" -- and the brief changed: a winding path through a
+       * living landscape, a river with a bridge, and seven plots sketched and
+       * left empty for him to build in. The plots are still bare ground. What
+       * is around them is not.
+       *
+       * `stampLand`, not `stampBuilds`. They are two surveys of two different
+       * worlds and neither function will touch the other's: each checks the
+       * patch size and the ground height it was written against and throws
+       * on anything else, which is what stops this row and the archive's from
+       * being swapped by a copy-paste.
        */
-      builds: null,
+      builds: stampLand,
     }),
     /* null means "the normal sky": sun, moon, clouds, day cycle. */
     sky: null,

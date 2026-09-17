@@ -85,7 +85,7 @@ function nearest(key) {
  */
 export function stamper(world, plotId, opts = {}) {
   const p = typeof plotId === 'string' ? findPlot(plotId) : plotId
-  const { x: ox = 0, y: oy = 0, z: oz = 0, label = p.id } = opts
+  const { x: ox = 0, y: oy = 0, z: oz = 0, label = p.id, forbid = [] } = opts
 
   const w = width(p)
   const d = depth(p)
@@ -122,6 +122,27 @@ export function stamper(world, plotId, opts = {}) {
     return at
   }
 
+  /*
+   * NO-GO RECTANGLES, in PATCH coordinates, and the inverse of the bounds
+   * check below.
+   *
+   * The bounds check answers "may I write HERE", which is the right question
+   * for a build that owns a rectangle. It is the wrong question for the
+   * landscape: a winding path legitimately wanders the whole 256 square, so
+   * its plot IS the whole square and the check degenerates to "is this on the
+   * map". That would leave the seven chapter footprints -- the one thing the
+   * owner is going to build in -- protected by nothing but care, which is
+   * precisely the belief that is wrong when it is wrong.
+   *
+   * So `forbid` inverts it: the landscape's stamper is handed the chapter
+   * rectangles and throws if a tree, a lamp or a spill of gravel lands in
+   * one. Empty for every other build, which is why nothing else changed.
+   * PATCH coordinates rather than plot-local, because the rectangles come
+   * from the plot table and belong to somebody else's origin.
+   */
+  const forbidden = (px, pz) => forbid.find(
+    r => px >= r.x0 && px <= r.x1 && pz >= r.z0 && pz <= r.z1)
+
   /** The one write. Every method below funnels through it, so the bounds
    *  check and the copy-on-write exist in exactly one place. */
   function put(x, y, z, key) {
@@ -133,6 +154,14 @@ export function stamper(world, plotId, opts = {}) {
         + `z ${p.z0}..${p.z1} -- see src/builds/plots.js.`)
     }
     const [px, py, pz] = toPatch(p, x, y, z)
+    const no = forbid.length ? forbidden(px, pz) : null
+    if (no) {
+      throw new Error(
+        `[${label}] reserved ground: local (${x}, ${y}, ${z}) is patch `
+        + `(${px}, ${pz}), inside ${no.id} -- x ${no.x0}..${no.x1}, `
+        + `z ${no.z0}..${no.z1}. That plot belongs to somebody else; `
+        + `see src/builds/plots.js.`)
+    }
     if (py < world.yMin || py > world.yTop) {
       throw new Error(
         `[${label}] out of the world: local y ${y} is absolute y ${py}, `

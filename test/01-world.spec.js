@@ -9,7 +9,7 @@ import { shot } from './helpers/shots.js'
  * read it without dragging Babylon in. It describes claude-opus-5-1, not this
  * world -- which is exactly why the last two tests in this file can use it to
  * tell the two apart. */
-import { SPAWN_PATCH_X, SPAWN_PATCH_Z, ORIGIN_X, ORIGIN_Z } from '../src/builds/plots.js'
+import { SPAWN_PATCH_X, SPAWN_PATCH_Z, ORIGIN_X, ORIGIN_Z, CHAPTERS } from '../src/builds/plots.js'
 
 /*
  * THIS FILE DESCRIBES A BARE WORLD, and it has now described one twice.
@@ -137,20 +137,35 @@ test.describe('world generation', () => {
        * is a list this test can be read against, so a typo in the preset fails
        * here instead of rendering as a slightly wrong hillside.
        *
-       * READ AT THE SPAWN COLUMN AGAIN. It moved out to patch (1, 1) for a day
-       * because world (0, 0) was the middle of stage 4's plot and had a
-       * building on it. There is no stage 4 in this world any more, so the
-       * question goes back to the column the player is actually standing in --
-       * which is the one column whose answer anybody would notice being wrong.
+       * READ AT THE NORTH-WEST CORNER, and the reason it moved is the point of
+       * the test. It was the spawn column; the path now runs through spawn, so
+       * the top block there is worn ground rather than grass -- which is
+       * asserted two tests down, deliberately, as the thing that tells this
+       * world from a bare one. What the LADDER is about is the preset, and the
+       * preset is only visible where nothing has been stamped on top of it.
+       *
+       * (-128, -16) is the patch's north-west corner: sixteen blocks behind
+       * spawn and 128 to the west of it, outside the path, outside every plot,
+       * and past the edge the forest is clipped at -- a canopy is four blocks
+       * across and src/builds/flora.js refuses to plant anything whose canopy
+       * would leave the map. The SPAWN column's ladder is checked below it,
+       * from the second block down, which is the part the path does not touch.
        */
       const gen = (x, y, z) =>
         page.evaluate(([a, b, c]) => window.game.voxelAt(a, b, c), [x, y, z])
 
+      expect(await gen(-128, SURFACE_Y, -16)).toBe(ID.air)
+      expect(await gen(-128, SURFACE_Y - 1, -16)).toBe(ID.grass)
+      expect(await gen(-128, SURFACE_Y - 2, -16)).toBe(ID.dirt)
+      expect(await gen(-128, SURFACE_Y - 3, -16)).toBe(ID.dirt)
+      expect(await gen(-128, SURFACE_Y - 4, -16)).toBe(ID.bedrock)
+
+      // And under spawn, where the path replaced the grass and nothing else.
       expect(await gen(0, SURFACE_Y, 0)).toBe(ID.air)
-      expect(await gen(0, SURFACE_Y - 1, 0)).toBe(ID.grass)
       expect(await gen(0, SURFACE_Y - 2, 0)).toBe(ID.dirt)
       expect(await gen(0, SURFACE_Y - 3, 0)).toBe(ID.dirt)
       expect(await gen(0, SURFACE_Y - 4, 0)).toBe(ID.bedrock)
+      expect(await gen(0, SURFACE_Y - 5, 0)).toBe(ID.air)
 
       /*
        * Below the bedrock, read through the GENERATOR rather than through
@@ -166,12 +181,12 @@ test.describe('world generation', () => {
        */
       expect(await gen(0, SURFACE_Y - 5, 0)).toBe(ID.air)
 
-      // FLAT means flat: the same ladder in a far corner of the patch, not
-      // just under spawn. This is the assertion the imported world could not
-      // make, and it is the one the owner actually asked for.
-      expect(await gen(MIN_X, SURFACE_Y - 1, MAX_Z)).toBe(ID.grass)
+      // FLAT means flat: the same ladder in the other north corner, 255
+      // columns away. The SOUTH corners are forest floor now -- leaf litter
+      // is a change of the ground block, not something standing on it -- so
+      // the two columns that are still preset-fresh are the two at z = MIN_Z.
       expect(await gen(MAX_X, SURFACE_Y - 1, MIN_Z)).toBe(ID.grass)
-      expect(await gen(MIN_X, SURFACE_Y, MAX_Z)).toBe(ID.air)
+      expect(await gen(MAX_X, SURFACE_Y, MIN_Z)).toBe(ID.air)
       expect(await gen(MAX_X, SURFACE_Y - 4, MIN_Z)).toBe(ID.bedrock)
     })
 
@@ -193,17 +208,17 @@ test.describe('world generation', () => {
     async ({ page }) => {
       /*
        * The claim that matters -- your feet end up ON the ground at SURFACE_Y
-       * rather than sunk into it -- has been asserted unchanged through three
-       * worlds. What moves is where the ground is, and it has moved back: the
-       * timeline went to claude-opus-5-1 and took its road-end spawn with it,
-       * so the default world arrives at its origin again.
+       * rather than sunk into it -- has been asserted unchanged through four
+       * worlds. What moves is what is under them.
        *
-       * AND IT IS GRASS UNDER HIM, which is the half of this test that
-       * discriminates. The same line read `.not.toBe(ID.grass)` yesterday,
-       * because the paving REPLACES the grass block rather than sitting on it.
-       * Standing on grass at the origin is therefore a fact that is true in
-       * exactly one of the two generated worlds, and a build stamped into the
-       * wrong one fails right here.
+       * IT IS THE PATH UNDER HIM NOW, not grass, and that is the half of this
+       * test that discriminates. The landscape's path REPLACES the grass block
+       * at the same height rather than sitting on it (which is also why every
+       * spec that drops a rig near spawn still works), so "standing at the
+       * origin on something that is neither grass nor air" is true in this
+       * world and false in a bare superflat. The height is asserted with it,
+       * because a path that raised the ground a block at spawn would break
+       * 17-non-cube and 66-torch three files away from their cause.
        */
       const [x, y, z] = await page.evaluate(() =>
         [...window.noa.ents.getPositionData(window.noa.playerEntity).position])
@@ -211,8 +226,13 @@ test.describe('world generation', () => {
       expect(x).toBeCloseTo(0.5, 3)
       expect(z).toBeCloseTo(0.5, 3)
 
-      expect(await getBlock(page, Math.floor(x), SURFACE_Y - 1, Math.floor(z)))
-        .toBe(ID.grass)
+      const under = await getBlock(page, Math.floor(x), SURFACE_Y - 1, Math.floor(z))
+      expect(under).not.toBe(ID.grass)
+      expect(under).not.toBe(ID.air)
+      // ...and nothing over his head, which is what the spawn clearing in
+      // src/builds/land.js exists to guarantee.
+      expect(await getBlock(page, Math.floor(x), SURFACE_Y, Math.floor(z))).toBe(ID.air)
+      expect(await getBlock(page, Math.floor(x), SURFACE_Y + 1, Math.floor(z))).toBe(ID.air)
     })
 
   test('the world renders something other than a blank canvas', async ({ page }) => {
@@ -283,46 +303,83 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
     return { columns, sampled, above, grass, world: t.dimension }
   }, surfaceY)
 
-  test('nothing is stamped anywhere in the default world', async ({ page }) => {
+  test('the landscape is standing in the default world', async ({ page }) => {
     const s = await survey(page, SURFACE_Y)
 
     /*
      * THE SAMPLE, ASSERTED BEFORE THE RESULT. 256x256 columns and 65 blocks
      * of headroom each (SURFACE_Y=136 up to the ceiling at 200), which is
-     * 4,259,840 voxels. If any of those numbers is zero the "above === 0"
-     * below is a sentence about nothing.
+     * 4,259,840 voxels. If any of those numbers is zero, every claim below is
+     * a sentence about nothing -- this repo has shipped a probe that passed
+     * vacuously and it is not doing it again.
      */
     expect(s.world).toBe('overworld')
     expect(s.columns).toBe(256 * 256)
     expect(s.sampled).toBe(256 * 256 * 65)
 
-    // The claim. Not "no builds near spawn" -- no block above the grass
-    // anywhere in the patch, which is the only form of "bare" worth asserting
-    // when the owner is about to build in it.
-    expect(s.above).toBe(0)
-
     /*
-     * ...and the ground really is under all of it, which is the other way the
-     * survey could be looking at the wrong y: a world with its floor
-     * somewhere else would report zero grass AND zero blocks above it, and
-     * the line above would pass on nothing.
+     * THIS TEST USED TO ASSERT THE OPPOSITE. For a day the overworld was bare
+     * -- `above` exactly 0 and all 65,536 columns grass -- because the owner
+     * wanted ground to build on. He then asked for a landscape to build IN,
+     * so the assertion inverts: there is a forest, a river and a path out
+     * there, and the two numbers that say so are independent of each other.
      *
-     * It is also a second, independent reading of "bare". Pointing the
-     * overworld row back at a stamper turns 65536 into fewer, because the
-     * road and the plot paving REPLACE grass at ground level rather than
-     * standing on top of it -- which the count above cannot see at all.
+     * `above` counts trees, lamp posts, markers and bridge railings: things
+     * standing ON the ground. Measured at about 18,000 columns' worth.
      */
-    expect(s.grass).toBe(256 * 256)
+    expect(s.above).toBeGreaterThan(5_000)
 
     /*
-     * And the road specifically, because it is the one build that would be
-     * hardest to see in a count: it replaces grass at ground level rather
-     * than adding blocks above it, so a road stamped into this world would
-     * leave `above` at exactly zero and only this line would notice.
+     * And the ground ITSELF changed, which the count above cannot see at all:
+     * the path, the river bed, the banks, the leaf litter and the plot
+     * borders all REPLACE the grass rather than standing on it. A world with
+     * every column still grass would pass the line above on trees alone.
+     *
+     * Both bounds matter. Too few and the landscape did not stamp; too many
+     * and something has paved the world.
      */
-    const underRoad = await page.evaluate(([x, z, y]) => window.game.voxelAt(x, y, z),
-      [SPAWN_PATCH_X - ORIGIN_X, SPAWN_PATCH_Z - ORIGIN_Z, SURFACE_Y - 1])
-    expect(underRoad).toBe(ID.grass)
+    expect(s.grass).toBeLessThan(256 * 256 - 8_000)
+    expect(s.grass).toBeGreaterThan(30_000)
+
+    /*
+     * THE SEVEN PLOTS ARE EMPTY, which is the deliverable the owner actually
+     * asked for: "no building within the plots other than maybe a sign".
+     *
+     * Read from the plot table rather than typed here, and counted INSIDE the
+     * border ring and behind the marker wall -- the two things this pass is
+     * allowed to put in a plot. Anything else above the grass in there is a
+     * build nobody asked for.
+     */
+    const inside = await page.evaluate(([y0, plots]) => {
+      const v = window.game.voxelAt
+      const t = window.game.terrain
+      let sampled = 0
+      const above = {}
+      for (const p of plots) {
+        above[p.id] = 0
+        for (let pz = p.z0 + 5; pz <= p.z1 - 1; pz++) {
+          for (let px = p.x0 + 1; px <= p.x1 - 1; px++) {
+            const x = px - t.originX, z = pz - t.originZ
+            for (let y = y0; y <= y0 + 8; y++) { sampled++; if (v(x, y, z) !== 0) above[p.id]++ }
+          }
+        }
+      }
+      return { sampled, above }
+    }, [SURFACE_Y, CHAPTERS.map(c => ({ id: c.id, x0: c.x0, x1: c.x1, z0: c.z0, z1: c.z1 }))])
+
+    expect(inside.sampled).toBeGreaterThan(50_000)
+    expect(inside.above).toEqual({
+      ch1: 0, ch2: 0, ch3: 0, ch4: 0, ch5: 0, ch6: 0,
+      /*
+       * EXCEPT CHAPTER 7, WHICH IS ALLOWED EXACTLY EIGHT BLOCKS. It is the
+       * parkour going up, and the brief for it is "reserve the footprint and
+       * the start, build none of it" -- so it has a five by five pad (ground
+       * level, invisible to this count) and four two-block posts around it,
+       * which is what these eight are. A ninth would mean somebody started
+       * building the climb.
+       */
+      ch7: 8,
+    })
   })
 
   test(`the eight stages are standing in ${BUILT_WORLD}`, async ({ page }) => {
