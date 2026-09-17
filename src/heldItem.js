@@ -11,6 +11,7 @@ import { cachedItemGeometry, displayFor, itemTexture, itemTextureUrl, loadItemGe
 import { createFirstPersonArm, keepMaterialLive } from './playerModel.js'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { trackEntityLight } from './entityLight.js'
+import { GROUP } from './renderOrder.js'
 
 /*
  * The first-person hand and held block.
@@ -25,10 +26,17 @@ import { trackEntityLight } from './entityLight.js'
  *    `noa.rendering.camera`, so anything parented to it inherits the camera's
  *    world matrix for free. No per-frame position maths.
  *
- * 2. renderingGroupId = 1. Without it the held block is just geometry sitting
- *    ~1 block from the eye, so walking into a wall makes the wall clip
- *    through your hand. Group 1 renders after group 0 with the depth buffer
- *    cleared, which is exactly how real games draw viewmodels.
+ * 2. renderingGroupId = GROUP.hand. Without it the held block is just
+ *    geometry sitting ~1 block from the eye, so walking into a wall makes the
+ *    wall clip through your hand. The group renders after the world with the
+ *    depth buffer cleared, which is exactly how real games draw viewmodels.
+ *
+ *    It used to be the literal 1 and it is now a 2, because nametag.js needed
+ *    a group BETWEEN the world and the hand -- one that draws after the world
+ *    without the depth clear. The hand stays above the names deliberately: a
+ *    nametag's see-through pass runs with depthFunction ALWAYS, so a name in
+ *    any group above this one would draw straight through your own fist. The
+ *    whole stack is written down in renderOrder.js.
  */
 
 /*
@@ -330,7 +338,7 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
    */
   const mesh = createHeldBlockMesh(noa, 'held')
   mesh.parent = viewmodel
-  mesh.renderingGroupId = 1
+  mesh.renderingGroupId = GROUP.hand
   mesh.scaling.setAll(SCALE)
   // Rotations are composed as quaternions below, so Babylon must be told to
   // use the quaternion rather than the Euler `rotation` vector.
@@ -359,7 +367,7 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
 
   const itemMesh = createItemMesh(noa, 'held-item')
   itemMesh.parent = itemSwing
-  itemMesh.renderingGroupId = 1
+  itemMesh.renderingGroupId = GROUP.hand
 
   /*
    * The empty hand is the real arm from the player model, sharing the skin
@@ -432,7 +440,7 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
 
   const arm = createFirstPersonArm(noa, skinMaterial)
   arm.parent = armPart
-  arm.renderingGroupId = 1
+  arm.renderingGroupId = GROUP.hand
   /*
    * Where the arm BOX sits relative to the part origin, in model units.
    * ModelBiped gives the right arm rotationPoint (-5, 2, 0) and a cube

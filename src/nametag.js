@@ -4,6 +4,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { Quaternion } from '@babylonjs/core/Maths/math.vector'
 import { Constants } from '@babylonjs/core/Engines/constants'
+import { GROUP, keepDepth } from './renderOrder.js'
 
 /*
  * NAMETAGS, transcribed from EntityRenderer.renderNameTag rather than
@@ -102,6 +103,36 @@ const fontSpec = () => `${LINE_H * SUPERSAMPLE}px Monocraft, monospace`
  */
 export function createNametag(noa, { text = '', height = 1.8, name = 'nametag' } = {}) {
   const scene = noa.rendering.getScene()
+
+  /*
+   * THE BUG THIS BLOCK EXISTS FOR, reported from play: "Evan nametag doesnt
+   * really show up when leaves are behind it? and it seems to go in front of
+   * the sky but behind clouds when I position them in line?"
+   *
+   * Two symptoms, one cause, and the cause was a number this file never set.
+   * Without a renderingGroupId these meshes sat in group 0 with the terrain
+   * and the clouds, and inside a group Babylon draws the transparent meshes in
+   * alphaIndex order. The two lines below the layer table set alphaIndex 0 and
+   * 1 -- correct for ordering the two passes against EACH OTHER, and a
+   * disaster against everything else, because every other transparent mesh in
+   * this world is on Babylon's default alphaIndex of Number.MAX_VALUE. The tag
+   * was therefore the FIRST transparent thing drawn in the world, and the
+   * clouds (cloud-mat, alpha 0.8, sky.js) painted straight over it. The sky is
+   * scene.clearColor and not geometry at all, so it could not paint over
+   * anything -- which is exactly the disagreement the report describes, and it
+   * was never about where the tag is in space.
+   *
+   * GROUP.nametag puts the tag after the entire world instead of in a sorting
+   * argument with it. keepDepth is the other half and is not optional: Babylon
+   * clears depth between rendering groups, and a nametag in a group with a
+   * fresh depth buffer has no terrain left to lose the depth test to, so the
+   * opaque pass below would draw crisp white THROUGH a mountain and the
+   * two-pass scheme would collapse into one. See renderOrder.js for the full
+   * stack and for why the hand is above this and not below it.
+   *
+   * Not the leaves, though -- see the LEAVES note at the bottom of this file.
+   */
+  keepDepth(scene, GROUP.nametag)
 
   /*
    * One texture, two materials. The see-through pass wants the background and
@@ -208,6 +239,9 @@ export function createNametag(noa, { text = '', height = 1.8, name = 'nametag' }
     const mesh = CreatePlane(`${name}-${i}`, { width: 1, height: 1 }, scene)
     mesh.material = material
     mesh.isPickable = false
+    mesh.renderingGroupId = GROUP.nametag
+    // Ordering WITHIN the group. See the block at the top of this function for
+    // why this number cannot also do the ordering against the world.
     mesh.alphaIndex = layer.alphaIndex
     noa.rendering.addMeshToScene(mesh)
     return { texture, material, mesh, ...layer }
@@ -343,6 +377,18 @@ export function createNametag(noa, { text = '', height = 1.8, name = 'nametag' }
  *   constant brightness, so they will read slightly bright in the dark. Fixing
  *   it means sampling noa's light at the entity, which noa does not expose
  *   per-entity today.
+ *
+ * - THE SEE-THROUGH PASS IS 1.21.1's, NOT 1.21.8's, and the constant moved
+ *   between them. The quote at the top of this file (553648127 = 0x20FFFFFF,
+ *   alpha 32/255) is what Yeet-Masta/MCP-1.21 has in
+ *   src/main/java/net/minecraft/client/renderer/entity/EntityRenderer.java.
+ *   1.21.8 passes -2130706433 = 0x80FFFFFF -- alpha 128/255, four times
+ *   brighter -- and picks the pass by `boolean bl = !entityRenderState.
+ *   isDiscrete`, exactly as the older version does with isDiscrete().
+ *   (sis1cat/minecraftsodium-1.21.8, Mojang-mapped, same path under
+ *   src/net/minecraft/.) Left at 32/255 rather than quietly retuned: which
+ *   version this world is copying is the owner's call, and it changes how a
+ *   name behind a wall reads. The ordering fix is independent of it.
  *
  * - CENTRING IS EXACT HERE AND HALF A PIXEL OFF IN VANILLA. `-font.width()/2`
  *   is Java integer division, so an odd-width string lands half a pixel right

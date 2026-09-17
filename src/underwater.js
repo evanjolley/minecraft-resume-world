@@ -4,6 +4,7 @@ import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder'
 import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { WATER_TINT } from './blocks.js'
+import { GROUP } from './renderOrder.js'
 
 /*
  * What being underwater looks like.
@@ -252,14 +253,17 @@ export function installUnderwater(noa, { fluids }) {
    * transparent pass back-to-front by distance, and this plane's distance is
    * CONSTANT -- so against the clouds, which are also transparent and also far
    * away, the comparison is a coin flip that can go either way frame to frame.
-   * Group 2 puts it after everything: group 0 is the world, and heldItem.js
-   * already claims group 1 for the first-person arm and the block in your
-   * hand. Vanilla tints the hand too, so being above it is right.
+   * GROUP.screen puts it after everything: the world, then the names, then the
+   * first-person arm and the block in your hand. Vanilla tints the hand too,
+   * so being above it is right, and the same argument settles the names --
+   * water is the medium you are reading the name THROUGH, so it tints them.
+   * The number moved from 2 to 3 when nametag.js took a group; renderOrder.js
+   * holds the stack now so the next overlay does not have to guess.
    */
   const plane = CreatePlane('underwater-overlay', { size: 1 }, scene)
   plane.parent = camera
   plane.position.z = 0.05          // camera.minZ is 0.01
-  plane.renderingGroupId = 2
+  plane.renderingGroupId = GROUP.screen
   plane.isPickable = false
   // Fogging the fog overlay would be circular, and at 0.05 blocks it would do
   // nothing anyway. Off so the intent is on the record.
