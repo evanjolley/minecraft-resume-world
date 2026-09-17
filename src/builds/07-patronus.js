@@ -294,7 +294,13 @@ function lab(k, W) {
    */
   k.pattern({
     at: [1, 1, 3], plane: 'zy',
-    legend: { '#': 'lime_concrete', '.': 'red_concrete', '?': 'gray_concrete' },
+    /* GREEN IS WOOL, NOT CONCRETE, and that is a bug report rather than a
+     * taste. `lime_concrete` is the one key in this palette whose material
+     * draws the wrong atlas layer today -- in the world it comes out as a
+     * smithing table, hammer and all, which a census cannot see and a
+     * screenshot cannot miss. Every other dyed green renders correctly; the
+     * wool is the flattest of them, which is what a status light wants. */
+    legend: { '#': 'lime_wool', '.': 'red_concrete', '?': 'gray_concrete' },
     rows: [
       '##.##?#?',
       '###.#?#?',
@@ -318,7 +324,7 @@ function reviewRoom(r, W) {
   r.box([6, 0, 4], [11, 0, 7], 'smooth_quartz')                  // the table
   for (const z of [3, 8]) for (let x = 6; x <= 11; x += 2) r.set(x, 0, z, 'stripped_bamboo_block')
 
-  r.box([1, 1, 2], [1, 2, 2], 'lime_concrete')                   // the rubric, such as it is
+  r.box([1, 1, 2], [1, 2, 2], 'lime_wool')                   // the rubric, such as it is
   r.box([1, 1, 3], [1, 2, 3], 'red_concrete')
   r.box([1, 1, 4], [1, 2, 4], 'gray_concrete')
   r.set(1, 0, 3, 'lodestone')
@@ -487,47 +493,52 @@ function miniArena(m) {
  * which is a scaffold you cannot use and which no plan view would ever show.
  */
 function scaffolding(f) {
-  const Z1 = 10
-
-  // Two lifts of boards over the whole road face of the frame.
-  f.rect([0, 0], [1, Z1], 4, 'bamboo_planks')
-  f.rect([0, 0], [1, Z1], 8, 'bamboo_planks')
-
   /*
-   * Standards and ledgers. The ledger heights are 2, 7 and 11 and they are
-   * not decorative choices -- a player standing on the lower lift occupies
-   * y = 5 and y = 6, so a ledger anywhere in that band is a scaffold you
-   * cannot walk on, and no plan view would ever show it. Two blocks of
-   * headroom over every boarded lift, or it is scenery.
+   * ONLY THE SOUTH HALF OF THE FRAME IS SHEETED, and that is the whole
+   * point. The first version boarded all eleven bays on both rows with a
+   * ledger every four courses, and from the road at eye level it was not
+   * scaffolding, it was a solid wall of bamboo with the building hidden
+   * behind it. Six bays of tube and two lifts of board, with the northern
+   * bays left bare, means a visitor sees SCAFFOLD, then STEEL, then SKY, in
+   * that order, which is what a half-built building looks like.
    */
-  for (const z of [0, 4, 9]) {
-    f.pillar(0, z, 0, 12, 'bamboo_block')
-    f.pillar(1, z, 0, 12, 'bamboo_block')
-  }
-  for (const y of [2, 7, 11]) {
-    f.line([0, y, 0], [0, y, Z1], 'bamboo_block')
-    f.line([1, y, 0], [1, y, Z1], 'bamboo_block')
-  }
-  for (const [y, z] of [[1, 2], [3, 6], [6, 2], [9, 6], [10, 2]]) f.set(1, y, z, 'stripped_bamboo_block')
+  const Z0 = 5, Z1 = 10
+
+  f.rect([0, Z0], [1, Z1], 4, 'bamboo_planks')                    // lower lift
+  f.rect([0, Z0], [0, Z1], 8, 'bamboo_planks')                    // upper lift, one board wide
 
   /*
-   * THE STAIR TOWER, and it stands on the footpath, which is where a stair
-   * tower stands. Four steps up the outside at x = 2, then a one-block step
-   * west onto the boards and two more west into the building -- so a visitor
-   * who has never seen this build can get from the pavement to the open
-   * second floor without being told how.
+   * The ledgers sit at y = 2 and y = 7 and those numbers are not decorative.
+   * A player standing on the lower lift occupies y = 5 and y = 6, so a
+   * ledger anywhere in that band is a scaffold you cannot walk on -- which
+   * no plan view shows and which only counting head height finds.
+   */
+  for (const z of [Z0, Z1]) {
+    f.pillar(0, z, 0, 10, 'bamboo_block')
+    f.pillar(1, z, 0, 10, 'bamboo_block')
+  }
+  for (const y of [2, 7]) {
+    f.line([0, y, Z0], [0, y, Z1], 'bamboo_block')
+    f.line([1, y, Z0], [1, y, Z1], 'bamboo_block')
+  }
+  for (const [y, z] of [[1, 7], [6, 8], [9, 6]]) f.set(1, y, z, 'stripped_bamboo_block')
+
+  /*
+   * THE STAIR TOWER, on the footpath at x = 2, which is where a stair tower
+   * stands. Four steps up the outside, one step west onto the boards, two
+   * more west and you are on the building's own decking -- so a visitor who
+   * has never seen this build can get from the pavement to the open second
+   * floor without being told how.
    *
-   * It is OUTSIDE the scaffold bay rather than inside it because the bay is
-   * two blocks wide: put the stair in there and a standard lands in the
-   * middle of it, and a ladder of bamboo you cannot actually climb is worse
-   * than no ladder at all. This was found by walking the route on paper and
-   * counting head height, which is the only way it is ever found.
+   * It is OUTSIDE the scaffold bay because the bay is two blocks wide: put
+   * the stair inside and a standard lands in the middle of it, and a ladder
+   * you cannot climb is worse than no ladder at all.
    */
   for (let i = 0; i <= 3; i++) f.box([2, 0, Z1 - i], [2, i, Z1 - i], 'bamboo_mosaic')
   f.set(3, 0, Z1 + 1, 'orange_concrete')                          // the foot of it, marked
 
-  f.set(0, 5, 3, 'shroomlight')                                   // site lighting, orange
-  f.set(1, 10, 6, 'shroomlight')
+  f.set(0, 5, 8, 'shroomlight')                                   // site lighting, orange
+  f.set(1, 9, 6, 'shroomlight')
 }
 
 /* ------------------------------------------------------------------ crane */
@@ -695,7 +706,7 @@ function arena(a) {
   // is what keeps the arena readable after dark.
   a.pattern({
     at: [0, -1, 0], plane: 'xz',
-    legend: { '=': null, '#': null, 'A': null, 'G': 'target', 'S': 'lime_concrete', 'X': 'magma_block' },
+    legend: { '=': null, '#': null, 'A': null, 'G': 'target', 'S': 'lime_wool', 'X': 'magma_block' },
     rows: FOUR_ROOMS,
   })
 
@@ -732,8 +743,8 @@ function arena(a) {
 
   // The start pad, marked the way a start state is marked, and lit.
   a.set(17, 0, 13, 'lodestone')
-  a.set(18, -1, 14, 'lime_concrete')
-  a.set(17, -1, 14, 'lime_concrete')
+  a.set(18, -1, 14, 'lime_wool')
+  a.set(17, -1, 14, 'lime_wool')
   a.set(19, 0, 12, 'sea_lantern')
 
   // Corner lights on the perimeter, so the whole enclosure has an edge you
@@ -799,23 +810,45 @@ function gallery(g) {
  */
 function retiredEnvironment(e) {
   e.rect([0, 0], [10, 6], -1, 'polished_deepslate')
-  e.hollow([0, 0, 0], [10, 6, 6], { walls: 'polished_blackstone', ceiling: 'polished_blackstone', inside: 'air' })
-  e.clear([10, 0, 3], [10, 2, 3])                                 // the door, on the far side
-  e.box([10, 1, 1], [10, 3, 2], 'gray_stained_glass')             // the window, gone grey
-  e.box([10, 1, 4], [10, 3, 5], 'gray_stained_glass')
-  e.set(5, 6, 3, 'magma_block')                                   // the two lights left on
-  e.set(2, 6, 3, 'magma_block')
+  e.hollow([0, 0, 0], [10, 7, 6], { walls: 'polished_blackstone', ceiling: 'polished_blackstone', inside: 'air' })
 
   /*
-   * The chart, painted ON the north wall rather than hung in front of it, so
-   * it is the wall. Four bars, each taller than the last, and a red line
-   * falling across them from the top left to the floor on the right. Read it
-   * in the source: the rows stack UP the page, so the last row is y = 0 and
-   * the drawing below is the wall.
+   * THE DOOR IS IN THE SOUTH WALL, not the east one. The haul route runs
+   * along z = 7, one block outside it, so you walk in facing north with the
+   * chart six blocks dead ahead. With the door on the east wall you entered
+   * sideways and the chart was behind your shoulder, which the first
+   * screenshot from inside made obvious and nothing else would have.
    */
+  e.clear([5, 0, 6], [5, 2, 6])
+  e.box([10, 1, 1], [10, 3, 2], 'gray_stained_glass')             // the window, gone grey
+  e.box([10, 1, 4], [10, 3, 5], 'gray_stained_glass')
+
+  // Lit, and lit RED. A dark interior reads as unfinished rather than as
+  // decommissioned, and this is the one room here that is neither.
+  for (const [x, z] of [[1, 1], [9, 1], [1, 5], [9, 5]]) e.set(x, 7, z, 'magma_block')
+  for (const [x, z] of [[3, 2], [7, 2], [3, 5], [7, 5]]) e.set(x, 7, z, 'shroomlight')
+  e.set(1, -1, 1, 'magma_block')                                  // uplight on the chart
+  e.set(9, -1, 1, 'magma_block')
+
+  /*
+   * The chart, painted ON the north wall so it is the wall. Four bars, each
+   * taller than the last, and a red line falling across them from the top
+   * left to the floor on the right. The rows stack UP the page, so the last
+   * row is y = 0 and the listing below is the wall.
+   *
+   * REVERSED at the last moment for the same left-handed reason the year on
+   * the hoarding is reversed -- see `hoarding`. Un-flipped, the bars climbed
+   * the wrong way and the red line rose instead of falling, which turns the
+   * one candid thing on this plot into the opposite of what it says.
+   */
+  /* IT STARTS AT y = 1, NOT y = 0. The agents in front of it are two blocks
+   * tall, and at floor level they stood squarely in front of the bottom two
+   * courses of the chart -- so from the door you saw four backs and some
+   * scattered green. One block of lift and the whole drawing clears their
+   * heads. */
   e.pattern({
-    at: [1, 0, 0], plane: 'xy',
-    legend: { '#': 'lime_concrete', 'R': 'red_concrete' },
+    at: [1, 1, 0], plane: 'xy',
+    legend: { '#': 'lime_wool', 'R': 'red_concrete' },
     rows: [
       'RR.....#.',
       '..RR...#.',
@@ -823,14 +856,15 @@ function retiredEnvironment(e) {
       '...#.R.#.',
       '.#.#.#R#.',
       '.#.#.#.RR',
-    ],
+    ].map(row => [...row].reverse().join('')),
   })
 
   /*
-   * The four identical agents, in a row, facing the chart. Identical on
-   * purpose: the thing he expects to be automated is not one experiment, it
-   * is the running of the same experiment a million times. So there are four
-   * of the same figure and nothing whatsoever distinguishes any of them.
+   * The four identical agents, in a row, facing the chart -- so you come in
+   * behind them and see what they are looking at over their shoulders.
+   * Identical on purpose: the thing he expects to be automated is not one
+   * experiment, it is the running of the same experiment a million times,
+   * so there are four of the same figure and nothing tells any of them apart.
    */
   for (const x of [2, 4, 6, 8]) {
     e.pillar(x, 3, 0, 1, 'iron_block')
@@ -847,6 +881,7 @@ function retiredEnvironment(e) {
     }
     e.set(x0 + 2, -1, 5, 'gold_block')
     e.set(x0, -1, 4, 'red_concrete')
+    e.set(x0 + 1, -1, 4, 'stone_bricks')
   }
 }
 
@@ -875,7 +910,7 @@ function boardByTheRoad(s) {
   s.set(51, 6, 23, 'sea_lantern')
   s.pattern({
     at: [52, 1, 21], plane: 'zy',
-    legend: { '#': 'lime_concrete', '.': 'red_concrete', '?': 'gray_concrete' },
+    legend: { '#': 'lime_wool', '.': 'red_concrete', '?': 'gray_concrete' },
     rows: [
       '?????',
       '##.##',
@@ -898,22 +933,39 @@ function boardByTheRoad(s) {
  * here is colour for exactly that reason.
  */
 function hoarding(s) {
-  s.pillar(35, 26, 0, 6, 'polished_blackstone')
-  s.pillar(51, 26, 0, 6, 'polished_blackstone')
-  s.box([35, 1, 26], [51, 5, 26], 'polished_blackstone')
-  for (let x = 35; x <= 51; x++) s.set(x, 0, 26, x % 2 ? 'orange_concrete' : 'black_concrete')
-  s.set(35, 6, 26, 'sea_lantern')
-  s.set(51, 6, 26, 'sea_lantern')
+  /* IT STOPS AT x = 49, two blocks short of the plot's building line, and
+   * that is not a proportion -- it is so its east post is not standing in
+   * front of the results board at x = 52. From the road the post split the
+   * board down the middle; from every plan view the two objects are eight
+   * blocks apart and obviously fine. */
+  s.pillar(33, 26, 0, 6, 'polished_blackstone')
+  s.pillar(49, 26, 0, 6, 'polished_blackstone')
+  s.box([33, 1, 26], [49, 5, 26], 'polished_blackstone')
+  for (let x = 33; x <= 49; x++) s.set(x, 0, 26, x % 2 ? 'orange_concrete' : 'black_concrete')
+  s.set(33, 6, 26, 'sea_lantern')
+  s.set(49, 6, 26, 'sea_lantern')
 
-  let x = 36
-  for (const d of [2, 0, 2, 6]) {
-    s.pattern({
-      at: [x, 1, 27], plane: 'xy',
-      legend: { '#': 'light_blue_concrete' },
-      rows: DIGITS[d],
-    })
-    x += 4
-  }
+  /*
+   * ...AND THE DRAWING IS REVERSED BEFORE IT IS STAMPED, which is the one
+   * genuinely surprising thing in this file.
+   *
+   * Babylon is LEFT-handed, so a camera facing north (-z) has -x on its
+   * right, not its left. An `xy` pattern's characters run +x, so they land
+   * right to left for the person reading them and the board came out saying
+   * 2026 backwards -- which is exactly what the first screenshot from the
+   * road showed, in blue, four blocks tall, unmissable once seen and
+   * invisible in every plan view and every census.
+   *
+   * The same handedness means a `zy` drawing on this LEFT plot reads the
+   * right way round from the road, which is why the facade and the results
+   * board are stamped as drawn and only this one is flipped.
+   */
+  const rows = [0, 1, 2, 3, 4].map(r => [2, 0, 2, 6].map(d => DIGITS[d][r]).join('.'))
+  s.pattern({
+    at: [34, 1, 27], plane: 'xy',
+    legend: { '#': 'light_blue_concrete' },
+    rows: rows.map(row => [...row].reverse().join('')),
+  })
 }
 
 /* ------------------------------------------------------------------ lights */
