@@ -981,11 +981,34 @@ beats dumping (Amazon's 75%-less-data result, Haggerty's summarise-don't-paste,
 Shipper's transcript cleanup). A raw 90-minute transcript is ~8,000 tokens of unedited
 speech and it produces answers that are subtly wrong.
 
-So: one file per recording, named for its subject rather than its date
-(`high-school.md`, not `recording-3.md` — the filename prefixes every chunk id).
+**THE INTAKE IS A BRAIN DUMP, NOT A RECORDING.** Evan ruled on this on
+2026-09-17: *"i am just going to brain dump a shit ton of info into claude, jave it
+sort, build out the db. There doesnt need to be any audio file infra or anything like
+that."*
+
+So there is **no audio pipeline, no transcription step and no recording schedule**, and
+nothing above should be read as asking for one. He writes or pastes prose; a model sorts
+it into the chunks below. The analysis earlier in this document about interviews and
+meeting transcripts stays as a record of the options that were weighed — it is not a
+plan.
+
+**What that changes, and what it does not.** It does not change the distillation
+argument: a wall of unsorted prose is the same problem as a raw transcript, and the same
+three findings apply. It does not change the format. What it does change is that
+sorting is now a step somebody does deliberately with a model, rather than a by-product
+of cleaning a transcript — which is better, because it can be re-run when a later dump
+contradicts an earlier one.
+
+It also means **he does not need to format anything.** Asking him to write markdown with
+headings is asking him to do the sorting himself, which is the part being delegated. He
+dumps; the sorting produces the file below.
+
+So: one file per subject, named for it (`high-school.md`, not `dump-3.md` — the
+filename prefixes every chunk id). One dump may produce several files, and a later dump
+may reopen one.
 
 ```markdown
-Source: Evan, in his own words, recorded 2026-10-02 and cut down from the transcript.
+Source: Evan, in his own words, written 2026-10-02 and sorted into topics.
 
 ## Millard North, what it was actually like
 Two to six paragraphs. His account, tightened. Not his sentences verbatim
@@ -1001,6 +1024,7 @@ label words scored double, so the heading should contain the words someone would
 to ask — `lookupCorpus` has no idea that "school" and "Millard North" are related
 unless one of them says so.
 
-Keep the raw audio and the raw transcript **out of the repository**, the same as the
-answers. The distilled file is the artefact; the recording is the source material for
-it.
+Keep the **raw dump out of the repository**, the same as the answers. The sorted file
+is the artefact; the dump is the source material for it. Keeping the raw text somewhere
+he controls is still worth doing — it is what a re-sort runs against when the chunking
+turns out wrong, and that is a question of his own filing rather than of this repo.
