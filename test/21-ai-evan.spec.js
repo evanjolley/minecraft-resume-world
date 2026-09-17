@@ -14,12 +14,22 @@ import { shot } from './helpers/shots.js'
  * would be expensive to discover was fake later.
  */
 
-/** Where Evan stands, and a spot inside his greeting radius. One lane of the
- *  road west of him -- he moved to world (-21.5, 61.5), three blocks up the
- *  road from spawn, when the old world origin became the middle of stage 4's
- *  plot (EVAN_XZ in src/main.js). Paving both sides, so this is still flat
- *  ground a teleport lands on. */
-const NEAR_EVAN = [-22.5, SURFACE_Y, 61.5]
+/*
+ * Where Evan stands, and a spot inside his greeting radius: one block west of
+ * him.
+ *
+ * HIS ADDRESS IS AN OFFSET FROM SPAWN NOW, not a coordinate -- EVAN_XZ in
+ * src/main.js is `[SPAWN[0] + 2, SPAWN[2] - 3]`, and src/npc.js re-drops him
+ * at that offset from whichever world's spawn you arrive in. So he is at
+ * world (2.5, -2.5) in the default superflat, which is where this spec runs.
+ *
+ * It was (-21.5, 61.5) for a day, while the eight-stage timeline was the
+ * default world and he stood in the far lane of its road. That world is
+ * `claude-opus-5-1` now and he still stands three blocks up the road in it;
+ * nothing about this test needs to know which world it is, only that he is
+ * three north and two east of wherever you land.
+ */
+const NEAR_EVAN = [1.5, SURFACE_Y, -2.5]
 
 /**
  * Say something in chat the way a player does -- T, type, Enter -- rather

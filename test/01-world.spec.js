@@ -293,15 +293,24 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
     expect(s.world).toBe('overworld')
     expect(s.columns).toBe(128 * 128)
     expect(s.sampled).toBe(128 * 128 * 65)
-    // ...and the ground really is under all of it, which is the other way the
-    // survey could be looking at the wrong y: a world with its floor
-    // somewhere else would report zero grass and zero blocks above it.
-    expect(s.grass).toBe(128 * 128)
 
     // The claim. Not "no builds near spawn" -- no block above the grass
     // anywhere in the patch, which is the only form of "bare" worth asserting
     // when the owner is about to build in it.
     expect(s.above).toBe(0)
+
+    /*
+     * ...and the ground really is under all of it, which is the other way the
+     * survey could be looking at the wrong y: a world with its floor
+     * somewhere else would report zero grass AND zero blocks above it, and
+     * the line above would pass on nothing.
+     *
+     * It is also a second, independent reading of "bare". Pointing the
+     * overworld row back at stampBuilds turns 16384 into 6631, because the
+     * road and the plot paving REPLACE grass at ground level rather than
+     * standing on top of it -- which the count above cannot see at all.
+     */
+    expect(s.grass).toBe(128 * 128)
 
     /*
      * And the road specifically, because it is the one build that would be

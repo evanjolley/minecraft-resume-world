@@ -4,11 +4,14 @@ import { test, expect } from './fixtures.js'
 import {
   chatCommand, grantOp, visibleCommands, waitFrames, waitTicks, look,
 } from './helpers/world.js'
+/* The plot table, read rather than copied -- plain data with no imports of
+ * its own, so a node-side spec may read it without dragging Babylon in. */
+import { SPAWN_PATCH_X, SPAWN_PATCH_Z, ORIGIN_X, ORIGIN_Z } from '../src/builds/plots.js'
 
 const SHOTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screenshots')
 
 /*
- * THREE WORLDS, ONE REGISTRY.
+ * FOUR WORLDS, ONE REGISTRY.
  *
  * 34-nether.spec.js proved the mechanism -- that assigning noa.worldName
  * really does re-request and re-mesh every chunk. This file is about the
@@ -20,22 +23,36 @@ const SHOTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screensho
  * origin used for the mountain patch. Both render a plausible world. So every
  * assertion below names a fact that is true of exactly one of the three:
  *
- *   overworld  128 wide, GENERATED, floor at y=132 (four layers, no bedrock
- *              below), grass under your feet at y=135.
- *   nether     128 wide, IMPORTED, range y=0..127, netherrack.
- *   mountains  256 wide, IMPORTED, range y=-64..263, origin column 175/116,
- *              a snow block on a jagged peak at y=198.
+ *   overworld        128 wide, GENERATED, floor at y=132 (four layers, no
+ *                    bedrock below), grass under your feet at y=135, and
+ *                    NOTHING standing on it.
+ *   claude-opus-5-1  the same generated superflat with the eight-stage
+ *                    timeline stamped into it. Same width, same source, same
+ *                    floor -- so width and source cannot tell it from the
+ *                    overworld, and what does is the road under its spawn.
+ *                    test/01-world.spec.js censuses both patches; this file
+ *                    only has to prove the registry reaches it.
+ *   nether           128 wide, IMPORTED, range y=0..127, netherrack.
+ *   mountains        256 wide, IMPORTED, range y=-64..263, origin column
+ *                    175/116, a snow block on a jagged peak at y=198.
  *
  * The width is the sharpest of those: it is a property of the BYTES that were
  * fetched, and no amount of correct switching machinery can make a 128-wide
  * asset report 256. Swapping the two asset URLs in the registry fails on it
  * immediately -- which is how this was checked (see the commit message).
  *
- * NO HARDCODED SPAWN COLUMN. Every world puts its spawn at horizontal (0, 0)
- * by construction -- island.js's WORLDS origins are the manifests' spawn
- * columns -- so "the block under the player" is the same sentence in all
- * three. That shared property is itself asserted, because it is what lets
- * every other spec in the suite say `getBlock(0, SURFACE_Y - 1, 0)`.
+ * NO HARDCODED SPAWN COLUMN, and the exception proves what the rule is for.
+ * Three of the four worlds put their spawn at horizontal (0, 0) by
+ * construction -- island.js's WORLDS origins are the manifests' spawn columns
+ * -- so "the block under the player" is the same sentence in all of them, and
+ * that is what lets every other spec in the suite say
+ * `getBlock(0, SURFACE_Y - 1, 0)`. The property is asserted here rather than
+ * assumed.
+ *
+ * claude-opus-5-1 is the one that arrives somewhere else, at the south end of
+ * its road, because it is the only world with a reason to. It carries
+ * spawnX/spawnZ in its WORLDS row and the number comes from
+ * src/builds/plots.js; every assertion about it below reads it from there.
  */
 
 const enter = (page, name) => page.evaluate(n => window.game.dimensions.enter(n), name)
@@ -75,10 +92,17 @@ test.afterEach(async ({ page }) => {
   }
 })
 
-test('the registry knows three worlds and the superflat is the one you boot into',
+test('the registry knows four worlds and the bare superflat is the one you boot into',
   async ({ page }) => {
+    /*
+     * THE ORDER IS THE TABLE'S, not sorted: `names` is Object.keys(DIMENSIONS)
+     * and this is the row order a reader of src/dimensions.js sees. Asserting
+     * the array rather than a set is deliberate -- it is the cheapest possible
+     * check that a row was added rather than one being renamed out from under
+     * something.
+     */
     const names = await page.evaluate(() => window.game.dimensions.names)
-    expect(names).toEqual(['overworld', 'mountains', 'nether'])
+    expect(names).toEqual(['overworld', 'claude-opus-5-1', 'mountains', 'nether'])
 
     const s = await survey(page)
     expect(s.active).toBe('overworld')
@@ -228,6 +252,59 @@ test('the Nether is untouched by any of this', async ({ page }) => {
   expect(look.fog).toBeCloseTo(0.035, 4)
   expect(look.clear[0]).toBeGreaterThan(look.clear[2])
 })
+
+/*
+ * THE FOURTH ROW, which is the cheque the first three were written to cash.
+ *
+ * The comment at the top of src/dimensions.js said a third entry would be "a
+ * row, an npm script, and a WORLDS row, and nothing in the switch itself
+ * knows it exists". claude-opus-5-1 is the fourth and it did not even need
+ * the npm script -- it is generated, not fetched -- so it is two rows and no
+ * branch. This test is the proof that the switch did not have to learn about
+ * it: the same `enter`, the same lookup, a world that is not in the same
+ * shape as either of its neighbours.
+ */
+test('the world the model built is reachable, and arrives on its road',
+  async ({ page }) => {
+    const res = await enter(page, 'claude-opus-5-1')
+    expect(res.ok).toBe(true)
+    // It is an OVERWORLD, not a dimension of its own -- the same distinction
+    // `mountains` makes, and the reason /world exists next to /dimension.
+    expect(res.id).toBe('minecraft:overworld')
+    await settleChunks(page)
+
+    const s = await survey(page)
+    expect(s.active).toBe('claude-opus-5-1')
+    expect(s.worldName).toBe('claude-opus-5-1')
+    expect(s.island).toBe('claude-opus-5-1')
+
+    // GENERATED, which is the half a width check cannot see here: this world
+    // is the same 128-wide superflat as the overworld, so `source` and the
+    // spawn column are the only things that tell the two rows apart.
+    expect(s.terrain.source).toBe('generated')
+    expect(s.terrain.width).toBe(128)
+    expect(s.terrain.missing).toEqual([])
+
+    /*
+     * THE ONE WORLD THAT DOES NOT ARRIVE AT (0, 0), read out of the plot
+     * table rather than written here -- the whole reason the number lives
+     * there is that the road may move.
+     */
+    expect(s.feet[0]).toBe(SPAWN_PATCH_X - ORIGIN_X)
+    expect(s.feet[2]).toBe(SPAWN_PATCH_Z - ORIGIN_Z)
+    expect(s.feet[1]).toBe(136)
+    /*
+     * ...and it is the road he is standing on. NAMED rather than "not grass",
+     * because loading the wrong world would also give you something.
+     *
+     * Two blocks are legal because the paving is dashed -- four blocks of
+     * smooth quartz every eight, which is what stops 120 blocks of andesite
+     * reading as a corridor (src/builds/road.js). Spawn happens to land on a
+     * dash. Listing both is honest about that; pinning the one it lands on
+     * today would fail the day somebody shifts the rate by a block.
+     */
+    expect(['polished_andesite', 'smooth_quartz']).toContain(s.underKey)
+  })
 
 test('/world switches, and it is still operator-only', async ({ page }) => {
   /*

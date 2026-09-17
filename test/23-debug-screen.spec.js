@@ -482,8 +482,15 @@ test.describe('F3 debug screen', () => {
 const GLOWSTONE = 129
 
 /*
- * STAND SOMEWHERE WITH SKY OVER IT, and this is new as of the day the road
- * was built.
+ * STAND SOMEWHERE WITH SKY OVER IT.
+ *
+ * THE REASON EXPIRED AND THE COLUMN STAYS. The arch and the lamps below are
+ * in claude-opus-5-1 now, not in the world these tests boot into, so spawn is
+ * open sky and zero block light again and all three could move back. They do
+ * not, because patch (1, 126) is measured, correct, and costs nothing -- and
+ * because "the F3 light line tracks the engine" was never a claim about where
+ * the player was standing. What follows is the argument that chose the
+ * column, kept for the day somebody wonders why it is in a corner.
  *
  * The three tests below all start from "the player is under open sky with no
  * lamp near them", which was true of spawn for as long as spawn was a field.

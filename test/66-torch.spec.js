@@ -38,13 +38,17 @@ const WALL_TORCH = { north: 656, south: 657, east: 658, west: 659 }
 
 /** Mid-air, the same reasoning as 58's pad: nothing up here to destroy. */
 const PY = 200
-/* Over the NEW spawn -- the south end of the road at world (-24, 64), see
- * src/builds/plots.js. This was (40, 20), over the old spawn column, and from
- * the new one the room's chunks are far enough out that the setBlock calls
- * that build it are sometimes dropped: it failed on webkit and passed on
- * chromium, which is what a residency race looks like from the outside. */
-const CX = -24
-const CZ = 64
+/*
+ * Over the spawn column, which is the origin again: the timeline moved to
+ * claude-opus-5-1 and took the road-end spawn with it.
+ *
+ * WHY IT HAS TO BE NEAR SPAWN AT ALL, learned the hard way when it was 68
+ * blocks away: the room's chunks are then far enough out that the setBlock
+ * calls that build it are sometimes dropped. It failed on webkit and passed
+ * on chromium, which is what a residency race looks like from the outside.
+ */
+const CX = 40
+const CZ = 20
 const MIDNIGHT = 18000
 
 /**

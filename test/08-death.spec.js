@@ -83,10 +83,12 @@ test.describe('death and respawn', () => {
       await settleOnGround(page)
       const [x, y, z] = await position(page)
       expect(y).toBeCloseTo(SURFACE_Y, 1)
-      /* SPAWN, not (0.5, 0.5). The overworld's spawn moved to the south end
-       * of the road when the world became a timeline -- see the note on
-       * SPAWN in test/helpers/world.js. Read from there rather than written
-       * out again, so this follows the one place the number is recorded. */
+      /* SPAWN from the helper, not a literal, even though it is (0.5, 0.5)
+       * again. It was the south end of a road for a day, while the timeline
+       * was the default world, and this test did not have to change either
+       * time -- which is the argument for reading the one place the number is
+       * recorded rather than writing it out. See the note on SPAWN in
+       * test/helpers/world.js. */
       expect(x).toBeCloseTo(SPAWN[0], 2)
       expect(z).toBeCloseTo(SPAWN[2], 2)
 

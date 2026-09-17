@@ -3,6 +3,21 @@
 Eight stages of one life, four to a side of one road, in a 128x128 world. This
 is how you build yours.
 
+**Which world.** These plots are **`claude-opus-5-1`**, not the overworld. They
+were the overworld for a day; the owner kept the built world under a name and
+took his default back as bare superflat to build in himself. Reach it in game
+with `/world claude-opus-5-1` (operator only, like `/world mountains`).
+
+Nothing in this document changed when that happened, which is the point: the
+plot table is patch indices into a 128x128 patch with its ground at
+`GROUND_Y`, and `claude-opus-5-1` is that patch. The world a patch is installed
+as was never one of the coordinate systems.
+
+**The name is a series.** `claude-<model>-<n>`, where `n` counts worlds and not
+versions of the model: the next world Opus 5 builds is `claude-opus-5-2`, and
+the first one another model builds starts its own count at 1. See the `WORLDS`
+table in `src/island.js`.
+
 Read this, then read `src/builds/01-omaha.js`, which is the worked example. Then
 open your own stub — it already exists and already has a row in
 `src/builds/index.js`, so you never edit a file anybody else is editing.
@@ -54,8 +69,8 @@ plot is wider than its paving — `x = 60..67` — because the verges carry the
 lamps and the stage markers. Do not write there.
 
 Everything else (`x` 0–3, 60–67, 124–127 and `z` 0–3, 118–127) is margin and
-stays grass. `test/01-world.spec.js` reads the Classic Flat ladder out of the
-margin at patch (1, 1); `test/70-builds.spec.js` asserts the margins are empty.
+stays grass. `test/70-builds.spec.js` asserts the margins are empty and that
+their corners are still walkable grass rather than a trench.
 
 **North is `-z`.** The visitor spawns at the SOUTH end of the road, at patch
 (63, 120), and walks north through time. Stage 1 is the far end of the walk;
@@ -258,8 +273,11 @@ Structures are **columns rewritten once**, between generation and install. There
 is no chunk hook and no `setBlock` storm at boot: `getVoxelID` stays two
 subtractions and an array read, and the world is simply born with a house in it.
 
-Only the overworld is stamped. The Nether and the mountains are imported assets
-and never pass through `flatPatch` at all.
+Only `claude-opus-5-1` is stamped, and it is the **dimension row** that says so:
+the two generated rows in `src/dimensions.js` differ in exactly one field,
+`builds: null` for the overworld and `builds: stampBuilds` for this world. The
+Nether and the mountains are imported assets and never pass through `flatPatch`
+at all.
 
 ### The trap nobody would guess
 
@@ -283,16 +301,21 @@ invisible world through three agents reporting green.
 
 ---
 
-## Known hazards for whoever owns stage 4 (Arize)
+## Known hazards — both now cleared
 
-Two things sit inside the Arize plot that are not Arize's:
+Two things used to sit inside the Arize plot that were not Arize's, and neither
+does any more. Recorded because the reasoning is the reason to keep it that way.
 
-- **AI Evan stands at world (-4.5, 0.5)** — patch (82.5, 56.5) — which is
-  `EVAN_XZ` in `src/main.js`. Leave that column clear or he spawns inside a
-  wall.
-- **`DROP_X` / `DROP_Z` in `test/helpers/world.js` is the same column.** Every
-  "teleport up and fall" spec in the suite drops down it and expects grass at
-  `SURFACE_Y - 1` with clear sky above.
+- **AI Evan** stood at world (-4.5, 0.5), patch (82.5, 56.5), the middle of
+  stage 4. `EVAN_XZ` in `src/main.js` is now an **offset from spawn** — two
+  east and three north — and `src/npc.js` re-drops him at that offset from
+  whichever world's spawn you arrive in. In this world that is the far lane of
+  the paving under the arch. Do not build in the three blocks north of the
+  arch, or he greets you from inside a wall.
+- **`DROP_X` / `DROP_Z` in `test/helpers/world.js`**, the column every
+  "teleport up and fall" spec falls down, was the same column. It is now in the
+  **overworld**, which is bare superflat everywhere, so no build can reach it.
 
-Both want moving to somewhere near the new spawn, and both live in files this
-system does not own.
+The live constraint that replaced them: **spawn is patch (63, 120)** and the
+arch over it belongs to `road.js`. Everything a visitor sees in their first
+frame is within about fifteen blocks of that.

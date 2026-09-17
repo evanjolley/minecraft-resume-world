@@ -30,13 +30,15 @@
  *      was written (see MIN_BLOCKS).
  *   2. NOTHING is anywhere else. The eight plots plus the road account for
  *      every non-air block above the grass; the complement is exactly zero.
- *   3. The margin frame is empty on all four sides, which other specs now
- *      depend on -- see the note on DROP_X / DROP_Z below.
+ *   3. The margin frame is empty walkable grass on all four sides, which is
+ *      what docs/builds/README.md promises a visitor who walks the edge.
  *   4. The two things a census cannot see are asked of the running game: a
  *      doorway you can walk through, and a photograph.
  */
 import { test, expect } from './fixtures.js'
-import { SURFACE_Y, getBlock, ID, teleport, DROP_X, DROP_Z } from './helpers/world.js'
+import {
+  SURFACE_Y, getBlock, ID, teleport, BUILT_WORLD, enterWorld, leaveWorld,
+} from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 import { stamper } from '../src/builds/stamp.js'
 import { flatPatch, FLAT_PRESETS } from '../src/flatworld.js'
@@ -291,20 +293,23 @@ test.describe('all eight stages are in the world', () => {
 
   test('the margin frame is still grass on all four sides', () => {
     /*
-     * THIS ASSERTION IS LOAD-BEARING FOR HALF THE SUITE, which is not
-     * obvious from here.
+     * THIS ASSERTION STOPPED BEING LOAD-BEARING FOR THE REST OF THE SUITE,
+     * and saying so is more useful than leaving the old claim standing.
      *
-     * DROP_X / DROP_Z in test/helpers/world.js is world (-14.5, 66.5), which
-     * is patch column (72, 122) -- south of every plot (they stop at z=117)
-     * and east of the road's verge (it stops at x=67). Every "teleport up and
-     * fall" spec in the suite drops down that column and expects grass at
-     * SURFACE_Y - 1 with clear sky above it. It used to be patch (82, 56),
-     * which is the middle of Arize's plot, and it moved here precisely
-     * BECAUSE this spec guarantees the margin is empty. So a build that
-     * spills south does not fail one test, it fails every fall, jump and
-     * fluid spec that uses the drop column, for a reason none of them can
-     * explain. That is what this test is for, and it is why the drop column
-     * is asserted by name at the bottom.
+     * For one day the builds were in the DEFAULT world, so DROP_X / DROP_Z --
+     * the column every "teleport up and fall" spec falls down -- had to be
+     * parked in a margin this test guarantees is empty, and a build that
+     * spilled south would have failed every fall, jump and fluid spec in the
+     * suite for a reason none of them could explain. The builds moved to
+     * claude-opus-5-1 and the default world is bare superflat again, so the
+     * drop column is now in a world where every column is clear and no build
+     * can reach it. The coupling is gone; the assertion below no longer names
+     * it.
+     *
+     * The margin is still asserted, for the reason it was worth asserting
+     * before the coupling existed: it is the complement check for THIS world.
+     * A build that spills into the margin is a build that has escaped its
+     * plot, and docs/builds/README.md promises the frame is walkable grass.
      *
      * THE BANDS ARE THE COMPLEMENT OF THE ALLOCATIONS, not the ranges quoted
      * in docs/builds/README.md, and the difference is the road. The road's
@@ -342,29 +347,53 @@ test.describe('all eight stages are in the world', () => {
      * not empty. The claim "nothing lives between the allocations" is
      * therefore made by the complement test above and not by a band here.
      *
-     * What IS worth asserting by hand is the seam: the last column of a plot
-     * and the first column of the next one belong to different owners, and a
-     * build that overran would have been caught by the stamper. So the rows
-     * below assert only the thing no other test says out loud -- that the
-     * specific columns other specs stand in are clear.
+     * The margin is walkable ground and not merely empty air, which is the
+     * half of "empty" a census of the blocks ABOVE the grass cannot see: a
+     * build that dug a trench along its boundary would pass every band above.
+     * One column per side, at the corners of the frame.
      */
-    const dropX = Math.floor(DROP_X + ORIGIN_X)
-    const dropZ = Math.floor(DROP_Z + ORIGIN_Z)
-    expect([dropX, dropZ], 'DROP_X / DROP_Z has moved out of the south margin')
-      .toEqual([72, 122])
-    expect(census(w, dropX, dropX, dropZ, dropZ),
-      `the drop column, patch (${dropX}, ${dropZ}), is not clear -- see DROP_X in test/helpers/world.js`)
-      .toBe(0)
-    expect(w.palette[w.cols[dropZ * 128 + dropX][GROUND_Y - 1 - w.yMin]],
-      'the drop column lands on grass').toBe('grass')
+    for (const [what, x, z] of [
+      ['north-west', 1, 1], ['north-east', 126, 1],
+      ['south-west', 1, 126], ['south-east', 126, 126],
+    ]) {
+      expect(w.palette[w.cols[z * 128 + x][GROUND_Y - 1 - w.yMin]],
+        `the ${what} corner of the margin is not grass`).toBe('grass')
+    }
 
-    // The Classic Flat ladder test/01-world.spec.js reads lives at patch
-    // (1, 1), in the west margin, and is the other column with a reader.
-    expect(census(w, 1, 1, 1, 1), 'the ladder column at patch (1, 1)').toBe(0)
+    /*
+     * Patch (1, 126) by name, because test/23-debug-screen.spec.js stands
+     * there: it is the furthest a column in this patch gets from anywhere a
+     * build may hang a lamp, which is what makes "the player is in zero block
+     * light" a safe opening assertion for the F3 light tests. That spec runs
+     * in the default world where nothing is stamped at all, so this is
+     * belt-and-braces rather than a coupling -- but it is free, and it is the
+     * column that would break first if a lamp crept west.
+     */
+    expect(census(w, 1, 1, 126, 126), 'the dark-sky column at patch (1, 126)').toBe(0)
   })
 })
 
+/*
+ * ------------------------------------------------------------------------
+ * EVERYTHING ABOVE RUNS IN NODE AGAINST A PATCH THIS FILE BUILT, so it was
+ * unaffected by the builds changing worlds -- `builtPatch()` calls flatPatch
+ * with the stamper on and has never cared which dimension row does the same.
+ *
+ * EVERYTHING BELOW ASKS THE RUNNING GAME, and the running game boots into a
+ * bare superflat now. The eight stages live in claude-opus-5-1, so these
+ * tests have to go there first, and hand the world back afterwards: one
+ * booted page is shared by the whole worker and a spec that ends somewhere
+ * else hands the next spec somewhere else.
+ *
+ * enterWorld WAITS for the chunks. A probe that reads noa.getBlock on the
+ * line after a world switch reads the old world's cache -- see the note in
+ * test/helpers/world.js.
+ * ------------------------------------------------------------------------
+ */
 test.describe('the stages are standing in the running game', () => {
+  test.beforeEach(async ({ page }) => { await enterWorld(page, BUILT_WORLD) })
+  test.afterEach(async ({ page }) => { await leaveWorld(page) })
+
   test('Omaha: the house is standing, and you can walk into it', async ({ page }) => {
     /*
      * Asked of the running game rather than of the generator, because the

@@ -18,19 +18,23 @@ import { shot } from './helpers/shots.js'
  */
 
 /*
- * Evan stands on the road at world (-21.5, 61.5) -- three blocks north of
- * spawn, see EVAN_XZ in src/main.js. This is four blocks further NORTH up the
- * same lane, looking back south at him.
+ * Evan stands at world (2.5, -2.5) -- three blocks north of spawn and two
+ * east, see EVAN_XZ in src/main.js. This is four blocks further NORTH up the
+ * same line, looking back south at him.
  *
- * It used to be four blocks west of him at the old world origin, which the
- * plot table has since given to stage 4. The direction changed with the
- * address: the road runs north-south, so the only four-block sightline that
- * is flat paving rather than a kerb, a verge or somebody's front wall is
- * along it. Which way the camera looks barely matters to what this file
- * asserts -- he TURNS TO FACE YOU (src/npc.js, bodyYaw), so the front of the
- * skin is whatever side the camera is on.
+ * HIS ADDRESS IS AN OFFSET FROM SPAWN, not a coordinate: npc.js re-drops him
+ * three north and two east of wherever you arrive, in every world. It was
+ * (-21.5, 61.5) while the timeline was the default world and he stood in the
+ * road's far lane; the timeline is `claude-opus-5-1` now and he is in the
+ * same spot relative to the arch there. This spec runs in the bare superflat,
+ * where the only thing that matters is that four blocks of flat ground are in
+ * front of him, which on a superflat is everywhere.
+ *
+ * Which way the camera looks barely matters to what this file asserts -- he
+ * TURNS TO FACE YOU (src/npc.js, bodyYaw), so the front of the skin is
+ * whatever side the camera is on.
  */
-const IN_FRONT = [-21.5, 57.5]
+const IN_FRONT = [2.5, -6.5]
 const LOOK_SOUTH = 0
 
 /** Read an image the page can fetch back out as pixels. */

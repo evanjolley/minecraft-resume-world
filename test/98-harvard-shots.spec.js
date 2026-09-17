@@ -5,7 +5,9 @@
  * are all defects you only find in a screenshot at eye level.
  */
 import { test } from './fixtures.js'
-import { SURFACE_Y, teleport, look } from './helpers/world.js'
+import {
+  SURFACE_Y, teleport, look, BUILT_WORLD, enterWorld, leaveWorld,
+} from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 
 // plot-local -> world. Harvard is patch x 68..123, z 6..33; world = patch - (87, 56).
@@ -19,7 +21,14 @@ async function stand(page, x, y, z, heading, pitch = 0) {
   await page.waitForTimeout(700)
 }
 
+/* Stage 2 is in claude-opus-5-1, not in the world the game boots into -- the
+ * timeline moved out of the default world when the owner asked for his bare
+ * superflat back. Enter it first, hand it back afterwards: one booted page is
+ * shared by the whole worker, and enterWorld is what waits for the chunks. */
 test.describe('what stage 2 looks like', () => {
+  test.beforeEach(async ({ page }) => { await enterWorld(page, BUILT_WORLD) })
+  test.afterEach(async ({ page }) => { await leaveWorld(page) })
+
   test('from the road, at eye level', async ({ page }) => {
     await stand(page, -23.5, SURFACE_Y + 1, wz(13), E)
     await shot(page, 'harvard-from-road')

@@ -27,7 +27,28 @@
  * ------------------------------------------------------------------------
  */
 import { test, expect } from './fixtures.js'
-import { SURFACE_Y, teleport, settleOnGround, position } from './helpers/world.js'
+import {
+  SURFACE_Y, teleport, settleOnGround, position, BUILT_WORLD, enterWorld, leaveWorld,
+} from './helpers/world.js'
+
+/*
+ * THE COURSE IS IN claude-opus-5-1, not in the world the game boots into.
+ *
+ * Stage 8 moved with the other seven when the owner asked for his default
+ * world back (see the WORLDS table in src/island.js). The node-side tests
+ * below are unaffected -- they build their own patch and stamp it -- but
+ * every test that walks, falls or photographs has to be standing in the
+ * world the course is in, and has to hand it back afterwards: one booted
+ * page is shared by the whole worker.
+ *
+ * A HELPER RATHER THAN A TOP-LEVEL beforeEach, because half this file never
+ * touches the page and switching worlds for those tests would cost three
+ * seconds each to prove nothing.
+ */
+const inTheCourse = () => {
+  test.beforeEach(async ({ page }) => { await enterWorld(page, BUILT_WORLD) })
+  test.afterEach(async ({ page }) => { await leaveWorld(page) })
+}
 import { shot } from './helpers/shots.js'
 import { flatPatch, FLAT_PRESETS } from '../src/flatworld.js'
 import { GROUND_Y, ORIGIN_X, ORIGIN_Z, plot } from '../src/builds/plots.js'
@@ -226,6 +247,8 @@ function run(page, waypoints, maxTicks = 900) {
 }
 
 test.describe('the course goes', () => {
+  inTheCourse()
+
   test('a player walking it and jumping at the edges reaches the summit', async ({ page }) => {
     // 900 ticks is thirty seconds of running, against a course a person does
     // in about twenty. The budget is the assertion's teeth: raise it and a
@@ -344,6 +367,8 @@ test.describe('the course goes', () => {
 })
 
 test.describe('falling off costs nothing', () => {
+  inTheCourse()
+
   test('a drop from the summit into the pool does no damage', async ({ page }) => {
     /*
      * THE ASSERTION THAT DECIDES WHETHER THIS IS FOR VISITORS OR FOR
@@ -450,6 +475,8 @@ test.describe('stage 8 is in the world', () => {
 })
 
 test.describe('what stage 8 looks like', () => {
+  inTheCourse()
+
   test('from the road, at eye level', async ({ page }) => {
     /* Far enough up the road to see the bridge broadside rather than to have
      * a nose against the ramp. z = 24 put the camera inside the approach and

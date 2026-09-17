@@ -56,22 +56,23 @@ const ORIENT_AT = { x: -10, y: 76, z: 0 }
  * spawn, which is what lets the beforeAll build it at all.
  */
 /*
- * MOVED, WITH SPAWN. This was (20, 200, 20), which was "just above the old
- * spawn column" -- and the beforeAll can only build the rig at all because
- * every chunk it touches is inside noa's load range FROM WHERE THE PLAYER IS
- * STANDING. setBlockID into an unloaded chunk is dropped silently.
+ * IT MOVES WITH SPAWN, and it has now moved twice.
  *
- * The overworld's spawn is now the south end of the road at world (-24, 64)
- * -- see src/builds/plots.js -- and from there the far (+x) end of the old
- * rig fell outside the range: the first three tests passed, reading the near
- * end, and the staircase and the top slab at x+8..x+15 failed with the player
- * resting on the ground 72 blocks below. A silently half-built rig is exactly
- * the failure this comment is here to stop happening a third time.
+ * The beforeAll can only build this rig at all because every chunk it touches
+ * is inside noa's load range FROM WHERE THE PLAYER IS STANDING. setBlockID
+ * into an unloaded chunk is dropped silently, and a silently half-built rig
+ * is the failure this comment exists to stop happening again: when spawn went
+ * to the south end of the road, the far (+x) end of the old rig fell out of
+ * range and the first three tests passed while the staircase failed.
+ *
+ * Spawn is the origin again -- the timeline moved to claude-opus-5-1 and took
+ * its road-end spawn with it -- so the rig comes back over the origin with
+ * it. The coordinates are the ones it had before the road existed.
  *
  * y = 180 rather than 200 so it cannot collide with test/66-torch.spec.js's
  * room, which lives at y = 200 over the same spawn and shares a worker.
  */
-const RIG = { x: -34, y: 180, z: 50 }
+const RIG = { x: 20, y: 180, z: 20 }
 
 /** Vanilla's stone. Duplicated from blocks.js on purpose, like helpers/world's ID. */
 const STONE = 3
