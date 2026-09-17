@@ -159,7 +159,7 @@ export function stamper(world, plotId, opts = {}) {
    * for a build that owns a rectangle. It is the wrong question for the
    * landscape: a winding path legitimately wanders the whole 256 square, so
    * its plot IS the whole square and the check degenerates to "is this on the
-   * map". That would leave the seven chapter footprints -- the one thing the
+   * map". That would leave the six chapter footprints -- the one thing the
    * owner is going to build in -- protected by nothing but care, which is
    * precisely the belief that is wrong when it is wrong.
    *

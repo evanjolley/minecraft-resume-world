@@ -50,6 +50,7 @@ import { carveRiver, buildBridge } from './river.js'
 import { drawPath, drawSpurs, lampPosts } from './path.js'
 import { plantForest } from './flora.js'
 import { markChapters } from './chapters.js'
+import { biomeField, groundOf, subsurfaceOf } from './biomes.js'
 
 /** What a column is. The writer switches on it and so does every step after
  *  the one that set it. */
@@ -138,6 +139,40 @@ function emptyModel() {
     surface: new Array(n).fill(null),
     /** River bed depth in blocks (1 or 2), for the columns that have one. */
     depth: new Uint8Array(n),
+    /** Which biome the column is in, and how far it is from the nearest
+     *  biome border (0 at the border, 1 well inside). Filled by the biome
+     *  pass, read by the ground pass, the relief and the forest -- three
+     *  passes that must not be allowed to disagree about where birch stops,
+     *  which is the whole reason it is one array and not three calls. */
+    biome: new Uint8Array(n),
+    gap: new Float32Array(n),
+    /** What a RAISED column is filled with under its surface block. Dirt
+     *  everywhere a meadow would have dirt; stone where a mountain would have
+     *  stone, because a twenty-block dirt cliff with a snow hat on it is what
+     *  the first version of the peaks looked like from the path. */
+    sub: new Array(n).fill(null),
+  }
+}
+
+/*
+ * THE BIOME PASS. Paints the ground and nothing else: no height, no plants,
+ * no water. It runs FIRST of the writers-to-`surface` so that everything with
+ * a stronger claim on a column -- the river bed, the bank, the worn path --
+ * simply overwrites it afterwards, in the order those passes already run.
+ *
+ * Plots are skipped rather than painted-and-ignored. It is the same answer
+ * either way (writeGround refuses KIND.PLOT) and this way the array says what
+ * the world says.
+ */
+function paintBiomes(model) {
+  const field = biomeField()
+  model.biome = field.id
+  model.gap = field.gap
+  for (let i = 0; i < model.kind.length; i++) {
+    if (model.kind[i] === KIND.PLOT) continue
+    const x = i % LAND_SIZE, z = (i / LAND_SIZE) | 0
+    model.surface[i] = groundOf(field.id[i], x, z, model.h[i])
+    model.sub[i] = subsurfaceOf(field.id[i])
   }
 }
 
@@ -258,8 +293,9 @@ function writeGround(s, model) {
         continue
       }
       if (h === 0 && surf === null) continue
-      // Raise: dirt up to just under the surface, then the surface itself.
-      for (let y = -1; y <= h - 2; y++) s.set(x, y, z, 'dirt')
+      // Raise: fill up to just under the surface, then the surface itself.
+      const fill = model.sub[i] ?? 'dirt'
+      for (let y = -1; y <= h - 2; y++) s.set(x, y, z, fill)
       // Lower: clear what the generator left above the new top.
       for (let y = h; y <= -1; y++) s.set(x, y, z, 'air')
       s.set(x, h - 1, z, surf ?? 'grass')
@@ -293,6 +329,9 @@ export function stampLand(world, surfaceY) {
    *
    *   1. The chapters go in FIRST, as no-go paint. Everything after this can
    *      ask "is this column spoken for" and get a true answer.
+   *   1b. The biomes, which paint the ground and claim nothing. Every pass
+   *      after this one overwrites the columns it owns, so the biome is what
+   *      is left where nothing else had a claim -- which is most of the map.
    *   2. The river second, because the path needs to know where the water is
    *      before it can decide to be a bridge.
    *   3. The path, then its spurs, which read PLOT to know where to stop.
@@ -309,6 +348,7 @@ export function stampLand(world, surfaceY) {
   }
 
   const samples = sampleSpine(SPINE)
+  paintBiomes(model)
   carveRiver(model)
   drawPath(model, samples, pathSurface)
   drawSpurs(model, samples, pathSurface)
