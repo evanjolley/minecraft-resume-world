@@ -477,25 +477,42 @@ function theWriting(t) {
   const LETTERS = {
     legend: { '#': 'glowstone', '.': 'light_gray_concrete' },
   }
+  /*
+   * BOTH WORDS ARE REVERSED AT THE LAST MOMENT, and the drawings below are
+   * written the right way round on purpose so that the source still reads as
+   * the thing it builds.
+   *
+   * Babylon is left-handed. On a `zy` wall the characters of a row run in +z,
+   * and this wall is read facing EAST -- the whole point of it is that it
+   * closes the forty-block axis that starts at the road, so every visitor who
+   * can see it at all is west of it looking east. Facing east, +z is on the
+   * reader's LEFT, so the unreversed version rendered `M21` over `VMG`.
+   *
+   * See the mirroring note in docs/builds/README.md. The same handedness is
+   * why the address plate on the walkup needs the same treatment and why
+   * nothing else on this plot does: colour and shape are immune, words are
+   * not, and this stage only has two of them.
+   */
+  const mirror = (rows) => rows.map(r => [...r].reverse().join(''))
   t.pattern({
     at: [0, 14, 1], plane: 'zy', ...LETTERS,
-    rows: [                                                 // 1 2 M
+    rows: mirror([                                          // 1 2 M
       '.#..###.#.#',
       '##....#.###',
       '.#..###.###',
       '.#..#...#.#',
       '###.###.#.#',
-    ],
+    ]),
   })
   t.pattern({
     at: [0, 8, 1], plane: 'zy', ...LETTERS,
-    rows: [                                                 // G M V
+    rows: mirror([                                          // G M V
       '###.#.#.#.#',
       '#...###.#.#',
       '#.#.###.#.#',
       '#.#.#.#.#.#',
       '###.#.#..#.',
-    ],
+    ]),
   })
 }
 
@@ -564,6 +581,12 @@ function walkup(u) {
    * road can read from this half of the plot.
    */
   u.box([0, 5, 1], [0, 9, 3], 'polished_blackstone')
+  /* REVERSED, for the same left-handed reason as 12M / GMV on the shed --
+   * see theWriting(). This plate is on a WEST-facing wall read from the road,
+   * so the reader is facing east and the characters of a `zy` row run away to
+   * their left. Drawn the way it reads and reversed at the stamp, because
+   * un-reversed the 2 rendered as a 5, which is a different employee number
+   * and the only number on this half of the plot. */
   u.pattern({
     at: [0, 5, 1], plane: 'zy',
     legend: { '#': 'glowstone', '.': 'polished_blackstone' },
@@ -573,7 +596,7 @@ function walkup(u) {
       '###',
       '#..',
       '###',
-    ],
+    ].map(r => [...r].reverse().join('')),
   })
 
   // Windows: south onto the side street, north onto the yard.

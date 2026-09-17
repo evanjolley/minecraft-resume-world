@@ -245,10 +245,24 @@ function hqFacade(h, W) {
  */
 function hqQuestionMark(h, D) {
   h.box([4, 0, D], [10, 8, D], 'dark_prismarine')           // the board
+  /*
+   * REVERSED, and the front one is not, which is the whole trap.
+   *
+   * QUESTION is stamped on two walls of this building. On the east face it is
+   * a `zy` wall read from the road, facing west, and the characters run in +z
+   * which is the reader's right, so it comes out as drawn. This one is an
+   * `xy` wall facing SOUTH, so the reader on the long way round is facing
+   * NORTH -- and Babylon is left-handed, so facing north puts +x on their
+   * LEFT and the same drawing comes out backwards. A backwards question mark
+   * still reads as a question mark at a glance, which is exactly why it
+   * survived: nobody looking for a spelling mistake finds one.
+   *
+   * One glyph, two walls, one of them mirrored. See docs/builds/README.md.
+   */
   h.pattern({
     at: [5, 1, D], plane: 'xy',
     legend: { '#': 'sea_lantern', 'o': 'sea_lantern' },
-    rows: QUESTION,
+    rows: QUESTION.map(r => [...r].reverse().join('')),
   })
 }
 

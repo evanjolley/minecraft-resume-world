@@ -146,11 +146,19 @@ function markers(s) {
      * above and completely invisible to somebody walking past it, because a
      * walking player's eyes are at about y = 1.6 and they are looking at the
      * road. A sign you have to look up to read is a sign nobody reads. */
+    /* REVERSED ON THE EAST VERGE, and it is not a typo. Babylon is
+     * left-handed, so on a `zy` board the characters run in +z and a reader
+     * facing EAST has +z on their LEFT. A visitor on the road reads the west
+     * verge facing west (+z on their right, drawn order) and the east verge
+     * facing east (+z on their left, reversed order). Unreversed, stage 2
+     * read as a 5 and stages 4 and 6 read backwards; 1, 3, 5 and 7 were
+     * right all along and 8 is symmetric, which is exactly what made this
+     * survive four passes. See the mirroring note in docs/builds/README.md. */
     s.pattern({
       at: [face, 1, z],
       plane: 'zy',
       legend: { '#': 'white_concrete' },
-      rows: DIGITS[p.n],
+      rows: left ? DIGITS[p.n] : DIGITS[p.n].map(r => [...r].reverse().join('')),
     })
   }
 }

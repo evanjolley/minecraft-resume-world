@@ -289,6 +289,16 @@ function facade(c) {
  *
  * Concrete, not glass. A wall you can see daylight through reads as a
  * mistake, and this one is nine blocks up.
+ *
+ * AND THE ROWS ARE REVERSED BEFORE THEY ARE STAMPED, for the same reason the
+ * roof easter egg is written backwards -- see `roofFind`, which got this
+ * right on a `zy` wall and left this one alone because it is `xy` and the
+ * rule is not the same on both. This is the INSIDE of the north wall, so the
+ * reader is south of it facing NORTH, and Babylon is left-handed: facing
+ * north puts +x on the reader's LEFT. Unreversed, the root span still ran
+ * the full width and the drawing still looked like a flame graph, but time
+ * ran right to left -- the error span sat before the call that produced it.
+ * A chart is as orientation-dependent as a word and quieter about it.
  */
 function flameGraph(c) {
   c.pattern({
@@ -308,7 +318,7 @@ function flameGraph(c) {
       '..YYYYY....UUUU....',
       '............GGGGGG.',
       '..............RR...',
-    ],
+    ].map(row => [...row].reverse().join('')),
   })
 }
 

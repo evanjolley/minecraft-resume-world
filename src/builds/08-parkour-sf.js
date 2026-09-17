@@ -158,7 +158,31 @@ function write(s, word, { at, plane, colour }) {
     if (!g) throw new Error(`sf: no glyph for ${JSON.stringify(ch)}`)
     for (let r = 0; r < 5; r++) rows[r] += `${g[r]}.`
   }
-  s.pattern({ at, plane, legend: { '#': colour }, rows })
+  /*
+   * EVERY ROW IS REVERSED BEFORE IT IS STAMPED, and that is the whole reason
+   * this helper exists rather than four inline patterns.
+   *
+   * Babylon is left-handed. On a `zy` wall the characters of a row run in
+   * +z, and a reader facing EAST has +z on their LEFT -- so the word comes
+   * out backwards. This plot is on the RIGHT of the road, every one of the
+   * four words below is on a west-facing wall or a wall you meet walking
+   * east, and all four therefore read right to left. SAY HI rendered as
+   * `IH YA2` in the first screenshot anybody took of it from the road, 27
+   * rendered as a backwards 7 beside a 5, and JOLLY BOYS read LLOJ SYOB.
+   *
+   * Reversing here and not at the four call sites is deliberate: a word is
+   * the unit an author thinks in, and the next person to call write() should
+   * not have to know about handedness at all. If a word ever needs to go on
+   * an `xy` wall the rule flips, which is why the plane is asserted rather
+   * than assumed. See the mirroring note in docs/builds/README.md.
+   */
+  if (plane !== 'zy') {
+    throw new Error(`sf: write() only knows how to mirror a 'zy' wall, not ${JSON.stringify(plane)}`)
+  }
+  s.pattern({
+    at, plane, legend: { '#': colour },
+    rows: rows.map(r => [...r].reverse().join('')),
+  })
   return s
 }
 
