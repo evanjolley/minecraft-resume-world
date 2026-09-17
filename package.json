@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "textures": "node scripts/build-textures.mjs",
+    "paintings": "node scripts/build-paintings.mjs",
     "textures:ce": "node scripts/build-textures.mjs --source=ce",
     "textures:vanilla": "node scripts/build-textures.mjs --source=vanilla",
     "textures:no-cape": "node scripts/build-textures.mjs --no-cape",
