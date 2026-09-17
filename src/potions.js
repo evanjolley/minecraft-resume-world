@@ -592,6 +592,7 @@ const MAX_FLIGHT_SECONDS = 20
  */
 export function installPotions(noa, {
   inventory, effects, inputLock, authority, vitalsFor = () => null, sounds = null,
+  swirl = null,
 } = {}) {
   const scene = noa.rendering.getScene()
 
@@ -875,7 +876,17 @@ export function installPotions(noa, {
       hits.push({ entity, potency, applied: applyPotion(entity, shot.id, potency) })
     }
     sounds?.shatter?.([shot.x, shot.y, shot.z])
-    return { at: [shot.x, shot.y, shot.z], color: potionColor(shot.id), hits }
+    /*
+     * The burst, at last. `color` below is the int vanilla puts in level event
+     * 2002's data field, and the swirl wants 0-1 channels -- the conversion
+     * happens here rather than there because this is the file that owns the
+     * int, and effectSwirl.shatter is also called with effects.swirlColor's
+     * output, which is already normalised.
+     */
+    const color = potionColor(shot.id)
+    swirl?.shatter?.([shot.x, shot.y, shot.z],
+      [(color >> 16 & 0xFF) / 255, (color >> 8 & 0xFF) / 255, (color & 0xFF) / 255])
+    return { at: [shot.x, shot.y, shot.z], color, hits }
   }
 
   /*

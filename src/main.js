@@ -586,13 +586,13 @@ const hud = installHUD(noa, { inventory, survival, effects })
 const sounds = installSounds(noa, { interaction, movement, survival, fluids })
 const particles = installParticles(noa, { interaction, movement })
 /*
- * The effect swirl, in its own file rather than in particles.js. The short
- * version: particles.js keys its pooled systems by TEXTURE and has nowhere to
- * put a per-particle colour, which is the entire content of this effect. The
- * long version, including what I would ask particles.js for, is at the top of
- * effectSwirl.js.
+ * The effect swirl. Still its own file, but only for the SPAWN RULES now --
+ * where on a body a mote appears, how often, and what colour. Every pooled
+ * mesh, billboard and buffer it used to own moved into particles.js the day
+ * that file grew a `vertexColor` spec flag, which is why it takes `particles`
+ * as a dependency rather than a scene.
  */
-const effectSwirl = installEffectSwirl(noa, effects)
+const effectSwirl = installEffectSwirl(noa, effects, particles)
 
 /*
  * Weather. After `sounds` because the rain bed hangs off its AudioContext, and
@@ -638,6 +638,10 @@ const buckets = installBuckets(noa, { inventory, authority, inputLock, effects }
  */
 const potions = installPotions(noa, {
   inventory, effects, inputLock, authority, vitalsFor, sounds: sounds.potions,
+  // The shatter burst. Same shape as `sounds`: breakPotion has always known
+  // the colour vanilla sends as level event 2002's data int and had nowhere
+  // to send it.
+  swirl: effectSwirl,
 })
 installFurnaceDrops(inventory.furnaces, authority, drops.popResource)
 

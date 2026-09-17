@@ -74,6 +74,25 @@ const rand = (a, b) => a + Math.random() * (b - a)
  *   shrink     Minecraft's `quadSize * (1 - t^2 * 0.5)` taper over the life
  *   dimmed     darken with the sun, or stay at full brightness
  *   alphaTest  the texture has holes in it and they must not draw
+ *   blend      soft-edged sprite: alpha BLEND and no depth write, rather
+ *              than the cutout alphaTest above. The two are opposites on
+ *              purpose -- see the note in systemFor.
+ *   frames     texture is a vertical strip of N cells and the cell is picked
+ *              from the particle's AGE, which is Minecraft's
+ *              `setSpriteFromAge`. Mutually exclusive with `crops`, which
+ *              picks a cell at random and never changes it.
+ *   vertexColor  every quad carries its own RGBA in a colour buffer instead
+ *              of sharing the material's tint.
+ *
+ * `vertexColor` IS WHY effectSwirl.js NO LONGER EXISTS. That file was 365
+ * lines reimplementing this one -- same pooled mesh, same CPU billboard, same
+ * globalToLocal rebase, same swap-remove -- for one missing feature, stated in
+ * its own header: "particles.js keys pooled systems by texture and every quad
+ * in a system shares one material tint, no per-particle colour, which is the
+ * entire content of this effect." It was right, and the fix was eleven lines
+ * here rather than a second copy of the machinery there. The rain volume at
+ * the bottom of this file had been building `vd.colors` + `hasVertexAlpha`
+ * privately the whole time; this just makes it a spec flag.
  */
 
 // Minecraft's terrain particles: gravity 0.04 blocks/tick^2 and a 0.98 velocity
@@ -189,9 +208,33 @@ export function installParticles(noa, deps = {}) {
       mat.transparencyMode = 1 // Material.MATERIAL_ALPHATEST, without the import
       mat.alphaCutOff = 0.5
     }
+    /*
+     * The other half of that choice, and it is the opposite setting for the
+     * opposite reason. A flame is four lit pixels with hard edges on an
+     * alpha-TESTED pass. A spell mote is a thin ring whose whole shape is its
+     * alpha -- cut it at 0.5 and the ring goes to a hexagon of dots.
+     *
+     * `useAlphaFromDiffuseTexture` is REQUIRED and rain gets away without it.
+     * hasAlpha alone only puts the material on the transparent pass; this is
+     * what makes StandardMaterial actually SAMPLE the texture's alpha. Rain's
+     * drops are bright cores on black and read either way; a ring is nothing
+     * but its alpha, and without this line it draws as a solid square. That
+     * was the first screenshot of the old swirl.
+     *
+     * disableDepthWrite because motes must not occlude each other or the
+     * world behind them. The cost is that they are not depth-sorted against
+     * each other, which is invisible when they are all nearly one colour at
+     * nearly one depth.
+     */
+    if (spec.blend) {
+      tex.hasAlpha = true
+      mat.useAlphaFromDiffuseTexture = true
+      mat.disableDepthWrite = true
+    }
 
     const positions = new Float32Array(spec.pool * 4 * 3)
     const uvs = new Float32Array(spec.pool * 4 * 2)
+    const colors = spec.vertexColor ? new Float32Array(spec.pool * 4 * 4) : null
     const indices = new Uint32Array(spec.pool * 6)
     for (let i = 0; i < spec.pool; i++) {
       const v = i * 4, o = i * 6
@@ -203,11 +246,15 @@ export function installParticles(noa, deps = {}) {
     const vd = new VertexData()
     vd.positions = positions
     vd.uvs = uvs
+    if (colors) vd.colors = colors
     vd.indices = indices
     // `true` = updatable, which is the whole point: without it Babylon uploads
     // the buffer once and updateVerticesData silently does nothing.
     vd.applyToMesh(mesh, true)
     mesh.material = mat
+    // Without this Babylon ignores the colour buffer's alpha channel entirely
+    // and every quad draws at full strength.
+    if (colors) mesh.hasVertexAlpha = true
     mesh.isPickable = false
     /*
      * REQUIRED. noa installs its own selection octree, so Babylon renders what
@@ -225,10 +272,11 @@ export function installParticles(noa, deps = {}) {
     // pause exactly where the frame rate matters, which is mid-burst.
     const pool = []
     for (let i = 0; i < spec.pool; i++) {
-      pool.push({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 0, life: 1, size: 0.1, spin: 0, spinRate: 0, u: 0, v: 0 })
+      pool.push({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 0, life: 1, size: 0.1,
+        spin: 0, spinRate: 0, u: 0, v: 0, r: 1, g: 1, b: 1, a: 1 })
     }
 
-    sys = { mesh, mat, positions, uvs, pool, spec, live: 0, drawn: 0 }
+    sys = { mesh, mat, positions, uvs, colors, pool, spec, live: 0, drawn: 0 }
     systems.set(texName, sys)
     return sys
   }
@@ -250,9 +298,20 @@ export function installParticles(noa, deps = {}) {
     p.age = 0; p.life = life; p.size = size
     p.spin = spec.spin ? rand(0, Math.PI * 2) : 0
     p.spinRate = spec.spin ? rand(-spec.spin, spec.spin) : 0
-    const crop = 1 / spec.crops
-    p.u = Math.floor(Math.random() * spec.crops) * crop
-    p.v = Math.floor(Math.random() * spec.crops) * crop
+    /*
+     * White, every time. The caller tints by writing p.r/g/b after this
+     * returns, and a pooled record holds whatever the last particle in that
+     * slot was -- so the reset is what stops an untinted system inheriting a
+     * dead mote's colour.
+     */
+    p.r = p.g = p.b = p.a = 1
+    // `frames` picks its cell from age every frame, so there is nothing to
+    // choose here; `crops` picks once and keeps it.
+    if (spec.frames) { p.u = 0; p.v = 0 } else {
+      const crop = 1 / spec.crops
+      p.u = Math.floor(Math.random() * spec.crops) * crop
+      p.v = Math.floor(Math.random() * spec.crops) * crop
+    }
     return p
   }
 
@@ -360,9 +419,9 @@ export function installParticles(noa, deps = {}) {
     const ticks = dt * MC.TICKS_PER_SECOND
 
     for (const sys of systems.values()) {
-      const { pool, positions, uvs, spec } = sys
+      const { pool, positions, uvs, colors, spec } = sys
       const drag = Math.pow(spec.dragTick, ticks)
-      const crop = 1 / spec.crops
+      const crop = 1 / (spec.frames ?? spec.crops)
 
       for (let i = 0; i < sys.live; i++) {
         const p = pool[i]
@@ -420,11 +479,36 @@ export function installParticles(noa, deps = {}) {
         positions[o + 6] = p.x + ax + bx2; positions[o + 7] = p.y + ay + by2; positions[o + 8] = p.z + az + bz2
         positions[o + 9] = p.x - ax + bx2; positions[o + 10] = p.y - ay + by2; positions[o + 11] = p.z - az + bz2
 
+        /*
+         * Minecraft's setSpriteFromAge, on a vertical strip. The cell is a
+         * function of how far through its life the particle is, so a mote is
+         * an ANIMATION rather than a still -- which for entity_effect is the
+         * whole of the motion, because its eight frames are eight rings of
+         * decreasing diameter.
+         *
+         * `frames - 1` in the floor, not `frames`: t reaches exactly 1.0 on
+         * the frame a particle dies, and without the clamp that indexes one
+         * cell past the end of the strip and samples the wrap-around.
+         *
+         * Full width, so u stays 0 -- the strip is one cell wide.
+         */
+        if (spec.frames) p.v = Math.min(spec.frames - 1, (t * spec.frames) | 0) * crop
+
         const q = i * 8
         uvs[q] = p.u; uvs[q + 1] = p.v
-        uvs[q + 2] = p.u + crop; uvs[q + 3] = p.v
-        uvs[q + 4] = p.u + crop; uvs[q + 5] = p.v + crop
+        uvs[q + 2] = p.u + (spec.frames ? 1 : crop); uvs[q + 3] = p.v
+        uvs[q + 4] = p.u + (spec.frames ? 1 : crop); uvs[q + 5] = p.v + crop
         uvs[q + 6] = p.u; uvs[q + 7] = p.v + crop
+
+        if (colors) {
+          const c = i * 16
+          for (let k = 0; k < 4; k++) {
+            colors[c + k * 4] = p.r
+            colors[c + k * 4 + 1] = p.g
+            colors[c + k * 4 + 2] = p.b
+            colors[c + k * 4 + 3] = p.a
+          }
+        }
       }
 
       /*
@@ -436,12 +520,19 @@ export function installParticles(noa, deps = {}) {
       for (let i = sys.live; i < sys.drawn; i++) {
         const o = i * 12
         for (let k = 0; k < 12; k++) positions[o + k] = 0
+        // A degenerate quad is already invisible, but a stale alpha in the
+        // colour buffer is not -- and Babylon sorts the transparent pass by
+        // what it thinks is there. Zero both.
+        if (colors) { const c = i * 16; for (let k = 0; k < 4; k++) colors[c + k * 4 + 3] = 0 }
       }
       const wasDrawn = sys.drawn
       sys.drawn = sys.live
       if (!sys.live) {
         // One last upload, to clear the tail, then stop drawing entirely.
-        if (wasDrawn) sys.mesh.updateVerticesData('position', positions, false, false)
+        if (wasDrawn) {
+          sys.mesh.updateVerticesData('position', positions, false, false)
+          if (colors) sys.mesh.updateVerticesData('color', colors, false, false)
+        }
         sys.mesh.setEnabled(false)
         continue
       }
@@ -463,6 +554,7 @@ export function installParticles(noa, deps = {}) {
       sys.mesh.position.set(originLocal[0], originLocal[1], originLocal[2])
       sys.mesh.updateVerticesData('position', positions, false, false)
       sys.mesh.updateVerticesData('uv', uvs, false, false)
+      if (colors) sys.mesh.updateVerticesData('color', colors, false, false)
       sys.mesh.setEnabled(true)
     }
   })
@@ -710,6 +802,35 @@ export function installParticles(noa, deps = {}) {
     burst,
     landingPuff,
     crumb,
+    /*
+     * The generic emitter, exported so a caller that owns its own physics --
+     * effectSwirl.js -- can borrow the pooled mesh, the billboard and the
+     * rebase without owning any of them.
+     *
+     * Returns the particle RECORD, which is how per-particle colour is set:
+     * `const p = emitTex(...); if (p) { p.r = ... }`. That beats eleven
+     * positional arguments, and it beats a colour on the spec, which is
+     * per-system and would make the swirl 39 systems.
+     *
+     * Rejected: exposing systemFor and letting callers drive their own frame
+     * loop. That gives back exactly the duplication this replaced -- the
+     * whole value here is that there is ONE per-frame loop.
+     */
+    emitTex,
+    /** Live count and state for one system, by texture. For the specs. */
+    liveIn: (texName) => systems.get(texName)?.live ?? 0,
+    stateIn(texName) {
+      const sys = systems.get(texName)
+      if (!sys) return []
+      const out = []
+      for (let i = 0; i < sys.live; i++) {
+        const p = sys.pool[i]
+        out.push({ x: p.x, y: p.y, z: p.z, color: [p.r, p.g, p.b], alpha: p.a,
+          frame: sys.spec.frames ? Math.round(p.v * sys.spec.frames) : null,
+          age: p.age, life: p.life, size: p.size })
+      }
+      return out
+    },
     /** Live particle count, and how many pooled meshes exist. One per texture. */
     get live() { let n = 0; for (const s of systems.values()) n += s.live; return n },
     get meshes() { return systems.size },

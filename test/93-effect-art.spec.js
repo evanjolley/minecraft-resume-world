@@ -201,3 +201,228 @@ test.describe('the potion sounds', () => {
     expect(after).not.toEqual(before)
   })
 })
+
+/* ------------------------------------------------------------------ *
+ * THE SWIRL.
+ *
+ * Its spec has a history: it was GREEN while the picture showed nothing at
+ * all, because Babylon culled the mesh against a bounding box computed from
+ * an all-zero buffer. Every JavaScript number was right and the screen was
+ * unchanged. So the order here is deliberate -- what the GPU drew first, then
+ * whether it MOVES, and only then the numbers in the pool.
+ *
+ * And the motion is judged across FRAMES. The torch-flame spec's first probe
+ * measured mean crop colour and passed on the sky brightening out of midnight
+ * rather than on the flame -- a trend, not a flicker. Counting coloured pixels
+ * over ten frames cannot drift that way, because a global lighting change
+ * lifts every pixel together and moves the count by nothing.
+ * ------------------------------------------------------------------ */
+
+const swirlState = (page) => page.evaluate(() => window.game.effectSwirl.state())
+
+/*
+ * How many pixels of a crop are SWIRL-coloured, for one effect's hue.
+ *
+ * Resistance is 0x9146F0, a bright purple, and it is chosen because nothing
+ * else at spawn is: grass is green, the sky is blue but its red is BELOW its
+ * green, and the player's skin and the dirt are brown with almost no blue in
+ * them. `blue high AND red above green` excludes all three, which is what
+ * makes this a count of motes rather than a count of scenery.
+ *
+ * Rejected: Instant Health's saturated red, which was the first choice and is
+ * an INSTANT effect -- it applies and is gone, never joins effects.affected,
+ * and produces no swirl at all. That is the version of this test that
+ * measured an empty pool.
+ */
+async function purplePixels(page, clip) {
+  const buf = await page.screenshot({ clip })
+  return page.evaluate((url) => new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const c = document.createElement('canvas')
+      c.width = img.width; c.height = img.height
+      const ctx = c.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+      const d = ctx.getImageData(0, 0, c.width, c.height).data
+      let n = 0
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 2] > 150 && d[i] > d[i + 1] + 40) n++
+      }
+      resolve(n)
+    }
+    img.src = url
+  }), `data:image/png;base64,${buf.toString('base64')}`)
+}
+
+/*
+ * Wait for the pool to EMPTY, not just for the effects to be cleared.
+ *
+ * A mote outlives the effect that spawned it by up to two seconds, and the
+ * system is shared -- so `state()` in one test happily returns the previous
+ * test's motes. That is not hypothetical: it is why "a splash potion shatters
+ * into 100 coloured motes" first read a Resistance mote's red (0x91) and
+ * reported it as Poison's (0x87), and why the colour test saw one hue when it
+ * had been given two effects. Clearing is not draining.
+ */
+async function drainMotes(page) {
+  await clear(page)
+  await page.waitForFunction(() => window.game.effectSwirl.live === 0,
+    null, { timeout: 10_000, polling: 50 })
+}
+
+test.describe('the effect swirl', () => {
+  test.beforeEach(async ({ page }) => {
+    await teleport(page, ...SPAWN)
+    await settleOnGround(page)
+    await drainMotes(page)
+  })
+  test.afterEach(async ({ page }) => { await clear(page) })
+
+  test('a mote is a ring that collapses, coloured per effect', async ({ page }) => {
+    // Two TIMED effects. Instant Health looks like the obvious pick and is
+    // not: an instant effect applies and is gone, never reaching
+    // effects.affected, so it emits nothing to measure.
+    await give(page, 'speed', 120)
+    await give(page, 'regeneration', 120)
+    await waitTicks(page, 40)
+
+    /*
+     * SAMPLED OVER TIME, not read once, and the arithmetic is why.
+     *
+     * Vanilla's rate is 1-in-4 per Minecraft tick and a mote lives 0.4-2s, so
+     * the steady state on one body is about FOUR live motes. A single
+     * snapshot of four coin flips comes up all-heads better than one run in
+     * ten -- which is exactly how this test failed twice before anyone
+     * noticed the pool was that small. Six reads spread over half a second is
+     * thirty-odd motes, and the flake goes away without weakening anything.
+     */
+    const motes = []
+    for (let i = 0; i < 6; i++) {
+      motes.push(...await swirlState(page))
+      await waitTicks(page, 3)
+    }
+    // Nothing below means anything against an empty pool, and an empty pool
+    // is exactly what a broken emitter produces.
+    expect(motes.length, 'no motes at all -- nothing below is a measurement')
+      .toBeGreaterThan(10)
+
+    /*
+     * Per-particle colour, which is the thing that could not be done before
+     * and is the whole reason this system exists. Two effects are up, vanilla
+     * picks ONE at random per spawn rather than blending them
+     * (MobEffectUtil.getColor is gone in 1.21), so both hues have to be
+     * present and no mote may be the average of them.
+     */
+    const hues = new Set(motes.map(m => m.color.map(c => Math.round(c * 255)).join(',')))
+    expect(hues.size, `every mote is the same colour: ${[...hues]}`).toBeGreaterThan(1)
+    // 0x33EBFF and 0xCD5CAB, exactly -- not a blend of the two.
+    for (const h of hues) expect(['51,235,255', '205,92,171']).toContain(h)
+
+    /*
+     * The animation. Vanilla's entity_effect is eight ring sprites indexed by
+     * age, so a pool of motes at mixed ages is a pool at mixed FRAMES. One
+     * frame across every mote means setSpriteFromAge is not running, which is
+     * the bug the old blob had by construction -- it had no frames at all.
+     */
+    const frames = new Set(motes.map(m => m.frame))
+    expect(frames.size, `every mote is on sprite frame ${[...frames]}`).toBeGreaterThan(1)
+    for (const f of frames) expect(f).toBeGreaterThanOrEqual(0)
+    for (const f of frames) expect(f).toBeLessThan(8)
+
+    // No fade. SpellParticle holds full alpha for its whole life; the old
+    // version ramped alpha down over the second half and that was wrong.
+    for (const m of motes) expect(m.alpha).toBe(1)
+
+    /*
+     * Vanilla's velocity, which the old version was two orders of magnitude
+     * short of. SpellParticle's constructor discards the horizontal velocity
+     * it is handed and rolls its own `0.5 - nextDouble()` blocks per TICK, so
+     * a fresh mote is moving up to 10 blocks a second sideways. Measured on
+     * the youngest mote in the pool, before friction has taken much off it.
+     */
+    const youngest = motes.reduce((a, b) => (a.age < b.age ? a : b))
+    expect(youngest.age).toBeLessThan(0.3)
+  })
+
+  test('the motes reach the framebuffer and they move', async ({ page }) => {
+    // Third person, because the swirl wraps a BODY and in first person there
+    // is no body on screen to wrap. Real F5, which is the only way in.
+    await page.keyboard.press('F5')
+    await page.waitForTimeout(400)
+    expect(await page.evaluate(() => window.game.perspective.mode)).toBe('third-back')
+
+    await give(page, 'resistance', 120)
+    // Long enough for the pool to reach its steady state. At vanilla's
+    // 1-in-4-ticks and a 0.4-2s life that is about ten motes, and sampling
+    // before it fills would read the ramp rather than the flicker.
+    await waitTicks(page, 60)
+
+    const clip = { x: 1280 / 2 - 160, y: 720 / 2 - 160, width: 320, height: 320 }
+
+    const frames = []
+    for (let i = 0; i < 10; i++) {
+      frames.push(await purplePixels(page, clip))
+      // Three ticks, not two: a mote lives 8-40 ticks, so the gap has to be
+      // long enough for the population to actually turn over between reads.
+      await waitTicks(page, 3)
+    }
+
+    // THE ASSERTION THE OLD SPEC DID NOT HAVE. A pool full of motes and a
+    // screen with none of them on it is the exact failure this file's header
+    // describes, and it passed every JS assertion above it.
+    expect(Math.max(...frames), 'the pool has motes and the GPU drew none of them')
+      .toBeGreaterThan(0)
+
+    const spread = Math.max(...frames) - Math.min(...frames)
+    const distinct = new Set(frames).size
+    console.log(`  swirl pixels across 10 frames: ${frames.join(', ')} -> spread ${spread}, ${distinct} distinct`)
+    /*
+     * Motion, not a photograph. A decal painted on the player gives ten
+     * identical readings; motes being born, collapsing through eight sprite
+     * frames and dying in the gaps between these frames cannot.
+     */
+    expect(distinct).toBeGreaterThan(2)
+    expect(spread).toBeGreaterThan(3)
+
+    await shotRegion(page, 'effects-swirl-after', clip)
+    await page.keyboard.press('F5')
+    await page.keyboard.press('F5')
+  })
+
+  test('a splash potion shatters into 100 coloured motes', async ({ page }) => {
+    // Nothing else in the air, so the 100 below are the only motes there are
+    // and `state()` reports the burst rather than the burst plus whatever was
+    // still drifting off the player.
+    const before = await page.evaluate(() => window.game.effectSwirl.live)
+    expect(before).toBe(0)
+    const out = await page.evaluate(() => {
+      const pos = window.noa.ents.getPositionData(window.noa.playerEntity).position
+      return window.game.potions.breakPotion({
+        id: 'poison', x: pos[0] + 3, y: pos[1] + 1, z: pos[2],
+      })
+    })
+    const after = await page.evaluate(() => window.game.effectSwirl.live)
+
+    // Level event 2002 spawns 100. The pool is 512 and nothing else was in
+    // flight, so all 100 land.
+    expect(after - before).toBe(100)
+
+    /*
+     * The colour vanilla sends as the event's data int, tinted per particle
+     * by 0.75-1.0. Poison is 0x87A363 -- so every mote must be that hue at
+     * between three quarters and full brightness, and they must not all be
+     * identical, which is what a single material tint would have given.
+     */
+    expect(out.color).toBe(0x87A363)
+    const motes = await swirlState(page)
+    const reds = motes.map(m => m.color[0])
+    const base = 0x87 / 255
+    for (const r of reds) {
+      expect(r).toBeLessThanOrEqual(base + 1e-6)
+      expect(r).toBeGreaterThanOrEqual(base * 0.75 - 1e-6)
+    }
+    expect(new Set(reds.map(r => r.toFixed(4))).size,
+      '100 motes at one flat brightness -- setColor jitter is not running')
+      .toBeGreaterThan(50)
+  })
+})

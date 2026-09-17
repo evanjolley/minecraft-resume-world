@@ -1,365 +1,252 @@
-import { Mesh } from '@babylonjs/core/Meshes/mesh'
-import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
-import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture'
-import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { MC } from './physics.js'
 import { entityBox } from './entityBox.js'
 
 /*
  * THE SWIRL -- the coloured motes that orbit anything carrying an effect.
  *
- * WHY THIS IS NOT IN particles.js. That file is the right home for it and it
- * cannot host it today, for one structural reason and one scheduling one.
+ * THIS FILE WAS 365 LINES AND IS NOW 165, because the thing it was missing
+ * arrived. Its own header used to open by explaining why it could not live in
+ * particles.js: that file keyed pooled systems by texture, every quad in a
+ * system shared one material tint, and per-particle colour is the entire
+ * content of this effect. That was true and it is fixed -- `vertexColor: true`
+ * on a spec, eleven lines in systemFor, and the pooled mesh, the CPU
+ * billboard, the swap-remove, the globalToLocal rebase and the whole
+ * per-frame loop are gone from here. Read particles.js's header; every trap
+ * it names still applies and none of them are this file's problem any more.
  *
- * The structural reason: particles.js keys its pooled systems BY TEXTURE
- * (`systems.get(texName)`) and every quad in a system draws the same texture
- * with the same material tint. That is exactly right for block chips, where
- * the texture IS the identity of the particle. It has nowhere to put a
- * PER-PARTICLE COLOUR -- and per-particle colour is the entire content of this
- * effect. Thirty-nine effects would become thirty-nine textures and
- * thirty-nine draw calls, and the colours are runtime data from a registry
- * rather than files on disk.
+ * WHAT WAS ACTUALLY WRONG WITH THE PICTURE, which is a separate bug and the
+ * one the owner reported. The old version drew a soft radial blob that grew,
+ * faded out over the second half of its life and drifted outward at 0.22
+ * blocks a second. Vanilla's entity_effect particle is none of those things.
  *
- * The scheduling one: another agent is inside particles.js this pass adding
- * torch flame, so it is not mine to edit. See the report for the one thing I
- * would ask it for -- a spec flag for a vertex-colour system, which its rain
- * volume already builds privately (`vd.colors`, `mesh.hasVertexAlpha`) and
- * does not expose.
+ *   `assets/minecraft/particles/entity_effect.json` names EIGHT sprites and
+ *   every one is a hollow RING at a different diameter -- effect_0 is a
+ *   two-pixel speck and effect_7 fills the 8x8 tile. SpellParticle picks the
+ *   frame from its own age with setSpriteFromAge, and the list is in REVERSE
+ *   (effect_7 first), so a mote is born as a wide ring and COLLAPSES INWARD
+ *   to a dot. That collapse is the animation. A blob has no animation at all,
+ *   which is why the swirl read as fog.
  *
- * So this is the same machinery as its neighbours -- one pooled mesh, quads
- * rewritten every frame, CPU billboarding, world coordinates offset once per
- * frame rather than per particle -- with a vertex-colour buffer instead of a
- * texture atlas. Read the header of particles.js first; every trap it names
- * (addMeshToScene or you draw nothing, `applyToMesh(mesh, true)` or the
- * updates are silent no-ops, globalToLocal once because noa rebases the
- * origin) applies here identically.
+ *   It does not fade. SpellParticle's per-tick alpha line is
+ *   `alpha = lerp(0.05, alpha, originalAlpha)`, an ease toward a CONSTANT
+ *   target -- it exists for the spyglass-scope case, where alpha is snapped to
+ *   zero, and does nothing otherwise. The mote holds full opacity and then
+ *   stops.
+ *
+ *   It does not shrink either. quadSize is fixed for the whole life; the
+ *   apparent shrinking is entirely the sprite strip. So `shrink: false`, and
+ *   this is the one place the two look like the same thing and are not.
+ *
+ *   And it moves forty times faster than the old one. See SPELL_SPEC.
  */
 
 /*
- * The mote texture, generated rather than shipped.
+ * SpellParticle's own numbers, converted from blocks-per-tick to
+ * blocks-per-second once here rather than at every use.
  *
- * Vanilla's is `particle/spell_*`, a soft 8x8 blob, and this world's texture
- * build does not extract it -- scripts/build-textures.mjs is owned elsewhere
- * this pass. A radial falloff is what the sprite IS, so it is cheaper to state
- * the falloff than to ship a picture of it: eight by eight, alpha fading from
- * the centre, white so the vertex colour is free to be the whole tint.
+ *   super(level, x, y, z, 0.5 - RANDOM.nextDouble(), yd, 0.5 - RANDOM.nextDouble())
+ *   this.friction = 0.96F
+ *   this.gravity = -0.1F
+ *   this.yd *= 0.2F
+ *   this.quadSize *= 0.75F
+ *   this.lifetime = (int)(8.0 / (Math.random() * 0.8 + 0.2))
+ *   this.hasPhysics = false
  *
- * WHITE MATTERS. The material multiplies texture by vertex colour, so any
- * tint baked into the texture would multiply against every effect's colour and
- * darken all of them.
+ * THE CONSTRUCTOR THROWS AWAY THE HORIZONTAL VELOCITY IT IS HANDED. Look at
+ * the super() call: the x and z arguments are `0.5 - nextDouble()`, the
+ * particle's own roll, not the caller's. LivingEntity passes (1.0, 1.0, 1.0)
+ * and only the y survives -- and then gets multiplied by 0.2. So every spell
+ * mote in the game launches at up to half a block per TICK sideways (ten
+ * blocks a second) and 0.2 up, whatever spawned it. The old swirl's 0.22
+ * blocks per second was two orders of magnitude short, which is most of why
+ * it sat on the body like smoke instead of spreading.
+ *
+ * GRAVITY IS NEGATIVE, so motes RISE. Particle.tick does `yd -= 0.04 *
+ * gravity`, and with gravity -0.1 that is +0.004 blocks/tick^2 upward, which
+ * is 1.6 blocks/s^2 in this file's units. Hence the minus sign below, which
+ * is not a typo.
  */
-const MOTE_SIZE = 8
+const TPS = MC.TICKS_PER_SECOND
 
-function moteTexture(scene) {
-  const data = new Uint8Array(MOTE_SIZE * MOTE_SIZE * 4)
-  const c = (MOTE_SIZE - 1) / 2
-  for (let y = 0; y < MOTE_SIZE; y++) {
-    for (let x = 0; x < MOTE_SIZE; x++) {
-      const d = Math.hypot(x - c, y - c) / (MOTE_SIZE / 2)
-      // Squared falloff, clipped at the edge: a linear one leaves a visible
-      // square corner where the alpha has not quite reached zero.
-      const a = Math.max(0, 1 - d * d)
-      const i = (y * MOTE_SIZE + x) * 4
-      data[i] = data[i + 1] = data[i + 2] = 255
-      data[i + 3] = Math.round(a * 255)
-    }
-  }
-  return RawTexture.CreateRGBATexture(
-    data, MOTE_SIZE, MOTE_SIZE, scene, false, false, RawTexture.NEAREST_SAMPLINGMODE)
+export const SPELL_TEXTURE = 'particle/spell'
+
+const SPELL_SPEC = {
+  /*
+   * Vanilla spawns at most one mote per entity per tick and they live under
+   * two seconds, so a couple of bodies settle around 30 live. The headroom is
+   * for the SPLASH, which throws 100 in a single frame and can have two in
+   * the air at once.
+   */
+  pool: 512,
+  // Negative: a spell mote drifts up. See the header.
+  gravity: -0.004 * TPS * TPS,
+  dragTick: 0.96,
+  // hasPhysics = false. A mote passes through the world.
+  collide: false,
+  // Eight frames of ring, indexed by age.
+  frames: 8,
+  crops: 1,
+  // Vanilla's particles do not roll, and a spinning ring reads as a wobble.
+  spin: 0,
+  // quadSize is CONSTANT over the life. The shrinking is the sprite.
+  shrink: false,
+  // SpellParticle takes the world lightmap like everything else here.
+  dimmed: true,
+  alphaTest: false,
+  blend: true,
+  vertexColor: true,
 }
 
+/* `(int)(8.0 / (random * 0.8 + 0.2))` ticks -- 8 to 40, so 0.4 to 2 seconds. */
+const life = () => Math.floor(8 / (Math.random() * 0.8 + 0.2)) / TPS
+
 /*
- * Pool size. Vanilla spawns at most one mote per entity per tick, they live
- * under a second and a half, and this world has two bodies that can carry an
- * effect. 256 is two orders of headroom and one buffer of 4 KB.
+ * The quad's EDGE, in blocks, which is twice vanilla's quadSize.
+ *
+ * SingleQuadParticle starts at `0.1 * (random*0.5 + 0.5) * 2.0`, which is 0.1
+ * to 0.2, and SpellParticle multiplies it by 0.75 -- so quadSize is 0.075 to
+ * 0.15. THE QUAD SPANS PLUS AND MINUS THAT, so the edge is 0.15 to 0.3, and
+ * particles.js's `size` is the edge (it halves it into `h` itself). Passing
+ * quadSize straight through draws every mote at half size, which is what the
+ * first screenshot showed and what the flame's own note already warns about.
  */
-const POOL = 256
+const quadSize = () => (0.1 * (Math.random() * 0.5 + 0.5) * 2) * 0.75 * 2
 
-/* SpellParticle's lifetime: `(int)(8.0 / (random * 0.8 + 0.2))` ticks, which
- * is 8 to 40 ticks -- 0.4 to 2 seconds. */
-const LIFE_MIN = 8 / MC.TICKS_PER_SECOND
-const LIFE_MAX = 40 / MC.TICKS_PER_SECOND
+/** One mote's launch velocity, in blocks/second. `up` is vanilla's yd. */
+function launch(p, up) {
+  p.vx = (0.5 - Math.random()) * TPS
+  p.vz = (0.5 - Math.random()) * TPS
+  p.vy = up * 0.2 * TPS
+}
 
-/* Quad size in blocks. Vanilla's spell particle quadSize is about 0.2 scaled
- * by a random 0.5-1.5, and it shrinks over its life. */
-const SIZE = 0.13
-
-export function installEffectSwirl(noa, effects) {
-  const scene = noa.rendering.getScene()
-
-  const mat = noa.rendering.makeStandardMaterial('effect-swirl')
-  mat.diffuseTexture = moteTexture(scene)
-  mat.diffuseTexture.hasAlpha = true
-  /*
-   * REQUIRED, and rain gets away without it for a reason that does not apply
-   * here. `hasAlpha` alone only puts the material in the transparent pass; it
-   * is this that makes StandardMaterial actually SAMPLE the texture's alpha.
-   * Rain's drops are narrow bright cores on a black surround, so they read
-   * correctly either way. A mote is nothing BUT its radial falloff -- without
-   * this line it draws as a solid square, which is what the first screenshot
-   * showed.
-   */
-  mat.useAlphaFromDiffuseTexture = true
-  /*
-   * ALPHA BLEND, not the alpha TEST particles.js uses for its flames, and the
-   * two choices are opposite for a reason. A flame is four lit pixels with
-   * hard edges and vanilla renders it on an opaque pass. A spell mote is a
-   * soft blob whose entire shape is its alpha gradient -- cut it at 0.5 and it
-   * becomes a hexagon. The cost is that these are not depth-sorted against
-   * each other, which is invisible here because they are all nearly the same
-   * colour and nearly the same depth.
-   */
-  mat.emissiveColor = new Color3(1, 1, 1)
-  mat.specularColor = new Color3(0, 0, 0)
-  mat.ambientColor = new Color3(0, 0, 0)
-  mat.disableLighting = true
-  mat.backFaceCulling = false
-  // Motes must not occlude each other or the world behind them; they are the
-  // one thing in this file that would look wrong writing depth.
-  mat.disableDepthWrite = true
-
-  const positions = new Float32Array(POOL * 4 * 3)
-  const uvs = new Float32Array(POOL * 4 * 2)
-  const colors = new Float32Array(POOL * 4 * 4)
-  const indices = new Uint32Array(POOL * 6)
-  for (let i = 0; i < POOL; i++) {
-    const v = i * 4, o = i * 6
-    indices[o] = v; indices[o + 1] = v + 1; indices[o + 2] = v + 2
-    indices[o + 3] = v; indices[o + 4] = v + 2; indices[o + 5] = v + 3
-    // UVs never change: every mote shows the whole 8x8 sprite.
-    const t = i * 8
-    uvs[t] = 0; uvs[t + 1] = 0
-    uvs[t + 2] = 1; uvs[t + 3] = 0
-    uvs[t + 4] = 1; uvs[t + 5] = 1
-    uvs[t + 6] = 0; uvs[t + 7] = 1
-  }
-
-  const mesh = new Mesh('effect-swirl', scene)
-  const vd = new VertexData()
-  vd.positions = positions
-  vd.uvs = uvs
-  vd.colors = colors
-  vd.indices = indices
-  vd.applyToMesh(mesh, true)
-  mesh.material = mat
-  mesh.isPickable = false
-  // Without this Babylon ignores the alpha channel of the colour buffer and
-  // every mote draws at full strength with no fade at all.
-  mesh.hasVertexAlpha = true
-  noa.rendering.addMeshToScene(mesh)
-  mesh.alwaysSelectAsActiveMesh = true
-  /*
-   * Babylon computed this mesh's bounding box once, from a position buffer
-   * that was all zeros, and never looks at it again -- the vertices are
-   * rewritten every frame and refreshing the box every frame would cost more
-   * than the motes do. `alwaysSelectAsActiveMesh` is supposed to make that
-   * irrelevant; `doNotSyncBoundingInfo` says the same thing to the half of
-   * Babylon that does not consult it, which is the transparent pass.
-   */
-  mesh.doNotSyncBoundingInfo = true
-  mesh.setEnabled(false)
-
-  /* Pre-allocated, for the reason particles.js states: allocating mid-burst
-   * puts a GC pause exactly where the frame rate matters. */
-  const pool = []
-  for (let i = 0; i < POOL; i++) {
-    pool.push({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 0, life: 1, r: 1, g: 1, b: 1 })
-  }
-  let liveCount = 0
-
-  const originGlobal = [0, 0, 0]
-  const originLocal = [0, 0, 0]
-
-  /**
-   * One mote, somewhere on the body.
-   *
-   * ACROSS THE WHOLE BOX, not at a point. Vanilla's spawn is
-   * `getRandomX(0.5), getRandomY(), getRandomZ(0.5)` -- a uniform pick through
-   * the entity's bounding box, which is why the swirl wraps a player rather
-   * than puffing out of their navel. entityBox.js already answers "where is
-   * this body, in world coordinates" and answers it in the frame this needs;
-   * reading `body.aabb` instead is the trap that file documents at length,
-   * because the physics solver runs in noa's rebased frame.
-   */
-  function spawn(entity, color) {
-    if (liveCount >= POOL) return
-    const box = entityBox(noa, entity)
-    if (!box) return
-    const p = pool[liveCount++]
-    /*
-     * ON THE SURFACE, NOT THROUGH THE VOLUME -- a deliberate departure, and
-     * the screenshot is why.
-     *
-     * Vanilla picks a uniform point inside the bounding box (`getRandomX(0.5)`
-     * spans the full 0.6 width). That works in Minecraft and it did not work
-     * here: the player MODEL is as wide as its box, so an interior point is
-     * inside opaque geometry and the depth test eats it. Photographed in third
-     * person with two effects up, the first version produced motes the spec
-     * could count and the picture could not show.
-     *
-     * So the horizontal position is pushed out to the box's own half-width.
-     * The height is still uniform over the box, which is where the swirl's
-     * shape actually comes from, and the outward drift below carries them
-     * further out from there. It is the same silhouette at the same rate; it
-     * is just on the outside of the skin rather than under it.
-     */
-    const hw = (box.max[0] - box.min[0]) / 2
-    const cx = (box.min[0] + box.max[0]) / 2
-    const cz = (box.min[2] + box.max[2]) / 2
-    const a = Math.random() * Math.PI * 2
-    // A hair beyond the box, so a mote is never coplanar with the skin and
-    // z-fighting with it.
-    const r = hw * 1.1
-    p.x = cx + Math.cos(a) * r
-    p.z = cz + Math.sin(a) * r
-    p.y = box.min[1] + Math.random() * (box.max[1] - box.min[1])
-    // A slow outward drift, no gravity. SpellParticle zeroes its own gravity
-    // and keeps a small residual velocity; a falling mote reads as ash.
-    // Drifting OUTWARD along the spawn radius rather than in a random
-    // direction, plus a little jitter. Half of what makes a swirl read as a
-    // swirl is that it expands away from the body; a random walk reads as
-    // smoke sitting on it.
-    p.vx = Math.cos(a) * 0.22 + (Math.random() - 0.5) * 0.18
-    p.vz = Math.sin(a) * 0.22 + (Math.random() - 0.5) * 0.18
-    p.vy = (Math.random() - 0.5) * 0.3
-    p.age = 0
-    p.life = LIFE_MIN + Math.random() * (LIFE_MAX - LIFE_MIN)
-    p.r = color[0]; p.g = color[1]; p.b = color[2]
-  }
-
+export function installEffectSwirl(noa, effects, particles) {
   /*
    * Spawning is on the TICK and drawing is on the FRAME, which is the same
-   * split hud.js's blink uses and for the same reason: the spawn chance is
+   * split hud.js's blink uses and for the same reason: vanilla's chance is
    * 1-in-4 PER MINECRAFT TICK, so rolling it per frame would make the density
    * a function of the frame rate. A 144 Hz machine would be lousy with motes.
    *
    * noa ticks at 30 and Minecraft at 20, so the chance is scaled by 20/30 --
-   * the RATE is what vanilla specifies (five motes a second at 1-in-4), not
-   * the per-tick probability, and the rate is what has to survive the
-   * conversion.
+   * the RATE is what vanilla specifies, and the rate is what has to survive
+   * the conversion.
    */
-  const TICK_RATIO = MC.TICKS_PER_SECOND / 30
+  const TICK_RATIO = TPS / 30
 
-  noa.on('tick', () => {
+  /*
+   * Where on the body, and this is a DELIBERATE DEPARTURE with a screenshot
+   * behind it.
+   *
+   * Vanilla is `getRandomX(0.5), getRandomY(), getRandomZ(0.5)` -- a uniform
+   * point through the bounding box. That works in Minecraft and it did not
+   * work here: the player MODEL is as wide as its box, so an interior point
+   * is inside opaque geometry and the depth test eats it. Photographed in
+   * third person with two effects up, the first version produced motes the
+   * spec could count and the picture could not show.
+   *
+   * So the horizontal position is pushed out to the box's own half-width and
+   * a hair beyond, and the height stays uniform over the box -- which is
+   * where the swirl's shape comes from. With vanilla's real velocity now in
+   * place the motes leave the skin within a tick or two anyway; this only
+   * decides where the first frame of each one is.
+   *
+   * entityBox.js is what answers "where is this body, in world coordinates".
+   * Reading `body.aabb` is the trap that file documents at length, because
+   * the physics solver runs in noa's rebased frame.
+   */
+  function spawn(entity, color) {
+    const box = entityBox(noa, entity)
+    if (!box) return
+    const hw = (box.max[0] - box.min[0]) / 2
+    const a = Math.random() * Math.PI * 2
+    const r = hw * 1.1
+    const x = (box.min[0] + box.max[0]) / 2 + Math.cos(a) * r
+    const z = (box.min[2] + box.max[2]) / 2 + Math.sin(a) * r
+    const y = box.min[1] + Math.random() * (box.max[1] - box.min[1])
+
+    const p = particles.emitTex(SPELL_TEXTURE, SPELL_SPEC, x, y, z, 0, 0, 0, life(), quadSize())
+    if (!p) return
+    launch(p, 1)
+    p.r = color[0]; p.g = color[1]; p.b = color[2]
+  }
+
+  const onTick = () => {
     for (const entity of effects.affected) {
       const color = effects.swirlColor(entity)
       if (!color) continue
       if (Math.random() < effects.swirlChance(entity) * TICK_RATIO) spawn(entity, color)
     }
-  })
+  }
+  noa.on('tick', onTick)
 
-  let wasDrawn = false
+  /* ------------------------------------------------------------------ *
+   * The shatter, which is level event 2002 and was left as a TODO.
+   *
+   * potions.js's breakPotion already returned `{ at, color, hits }` with the
+   * colour vanilla sends as the event's data int, and nothing drew it.
+   * LevelRenderer's case 2002/2007, in full:
+   *
+   *   for (int i = 0; i < 100; i++) {
+   *       double d = random.nextDouble() * 4.0;              // radius
+   *       double e = random.nextDouble() * Math.PI * 2.0;    // angle
+   *       double f = Math.cos(e) * d, h = Math.sin(e) * d;
+   *       double g = 0.01 + random.nextDouble() * 0.5;
+   *       Particle p = addParticleInternal(opts, ..., x + f*0.1, y + 0.3, z + h*0.1, f, g, h);
+   *       float s = 0.75F + random.nextFloat() * 0.25F;
+   *       p.setColor(red * s, green * s, blue * s);
+   *       p.setPower((float)d);
+   *   }
+   *
+   * TWO THINGS IN THAT ARE EASY TO GET WRONG, and both are why this is
+   * transcribed rather than approximated.
+   *
+   *   `f` and `h` are computed, passed, and then DISCARDED -- SpellParticle's
+   *   constructor overwrites the horizontal velocity with its own roll, same
+   *   as above. What f and h actually do is set the POSITION offset (times
+   *   0.1) and nothing else. Reproducing them as a velocity gives a neat
+   *   radial starburst, which is not what a bottle breaking looks like.
+   *
+   *   `setPower(d)` is the real spread, applied AFTER construction:
+   *   `xd *= d; yd = (yd - 0.1) * d + 0.1; zd *= d`. With d up to 4 that
+   *   multiplies an already-fast mote by four, and it correlates speed with
+   *   the position offset -- the ones thrown furthest out are the ones moving
+   *   fastest. That correlation is the shape of the splash.
+   *
+   * The per-particle brightness jitter (0.75-1.0) is the other half: 100
+   * motes of one flat colour read as a decal, and vanilla breaks that up
+   * without changing the hue.
+   * ------------------------------------------------------------------ */
+  const SPLASH_COUNT = 100
 
-  function onFrame(dtMs) {
-    /*
-     * TWO TIMESTEPS, AND THE SPLIT IS A REAL BUG THIS SPEC CAUGHT.
-     *
-     * particles.js clamps its frame dt to 0.05 s so that a tab-switch stall
-     * does not teleport everything across the world, and this copied it -- and
-     * used the clamped value to AGE the particles as well as to move them.
-     * Under swiftshader the suite renders at around ten frames a second, so
-     * dtMs is 100 and the clamp halves it: every mote lived twice its stated
-     * lifetime, and a two-second mote was still in the air eight seconds later
-     * on a slower frame. It leaked across tests, which is how it was found --
-     * a poison spec sampling a Speed mote from the test before it.
-     *
-     * So AGE uses real time and MOTION uses the clamped step. The clamp is
-     * about not moving a particle a hundred blocks in one frame; it was never
-     * about how long the particle should exist.
-     */
-    const dt = dtMs / 1000
-    const step = Math.min(0.05, dt)
+  function shatter([x, y, z], color) {
+    for (let i = 0; i < SPLASH_COUNT; i++) {
+      const d = Math.random() * 4
+      const e = Math.random() * Math.PI * 2
+      const f = Math.cos(e) * d, h = Math.sin(e) * d
+      const g = 0.01 + Math.random() * 0.5
 
-    if (liveCount === 0) {
-      // One last upload with the buffer emptied, then stop touching it. Left
-      // enabled with stale vertices, the final motes hang frozen in the air.
-      if (wasDrawn) { mesh.setEnabled(false); wasDrawn = false }
-      return
+      const p = particles.emitTex(SPELL_TEXTURE, SPELL_SPEC,
+        x + f * 0.1, y + 0.3, z + h * 0.1, 0, 0, 0, life(), quadSize())
+      if (!p) return
+      launch(p, g)
+      // setPower(d), verbatim. The +0.1/-0.1 is vanilla's, and it is what
+      // keeps the burst from being pulled flat at large d.
+      p.vx *= d
+      p.vy = (p.vy - 0.1 * TPS) * d + 0.1 * TPS
+      p.vz *= d
+
+      const s = 0.75 + Math.random() * 0.25
+      p.r = color[0] * s; p.g = color[1] * s; p.b = color[2] * s
     }
-
-    // Rows 0 and 1 of the camera's world matrix are its right and up axes.
-    const m = noa.rendering.camera.getWorldMatrix().m
-    const rx = m[0], ry = m[1], rz = m[2]
-    const ux = m[4], uy = m[5], uz = m[6]
-
-    noa.globalToLocal(originGlobal, null, originLocal)
-
-    for (let i = 0; i < liveCount; i++) {
-      const p = pool[i]
-      p.age += dt
-      if (p.age >= p.life) {
-        // Swap-remove, so [0, liveCount) stays contiguous and only the live
-        // range is ever uploaded.
-        pool[i] = pool[--liveCount]
-        pool[liveCount] = p
-        i--
-        continue
-      }
-      p.x += p.vx * step
-      p.y += p.vy * step
-      p.z += p.vz * step
-
-      const t = p.age / p.life
-      // Fade out over the second half only. Fading from birth makes the swirl
-      // look like it is always dying; vanilla's spell particle holds full
-      // alpha and shrinks instead.
-      const alpha = t < 0.5 ? 1 : 1 - (t - 0.5) * 2
-      const s = SIZE * (1 - t * t * 0.5)
-
-      /*
-       * RAW WORLD COORDINATES in the buffer, and the frame's origin offset
-       * carried on the MESH -- which is particles.js's convention, copied
-       * exactly rather than re-derived. Baking the offset into every vertex is
-       * arithmetically identical and it is a second way of saying the same
-       * thing, which is one more place for the two to drift apart the day noa
-       * changes how it rebases.
-       */
-      const x = p.x, y = p.y, z = p.z
-
-      const ax = rx * s, ay = ry * s, az = rz * s
-      const bx = ux * s, by = uy * s, bz = uz * s
-
-      const o = i * 12
-      positions[o]     = x - ax - bx; positions[o + 1]  = y - ay - by; positions[o + 2]  = z - az - bz
-      positions[o + 3] = x + ax - bx; positions[o + 4]  = y + ay - by; positions[o + 5]  = z + az - bz
-      positions[o + 6] = x + ax + bx; positions[o + 7]  = y + ay + by; positions[o + 8]  = z + az + bz
-      positions[o + 9] = x - ax + bx; positions[o + 10] = y - ay + by; positions[o + 11] = z - az + bz
-
-      const c = i * 16
-      for (let k = 0; k < 4; k++) {
-        colors[c + k * 4] = p.r
-        colors[c + k * 4 + 1] = p.g
-        colors[c + k * 4 + 2] = p.b
-        colors[c + k * 4 + 3] = alpha
-      }
-    }
-
-    // Dead slots keep whatever they last held, so they are collapsed to a
-    // degenerate quad rather than left drawing a stale mote at full alpha.
-    for (let i = liveCount; i < POOL; i++) {
-      const o = i * 12
-      for (let k = 0; k < 12; k++) positions[o + k] = 0
-      const c = i * 16
-      for (let k = 0; k < 4; k++) colors[c + k * 4 + 3] = 0
-    }
-
-    mesh.position.set(originLocal[0], originLocal[1], originLocal[2])
-    mesh.updateVerticesData('position', positions, false, false)
-    mesh.updateVerticesData('color', colors, false, false)
-    if (!wasDrawn) { mesh.setEnabled(true); wasDrawn = true }
   }
 
-  noa.on('beforeRender', onFrame)
-
   return {
+    shatter,
     /** Live motes. The spec asserts this is non-empty before asserting colour. */
-    get live() { return liveCount },
+    get live() { return particles.liveIn(SPELL_TEXTURE) },
     /** Every live mote's colour, 0-1 per channel. For the spec's assertions. */
-    colors() {
-      const out = []
-      for (let i = 0; i < liveCount; i++) out.push([pool[i].r, pool[i].g, pool[i].b])
-      return out
-    },
-    dispose() { noa.off('beforeRender', onFrame); mesh.dispose() },
+    colors() { return particles.stateIn(SPELL_TEXTURE).map(p => p.color) },
+    /** Full per-mote state, so a spec can assert the frame really advances. */
+    state() { return particles.stateIn(SPELL_TEXTURE) },
+    dispose() { noa.off('tick', onTick) },
   }
 }
