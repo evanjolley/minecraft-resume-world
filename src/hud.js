@@ -361,7 +361,146 @@ function airRow(hud) {
   }
 }
 
-export function installHUD(noa, { inventory, survival }) {
+/* ------------------------------------------------------------------ *
+ * Status effect icons, from Gui.renderEffects.
+ *
+ * GEOMETRY, in GUI pixels, and it is the opposite corner of the screen from
+ * everything else in this file:
+ *
+ *   background   24 x 24, at x = guiWidth - 25 * n, y = 1
+ *   icon         18 x 18, at (x + 3, y + 3)
+ *   second row   y = 1 + 26 = 27
+ *
+ * TWO ROWS, SPLIT ON isBeneficial() AND NOT ON "not harmful". Vanilla keeps
+ * two counters and chooses with `holder.value().isBeneficial()`, which is
+ * `category == BENEFICIAL` exactly -- so the NEUTRAL effects (Glowing, Bad
+ * Omen, Trial Omen, Raid Omen) are drawn in the BOTTOM row next to Poison. A
+ * three-way split looks more sensible and is wrong.
+ *
+ * NO DURATION TEXT. This is the detail worth stating because it is easy to
+ * "fix": vanilla's HUD row has no numbers on it at all -- the countdown lives
+ * in the inventory screen's effect panel, which this world does not have. What
+ * the HUD does instead is FADE the icon when the effect is nearly out.
+ * ------------------------------------------------------------------ */
+
+const EFFECT_CELL = 24
+const EFFECT_ICON = 18
+const EFFECT_INSET = 3
+const EFFECT_PITCH = 25   // 24 plus a one-pixel gap
+const EFFECT_ROW_PITCH = 26
+const EFFECT_TOP = 1
+
+/**
+ * Vanilla's blink, verbatim from Gui.renderEffects, and it is an ALPHA on the
+ * icon rather than flashing text:
+ *
+ *   int n = 10 - m / 20;
+ *   f = clamp(m / 10.0F / 5.0F * 0.5F, 0, 0.5F)
+ *       + cos(m * PI / 5.0F) * clamp(n / 10.0F * 0.25F, 0, 0.25F);
+ *
+ * Two halves doing two jobs. The first term is a BASELINE that sags from 0.5
+ * toward 0 as the duration runs out, so the icon dims overall. The second is a
+ * cosine on a 10-tick period whose AMPLITUDE grows from nothing to 0.25 as the
+ * effect nears its end, so the pulse gets stronger exactly when it matters.
+ * Writing this as a simple on/off blink loses the second property, which is
+ * the one that makes a nearly-expired effect read as urgent.
+ *
+ * @param ticks  duration remaining. Above 200 there is no blink at all.
+ */
+export function effectAlpha(ticks) {
+  if (ticks > 200 || ticks < 0) return 1
+  const n = 10 - ticks / 20
+  const a = Math.min(0.5, Math.max(0, (ticks / 10 / 5) * 0.5)) +
+    Math.cos((ticks * Math.PI) / 5) * Math.min(0.25, Math.max(0, (n / 10) * 0.25))
+  return Math.min(1, Math.max(0, a))
+}
+
+const EFFECT_ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
+
+/**
+ * The effect row, rebuilt on change and repainted for the blink every tick.
+ *
+ * TWO SEPARATE CADENCES, and that split is the point. The cells are torn down
+ * and rebuilt only when the SET of effects changes -- which is rare -- while
+ * the alpha is written every frame, which is a style assignment on an element
+ * that already exists. Rebuilding the DOM at 30 Hz to animate an opacity is
+ * the version that works and quietly costs a frame.
+ *
+ * NO ICON ART EXISTS IN THIS WORLD. Vanilla blits `mob_effect/<name>.png`, 39
+ * sprites that scripts/build-textures.mjs does not extract -- and that script
+ * is owned by another agent this pass. So the 18x18 is filled with the
+ * effect's OWN COLOUR, which is real data from MobEffects.java rather than
+ * invented art, plus the roman numeral for level II and up. The numeral is a
+ * deliberate departure: vanilla puts it in the inventory panel and not on the
+ * HUD, and without either a sprite or a numeral three coloured squares are
+ * unreadable. It comes out the moment the sprites land.
+ */
+function effectRows(container, effects, noa) {
+  const rows = [
+    Object.assign(document.createElement('div'), { className: 'effect-row' }),
+    Object.assign(document.createElement('div'), { className: 'effect-row' }),
+  ]
+  rows[1].style.marginTop = px(EFFECT_ROW_PITCH - EFFECT_CELL)
+  container.style.top = px(EFFECT_TOP)
+  container.style.right = px(EFFECT_TOP)
+  container.append(...rows)
+
+  /* Live cells, so the per-frame alpha write does not have to re-query. */
+  let cells = []
+
+  function rebuild() {
+    for (const row of rows) row.textContent = ''
+    cells = []
+    for (const inst of effects.active(noa.playerEntity)) {
+      if (inst.hidden) continue
+      const cell = document.createElement('div')
+      cell.className = 'effect-cell'
+      cell.dataset.effect = inst.key
+      cell.style.width = px(EFFECT_CELL)
+      cell.style.height = px(EFFECT_CELL)
+      // The one-pixel gap between cells, which is the 25 pitch minus the 24
+      // sprite. On the row-reverse axis this is the LEFT margin.
+      cell.style.marginLeft = px(EFFECT_PITCH - EFFECT_CELL)
+
+      const icon = document.createElement('div')
+      icon.className = 'effect-icon'
+      icon.style.left = icon.style.top = px(EFFECT_INSET)
+      icon.style.width = icon.style.height = px(EFFECT_ICON)
+      icon.style.background = `#${inst.def.color.toString(16).padStart(6, '0')}`
+      cell.appendChild(icon)
+
+      if (inst.amplifier > 0) {
+        const lv = document.createElement('span')
+        lv.className = 'effect-level'
+        lv.style.fontSize = `${FONT_PX * 0.75}px`
+        lv.textContent = EFFECT_ROMAN[inst.amplifier] ?? String(inst.amplifier + 1)
+        cell.appendChild(lv)
+      }
+
+      // isBeneficial, not `!== HARMFUL`: see the header.
+      rows[inst.def.category === 'beneficial' ? 0 : 1].appendChild(cell)
+      cells.push({ icon, inst })
+    }
+  }
+
+  effects.onChange(rebuild)
+  rebuild()
+
+  noa.on('tick', () => {
+    for (const { icon, inst } of cells) {
+      icon.style.opacity = inst.ticks < 0 ? '1' : effectAlpha(inst.ticks)
+    }
+  })
+
+  /** For the specs: how many icons are drawn, and in which row. */
+  return {
+    get count() { return cells.length },
+    get keys() { return cells.map(c => c.inst.key) },
+    rowKeys: (i) => [...rows[i].children].map(el => el.dataset.effect),
+  }
+}
+
+export function installHUD(noa, { inventory, survival, effects = null }) {
   const hud = document.getElementById('hud')
   hud.style.width = px(HOTBAR_W)
 
@@ -463,6 +602,12 @@ export function installHUD(noa, { inventory, survival }) {
   // Minecraft fills the food bar from the right edge inward.
   const food = iconRow(hungerEl, MAX_FOOD / 2, 'food', true)
 
+  /* Effects, if anything wired them. Optional so hud.js still installs in a
+     world built before effects.js existed -- which is what a bisect boots. */
+  const effectRow = effects
+    ? effectRows(document.getElementById('effects'), effects, noa)
+    : null
+
   const xpBg = document.getElementById('xp-bar')
   xpBg.style.width = px(HOTBAR_W)
   xpBg.style.height = px(5)
@@ -529,4 +674,12 @@ export function installHUD(noa, { inventory, survival }) {
     const p = noa.ents.getPositionData(player).position
     coords.textContent = `${Math.floor(p[0])} ${Math.floor(p[1])} ${Math.floor(p[2])}`
   })
+
+  /*
+   * The effect row, for the specs. A screenshot proves the icons LOOK right
+   * and cannot prove which row a neutral effect landed in, because both rows
+   * are coloured squares -- so the split that is easy to get wrong is the one
+   * thing exposed as data rather than left to a pixel assertion.
+   */
+  return { effects: effectRow }
 }

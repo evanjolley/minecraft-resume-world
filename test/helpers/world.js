@@ -374,6 +374,16 @@ export async function resetWorld(page) {
      */
     game.fluids?.flow?.reset?.()
 
+    /*
+     * Status effects, for exactly the reason the fluid queue above is cleared.
+     * They are page-lifetime state on an entity that survives a reset --
+     * infinite ones survive it forever -- and Speed II leaking into the next
+     * spec would break a movement measurement three files away from the spec
+     * that set it. Optional-chained like its neighbours so the harness still
+     * boots worlds from before effects.js existed.
+     */
+    game.effects?.clearAll?.()
+
     noa.ents.setPosition(noa.playerEntity, spawn)
     const body = noa.ents.getPhysics(noa.playerEntity).body
     body.velocity[0] = body.velocity[1] = body.velocity[2] = 0

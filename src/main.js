@@ -32,6 +32,7 @@ import { installTerrainAnimation } from './terrainAnimation.js'
 import { installBlockLight } from './blockLight.js'
 import { createArmorReduction } from './armor.js'
 import { createEffects } from './effects.js'
+import { installEffectSwirl } from './effectSwirl.js'
 import { itemName, itemId, dropFor, rollDrops, unmappedDrops } from './items.js'
 import { itemModelStats } from './itemModel.js'
 import { installSounds } from './sounds.js'
@@ -548,7 +549,7 @@ const inventoryScreen = installInventoryScreen(noa, inventory, inputLock, gamemo
 installRespawn(noa, survival, inputLock, {
   playerName: () => roster.displayNameOf(LOCAL_ID),
 })
-installHUD(noa, { inventory, survival })
+const hud = installHUD(noa, { inventory, survival, effects })
 
 /*
  * Feedback listens to interact.js and physics.js rather than reaching into the
@@ -560,6 +561,14 @@ installHUD(noa, { inventory, survival })
 // and giving it events is a change to a file this pass does not own.
 const sounds = installSounds(noa, { interaction, movement, survival, fluids })
 const particles = installParticles(noa, { interaction, movement })
+/*
+ * The effect swirl, in its own file rather than in particles.js. The short
+ * version: particles.js keys its pooled systems by TEXTURE and has nowhere to
+ * put a per-particle colour, which is the entire content of this effect. The
+ * long version, including what I would ask particles.js for, is at the top of
+ * effectSwirl.js.
+ */
+const effectSwirl = installEffectSwirl(noa, effects)
 
 /*
  * Weather. After `sounds` because the rain bed hangs off its AudioContext, and
@@ -1011,7 +1020,10 @@ window.game = {
    * interval -- and every one of those needs to hand an effect to an entity
    * without typing a command, which is what `give` is here for.
    */
-  effects,
+  effects, effectSwirl,
+  /* The icon row, so a spec can assert which ROW an effect landed in --
+     something a screenshot of two coloured squares cannot report. */
+  effectHud: hud?.effects ?? null,
   /*
    * The container screens and the creative picker's tab rules, for the
    * console and for the test suite. `creative` is the RULES -- which tab

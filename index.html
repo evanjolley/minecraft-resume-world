@@ -304,6 +304,23 @@
     /* Vanilla's ChatFormatting.DARK_GRAY, 0x555555, with the shadow it always
        draws under text: the colour scaled by a quarter, 0x151515. */
     #gui-tooltip .tip-dim { color: #555555; text-shadow: 2px 2px 0 #151515; }
+    /* Anchored to the top-right corner, which is where Gui.renderEffects puts
+       them: x = guiWidth - 25 * n, y = 1. Laying it out right-to-left in a
+       flex row is the same arithmetic with the browser doing the subtraction,
+       and it keeps the rightmost slot pinned when the count changes. */
+    #effects { position: absolute; top: 0; right: 0; pointer-events: none;
+      z-index: 4; display: flex; flex-direction: column; align-items: flex-end; }
+    #effects .effect-row { display: flex; flex-direction: row-reverse; }
+    /* Vanilla's hud/effect_background is a flat dark panel with a one-pixel
+       lighter bevel. Reproduced in CSS rather than as a sprite because the
+       sprite is not in this world's texture build -- see the report. */
+    .effect-cell { position: relative; image-rendering: pixelated;
+      background: rgba(0, 0, 0, 0.55); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); }
+    .effect-icon { position: absolute; image-rendering: pixelated;
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35); }
+    .effect-level { position: absolute; right: 1px; bottom: 0; color: #fff;
+      text-shadow: 1px 1px 0 #000; line-height: 1; }
+    body.inv-open #effects, body.menu-open #effects { display: none; }
     body.inv-open #hud, body.inv-open #crosshair,
     body.menu-open #hud, body.menu-open #crosshair { display: none; }
 
@@ -447,6 +464,12 @@
 
   <div id="crosshair"></div>
   <div id="coords"></div>
+
+  <!-- Status effect icons. TOP RIGHT and outside #hud on purpose: #hud is
+       bottom-anchored and hotbar-width, and Gui.renderEffects blits these
+       against the opposite corner of the screen entirely. hud.js sets every
+       size and offset in Minecraft GUI pixels. -->
+  <div id="effects"></div>
 
   <div id="hud">
     <div id="held-name"></div>
