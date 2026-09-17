@@ -288,7 +288,11 @@ function garage(g) {
   g.box([0, -1, 0], [W, -1, D], 'light_gray_concrete')
   g.hollow([0, 0, 0], [W, 3, D], { walls: 'white_concrete', ceiling: 'dark_oak_planks', inside: 'air' })
   g.hollow([0, 0, 0], [W, 0, D], { walls: 'bricks' })   // a ring, not a box: see the house
-  g.clear([W, 1, 2], [W, 3, 4])                          // the garage door, open
+  /* The door is cleared from y = 0, not y = 1. The brick skirt runs right
+   * round the building and a garage door with a brick course across the
+   * bottom of it is a garage no car ever got into -- visible in a screenshot
+   * from the driveway and in nothing else. */
+  g.clear([W, 0, 2], [W, 3, 4])                          // the garage door, open
   g.set(3, 3, 3, 'glowstone')
   g.set(1, 1, 1, 'crafting_table')
   g.set(1, 1, 5, 'barrel')

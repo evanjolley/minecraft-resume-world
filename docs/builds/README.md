@@ -1,0 +1,253 @@
+# Building a stage
+
+Eight stages of one life, four to a side of one road, in a 128x128 world. This
+is how you build yours.
+
+Read this, then read `src/builds/01-omaha.js`, which is the worked example. Then
+open your own stub — it already exists and already has a row in
+`src/builds/index.js`, so you never edit a file anybody else is editing.
+
+---
+
+## The three-minute version
+
+```js
+// src/builds/03-perplexity.js
+export function build(s) {
+  s.rect([0, 0], [55, 27], -1, 'polished_andesite')          // pave the whole plot
+  s.hollow([10, 0, 4], [20, 5, 14], {                        // a room you can walk into
+    walls: 'stone_bricks', floor: 'planks', ceiling: 'planks', inside: 'air',
+  })
+  s.clear([20, 1, 9], [20, 3, 9])                            // a doorway in the east wall
+  s.set(15, 4, 9, 'glowstone')                               // light it
+}
+```
+
+`s` is a stamper bound to your plot. Every coordinate is **plot-local**:
+`(0, 0, 0)` is your plot's north-west corner at ground level, `+x` runs east
+toward the road, `+z` runs south, `y = 0` is the air above the grass and
+`y = -1` **is** the grass. Write outside your plot and it throws.
+
+---
+
+## The plot table
+
+All coordinates are patch-local, `0..127` on x and z. Ground surface is
+`y = 136`; the build ceiling is `y = 200`, so local y runs `-4 .. +64`.
+
+| # | Stage | file | side | x | z |
+|---|-------|------|------|---|---|
+| 1 | Omaha, Nebraska | `01-omaha.js` | LEFT | 4–59 | 6–33 |
+| 2 | Harvard | `02-harvard.js` | RIGHT | 68–123 | 6–33 |
+| 3 | Perplexity | `03-perplexity.js` | LEFT | 4–59 | 34–61 |
+| 4 | Arize | `04-arize.js` | RIGHT | 68–123 | 34–61 |
+| 5 | Bilibili | `05-bilibili.js` | LEFT | 4–59 | 62–89 |
+| 6 | No Logo | `06-nologo.js` | RIGHT | 68–123 | 62–89 |
+| 7 | Patronus AI | `07-patronus.js` | LEFT | 4–59 | 90–117 |
+| 8 | Parkour + San Francisco | `08-parkour-sf.js` | RIGHT | 68–123 | 90–117 |
+
+Every plot is 56 wide and 28 deep, so local x runs `0..55` and local z runs
+`0..27`.
+
+**The road is `x = 62..65`, `z = 4..124`, and it belongs to `road.js`.** Its
+plot is wider than its paving — `x = 60..67` — because the verges carry the
+lamps and the stage markers. Do not write there.
+
+Everything else (`x` 0–3, 60–67, 124–127 and `z` 0–3, 118–127) is margin and
+stays grass. `test/01-world.spec.js` reads the Classic Flat ladder out of the
+margin at patch (1, 1); `test/70-builds.spec.js` asserts the margins are empty.
+
+**North is `-z`.** The visitor spawns at the SOUTH end of the road, at patch
+(63, 120), and walks north through time. Stage 1 is the far end of the walk;
+stage 8 is the first thing they pass. Face the good stuff east (`+x`) if you
+are on the LEFT, west (`-x`) if you are on the RIGHT — that is where the road
+is and it is where every visitor is standing.
+
+### The helper, if you need patch or world coordinates
+
+```js
+import { plot, toPatch, toWorld, GROUND_Y } from './plots.js'
+
+toPatch(plot('perplexity'), x, y, z)   // -> [px, py, pz]  patch indices, absolute y
+toWorld(px, py, pz)                    // -> [wx, wy, wz]  what /tp takes
+```
+
+The stamper carries both as `s.toPatch(x, y, z)` and `s.toWorld(x, y, z)`,
+already offset by any `s.at(...)` you are inside. You should rarely need them;
+if a build is doing patch arithmetic, it has probably lost the plot origin.
+
+---
+
+## The API
+
+Everything below is on `s`, everything is plot-local, and everything returns
+`s` so calls chain.
+
+| call | what it does |
+|------|--------------|
+| `s.set(x, y, z, key)` | one block |
+| `s.box([x1,y1,z1], [x2,y2,z2], key)` | a solid box, inclusive, corners in any order |
+| `s.clear(a, b)` | the same box, filled with air |
+| `s.hollow(a, b, { walls, floor, ceiling, inside })` | a room. Each part is a block key or omitted. `inside: 'air'` carves the volume out |
+| `s.line([x1,y1,z1], [x2,y2,z2], key)` | an axis-aligned run. Throws on a diagonal |
+| `s.pillar(x, z, yFrom, yTo, key)` | a vertical run — the common case of `line` |
+| `s.rect([x1,z1], [x2,z2], y, key)` | a flat horizontal rectangle at one height |
+| `s.pattern({ at, plane, legend, rows })` | a 2-D drawing. See below |
+| `s.at(dx, dy, dz, name)` | the same plot with the origin moved |
+| `s.placed` | how many blocks you have written |
+| `s.plot`, `s.size` | your bounds, if you want to derive from them |
+
+### `pattern` is the one that matters
+
+It is how anything detailed gets authored so that the source **looks like the
+thing it builds**.
+
+```js
+s.pattern({
+  at: [10, 0, 4],
+  plane: 'zy',
+  legend: { '#': 'white_concrete', 'W': 'glass', 'D': 'dark_oak_planks', 'B': 'bricks' },
+  rows: [
+    '#WW##WW##WW###',
+    '#WW###.D.##WW#',
+    'BBBBBBBDBBBBBB',
+  ],
+})
+```
+
+- `plane: 'xz'` — a floor plan seen from above. Characters run east (`+x`),
+  rows run south (`+z`), so the listing is a map with north at the top.
+- `plane: 'xy'` — a wall facing north or south. Characters run east, rows stack
+  UP the page: the **last** row sits at `at`'s y, so you draw the wall the way
+  it looks.
+- `plane: 'zy'` — a wall facing east or west. Characters run south, rows stack
+  up the page as in `xy`. **This is the one you want for a facade facing the
+  road.**
+- `' '` and `'.'` mean "leave whatever is there alone" unless your legend says
+  otherwise. A character that is in neither throws, with its row and column.
+- Ragged rows are fine. A short row just stops.
+
+### `at` is the other one
+
+```js
+function build(s) {
+  house(s.at(30, 0, 4, 'perplexity/house'))
+}
+
+function house(h) {
+  h.hollow([0, 0, 0], [15, 4, 13], { walls: 'white_concrete', ... })
+}
+```
+
+The house is written at its own corner, in small numbers, and moves by editing
+one line. The child shares the parent's block counter and its copy-on-write
+bookkeeping — it is a lens on the same stamper, not a second one.
+
+---
+
+## House rules
+
+**Fail loudly, and it already does.** An unknown block key throws. A write
+outside your plot throws. A pattern character that is not in the legend throws.
+A build that throws takes the page down, on purpose: a silently missing wall is
+worse than a blank screen, because nobody finds it.
+
+**Block keys are `src/blocks.js` keys, not Minecraft ids.** 659 of them. The one
+that will catch you: the oak planks are **`planks`**, not `oak_planks`. `grass`
+is the grass block. Stairs and slabs carry their orientation in the key
+(`oak_stairs_east_bottom`, `stone_slab_top`) — if you are not sure which way one
+faces, use full blocks; a staircase you cannot climb is worse than a blocky one.
+
+**Builds are static geometry.** No entities, no per-tick behaviour, no new block
+types. You are writing palette keys into columns before the world is installed;
+there is no runtime.
+
+**Light your interiors.** Torches, glowstone, sea lanterns, lava and magma all
+emit real light as of today. A glowstone block swapped into a plank ceiling
+reads as a fitting; a torch on the floor reads as a torch on the floor.
+
+**Interiors matter.** A visitor who walks in and finds a hollow box feels
+cheated. Furnish it.
+
+**Give a floor its own block at `y = -1`.** Replace the grass rather than
+building on top of it, so the inside of a building is at the same height as the
+ground outside it. A floor at `y = 0` builds a house you step up into and a
+door one block off the ground.
+
+**Watch the vertical budget underground.** The world is Classic Flat: grass at
+`y = -1`, dirt at `-2` and `-3`, bedrock at `-4`. A cellar is exactly two blocks
+of headroom, and there is no room for a staircase — Omaha's is two crates under
+a pair of missing floorboards. And a 1x1 shaft is a trap: from a cellar floor
+the ground is three blocks up and a jump is one.
+
+**Render distance is 128 blocks.** noa draws four chunks of 32. A visitor on the
+road must be able to see your build beside them — so put the tall, legible thing
+near the road edge of your plot and the background at the far end.
+
+**Screenshot it from the road, at eye level, before you believe it.** Two real
+mistakes in stage 1 were invisible from a plan view and obvious from a
+screenshot: a five-by-five `N` facing the cornfield instead of the road, and
+stage markers so tall that nobody walking past could read them.
+
+**Every build needs an easter egg.** Reward looking under, behind and on top of
+things. Stage 1 has three: a cellar under a missing floorboard, three emerald
+blocks buried under a doghouse, and a 2011 dirt shack on the garage roof.
+
+**Nothing factual is invented.** The licence a build takes is in how a fact is
+drawn, never in what the fact is.
+
+---
+
+## Where the machinery is
+
+- `src/builds/plots.js` — the plot table, as data. No imports, so `src/island.js`
+  and node scripts can read it.
+- `src/builds/stamp.js` — the stamper. One `put` at the centre; the bounds check
+  and the copy-on-write live there and nowhere else.
+- `src/builds/index.js` — the registry and `stampBuilds(world, surfaceY)`.
+- `src/flatworld.js` — calls `stampBuilds` at the end of `flatPatch`, which is
+  the last moment the world is mutable. Pass `builds: null` for a bare superflat
+  patch, which is what specs that want to measure the ground do.
+
+Structures are **columns rewritten once**, between generation and install. There
+is no chunk hook and no `setBlock` storm at boot: `getVoxelID` stays two
+subtractions and an array read, and the world is simply born with a house in it.
+
+Only the overworld is stamped. The Nether and the mountains are imported assets
+and never pass through `flatPatch` at all.
+
+### The trap nobody would guess
+
+`flatPatch` hands all 16384 columns the **same** `Uint16Array`. The stamper
+clones a column the first time it writes to one. If you ever touch `world.cols`
+directly, one careless write moves the ground under the entire map.
+`test/70-builds.spec.js` has the tripwire.
+
+---
+
+## Before you commit
+
+```
+npm run build
+npm run smoke                       # eight seconds, and it is not optional
+npx playwright test -c test/playwright.config.js test/70-builds.spec.js
+```
+
+`npm run smoke` exists because a shader that failed to compile once shipped an
+invisible world through three agents reporting green.
+
+---
+
+## Known hazards for whoever owns stage 4 (Arize)
+
+Two things sit inside the Arize plot that are not Arize's:
+
+- **AI Evan stands at world (-4.5, 0.5)** — patch (82.5, 56.5) — which is
+  `EVAN_XZ` in `src/main.js`. Leave that column clear or he spawns inside a
+  wall.
+- **`DROP_X` / `DROP_Z` in `test/helpers/world.js` is the same column.** Every
+  "teleport up and fall" spec in the suite drops down it and expects grass at
+  `SURFACE_Y - 1` with clear sky above.
+
+Both want moving to somewhere near the new spawn, and both live in files this
+system does not own.

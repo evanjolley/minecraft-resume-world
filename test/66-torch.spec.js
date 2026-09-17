@@ -38,8 +38,13 @@ const WALL_TORCH = { north: 656, south: 657, east: 658, west: 659 }
 
 /** Mid-air, the same reasoning as 58's pad: nothing up here to destroy. */
 const PY = 200
-const CX = 40
-const CZ = 20
+/* Over the NEW spawn -- the south end of the road at world (-24, 64), see
+ * src/builds/plots.js. This was (40, 20), over the old spawn column, and from
+ * the new one the room's chunks are far enough out that the setBlock calls
+ * that build it are sometimes dropped: it failed on webkit and passed on
+ * chromium, which is what a residency race looks like from the outside. */
+const CX = -24
+const CZ = 64
 const MIDNIGHT = 18000
 
 /**

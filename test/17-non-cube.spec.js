@@ -55,7 +55,23 @@ const ORIENT_AT = { x: -10, y: 76, z: 0 }
  * highest block in the patch and still inside noa's vertical load range from
  * spawn, which is what lets the beforeAll build it at all.
  */
-const RIG = { x: 20, y: 200, z: 20 }
+/*
+ * MOVED, WITH SPAWN. This was (20, 200, 20), which was "just above the old
+ * spawn column" -- and the beforeAll can only build the rig at all because
+ * every chunk it touches is inside noa's load range FROM WHERE THE PLAYER IS
+ * STANDING. setBlockID into an unloaded chunk is dropped silently.
+ *
+ * The overworld's spawn is now the south end of the road at world (-24, 64)
+ * -- see src/builds/plots.js -- and from there the far (+x) end of the old
+ * rig fell outside the range: the first three tests passed, reading the near
+ * end, and the staircase and the top slab at x+8..x+15 failed with the player
+ * resting on the ground 72 blocks below. A silently half-built rig is exactly
+ * the failure this comment is here to stop happening a third time.
+ *
+ * y = 180 rather than 200 so it cannot collide with test/66-torch.spec.js's
+ * room, which lives at y = 200 over the same spawn and shares a worker.
+ */
+const RIG = { x: -34, y: 180, z: 50 }
 
 /** Vanilla's stone. Duplicated from blocks.js on purpose, like helpers/world's ID. */
 const STONE = 3

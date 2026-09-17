@@ -111,7 +111,7 @@ function lamps(s, LAST_Z) {
 function markerZones() {
   return PLOTS.map(p => {
     const z = p.z0 - ROAD.z0 + 3
-    return [z, z + 4]
+    return [z, z + 2]
   })
 }
 
@@ -131,11 +131,23 @@ function markers(s) {
     const back = left ? 0 : 7          // the verge column: the board
     const face = left ? 1 : 6          // the kerb column: the digit, one nearer the road
 
-    s.box([back, 0, z - 1], [back, 6, z + 5], 'polished_blackstone')
-    s.set(back, 7, z + 2, 'sea_lantern')
+    // Two posts and a board the exact size of the glyph. The first version of
+    // this was a seven-by-seven slab of blackstone, which from the road is not
+    // a sign, it is a WALL -- eight of them down both verges turned the road
+    // into a corridor and hid the plots they were labelling. Screenshot, not
+    // arithmetic, is what found that.
+    s.pillar(back, z, 0, 0, 'dark_oak_wood')
+    s.pillar(back, z + 2, 0, 0, 'dark_oak_wood')
+    s.box([back, 1, z], [back, 5, z + 2], 'polished_blackstone')
+    s.set(back, 6, z + 1, 'sea_lantern')
 
+    /* AT EYE LEVEL, which took a second screenshot to get right. The board
+     * started at y = 2 and the glyph ran to y = 6 -- perfectly legible from
+     * above and completely invisible to somebody walking past it, because a
+     * walking player's eyes are at about y = 1.6 and they are looking at the
+     * road. A sign you have to look up to read is a sign nobody reads. */
     s.pattern({
-      at: [face, 1, z + 1],
+      at: [face, 1, z],
       plane: 'zy',
       legend: { '#': 'white_concrete' },
       rows: DIGITS[p.n],
