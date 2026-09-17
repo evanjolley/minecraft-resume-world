@@ -103,3 +103,41 @@ already satisfied "because the attribution is on the entry overlay in
 comment, and the entry overlay itself was removed long ago. The doc was arguing
 the opposite of the actual state. It has been fixed, but if that claim reappears
 anywhere, it is wrong.
+
+---
+
+## 4. A withheld name is still in the public git history
+
+**The question.** `docs/ai-evan/03-corpus.md` once named the arrangement that
+`corpus/profile.md` lists as never-say. It was taken out of HEAD in `fc7c370`
+("take a private name out of a public doc"), and HEAD is clean — `git grep`
+across `docs/`, `src/` and `scripts/` finds nothing.
+
+**But the history is not.** Commit **`850f7fa`** still contains it, and this
+repository is public (`gh repo view` → `isPrivate: false`). Anyone who runs
+`git log -S` against the term, or browses that commit on GitHub, gets it. A
+redaction at HEAD does not redact a commit.
+
+**What is NOT at risk, checked rather than assumed.** `corpus/` has never been
+committed — not in a single commit in the repo's history. Evan's answers, the
+derived profile and the generated prompt are gitignored and local-only. Two
+tracked research docs quote one answer each; both are innocuous.
+
+**Three options, and it is his call.**
+
+  - **Rewrite history and force-push.** Removes it properly. Rewrites every
+    commit after `850f7fa` — well over a hundred — so every existing clone
+    breaks and every commit hash in every doc, commit message and report in
+    this repo becomes wrong. That last cost is real: this project cites its own
+    hashes constantly.
+  - **Make the repository private.** Cheapest and complete, but the public repo
+    is part of the point of the project.
+  - **Accept it.** The term is one word in one paragraph of a research document
+    in a repo nobody is auditing. Defensible, and it should be a decision
+    rather than a default.
+
+**Why it matters more now than it did.** Evan has asked for a corpus
+architecture where his own writing is never stored in a public repo
+(`docs/FUTURE.md`, "Where the corpus lives"). That instinct is right and the
+design already honours it — but it is worth knowing the one place the rule was
+already broken, before adding more material.
