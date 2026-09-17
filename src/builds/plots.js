@@ -165,3 +165,136 @@ export function toWorld(px, py, pz) {
  */
 export const SPAWN_PATCH_X = 63
 export const SPAWN_PATCH_Z = 120
+
+/* ====================================================================== *
+ *
+ * THE SECOND SURVEY: the 256x256 overworld, and why it lives in this file.
+ *
+ * Everything above describes `claude-opus-5-1` -- a 128x128 patch, eight
+ * plots, a straight paved road -- and NONE of it changed when the overworld
+ * grew. That world is the owner's archive and its coordinates are frozen.
+ *
+ * What follows is the survey of the world he is actually walking: a winding
+ * path through a living landscape with seven chapter plots on alternating
+ * sides, laid out across 256 blocks instead of 128. Same file, because this
+ * is what the file is FOR -- the one place you look to find out what you are
+ * allowed to write to -- and because both surveys share GROUND_Y, `plot()`,
+ * `toPatch` and the stamper that reads them. Two files would mean two answers
+ * to "where am I allowed to build".
+ *
+ * WHAT IS DIFFERENT, and there are only three things:
+ *
+ *   - Patch indices run 0..255, not 0..127.
+ *   - The origin is 128/16, not 87/56, so world x = patch x - 128 and world
+ *     z = patch z - 16. See WORLDS.overworld in src/island.js for why.
+ *   - THE VISITOR WALKS SOUTH. In the archive, spawn was the south end and
+ *     north (-z) was forward through time. Here spawn is the NORTH end,
+ *     chapter 1 is a short walk in front of you, and z counts UP as the years
+ *     do. The direction flipped because spawn has to be world (0, 0) and the
+ *     walk has to start there.
+ *
+ * REJECTED -- one id namespace. The ids below are prefixed `ch` and the
+ * archive's are not, so `plot('omaha')` still means the archive's Omaha and
+ * `plot('ch1')` means this world's. A shared `omaha` would be a name whose
+ * meaning depends on which world is being generated, which is the one kind of
+ * ambiguity a coordinate table must not have.
+ * ====================================================================== */
+
+/** The overworld's side, in blocks. WORLDS.overworld.size, copied for the
+ *  same reason GROUND_Y is a copy: this module must stay import-free so
+ *  island.js and node scripts can read it. Asserted in test/75-land.spec.js. */
+export const LAND_SIZE = 256
+/** Patch column of world x = 0, and patch row of world z = 0, for the
+ *  overworld. WORLDS.overworld.originX / originZ, same caveat. */
+export const LAND_ORIGIN_X = 128
+export const LAND_ORIGIN_Z = 16
+
+/** Where the visitor lands and where the path starts, in patch indices.
+ *  (128, 16) is world (0, 0) -- the origin, which every world spawns at. */
+export const LAND_SPAWN_X = LAND_ORIGIN_X
+export const LAND_SPAWN_Z = LAND_ORIGIN_Z
+
+/*
+ * THE WHOLE MAP, as one allocation.
+ *
+ * The path, the river, the trees and the undergrowth are not a plot-shaped
+ * thing -- a winding path legitimately wanders from x=96 to x=158 and from
+ * one end of the world to the other, and boxing it would mean either a
+ * bounding box so large it asserts nothing or a dozen little rectangles that
+ * the path then has to be drawn to fit. So the landscape's allocation is the
+ * entire 256 square.
+ *
+ * WHICH WOULD MAKE THE STAMPER'S BOUNDS CHECK MEANINGLESS, and that is the
+ * problem this pass had to solve rather than shrug at. The check is what
+ * stops one build writing into another's plot, and it is the only thing that
+ * will protect the owner's seven chapters from a landscape pass that decides
+ * to plant a forest. So the stamper grew `forbid` (see src/builds/stamp.js):
+ * the landscape's stamper is handed the seven chapter footprints as NO-GO
+ * rectangles and throws if a tree, a lamp or a spill of gravel lands in one.
+ * The guard is inverted -- "everywhere except there" instead of "only here"
+ * -- and it is exactly as loud.
+ */
+export const LAND = {
+  id: 'land', label: 'The path and the landscape',
+  x0: 0, x1: LAND_SIZE - 1, z0: 0, z1: LAND_SIZE - 1,
+}
+
+/*
+ * THE SEVEN CHAPTERS, north to south, alternating sides of the path.
+ *
+ * 52 x 24 each -- a touch smaller than the archive's 56 x 28, which is what
+ * the owner asked for -- and MUCH further apart. In the archive the plots
+ * tiled: stage 3 began on the row stage 1 ended on, so the walk between two
+ * chapters was zero blocks long and the world read as a street. Here the
+ * nearest edges of two consecutive chapters are 8 or 9 blocks apart in z AND
+ * on opposite sides of a path that swings 50 blocks east and west between
+ * them, so the walk from one spur mouth to the next is 45 to 60 blocks of
+ * path. The walk between chapters is the point.
+ *
+ * `side` is which hand the plot falls on as you walk SOUTH: LEFT is east,
+ * RIGHT is west. (In the archive you walked north and LEFT was west. The
+ * words follow the visitor, not the compass -- which is why `side` is a
+ * label and every coordinate below is an index.)
+ *
+ * THE GAP AT z 142..171 IS THE RIVER, and it is the widest gap on the map by
+ * 20 blocks. It falls between Bilibili and New York on purpose: the crossing
+ * is the move to the city, and a bridge means more when what it separates is
+ * two chapters rather than two fields.
+ *
+ * CHAPTER 7 CLAIMS THE AIR, which no other plot does. It is a parkour going
+ * UP, so its allocation is the same 52 x 24 footprint and the full build
+ * height above it -- local y 0..+60, the ceiling being GROUND_Y + 64. Nothing
+ * enforces the vertical claim because nothing else builds up there; it is
+ * written down so that whoever plants a tree near it knows what is coming.
+ */
+export const CHAPTERS = [
+  { n: 1, id: 'ch1', label: 'Omaha, Nebraska',       marker: 'OMAHA',         side: 'LEFT',  x0: 28,  x1: 79,  z0: 22,  z1: 45 },
+  { n: 2, id: 'ch2', label: 'Harvard',               marker: 'HARVARD',       side: 'RIGHT', x0: 176, x1: 227, z0: 54,  z1: 77 },
+  { n: 3, id: 'ch3', label: 'School work',           marker: 'SCHOOL WORK',   side: 'LEFT',  x0: 28,  x1: 79,  z0: 86,  z1: 109 },
+  { n: 4, id: 'ch4', label: 'Bilibili',              marker: 'BILIBILI',      side: 'RIGHT', x0: 176, x1: 227, z0: 118, z1: 141 },
+  { n: 5, id: 'ch5', label: 'New York, No Logo',     marker: 'NEW YORK',      side: 'LEFT',  x0: 28,  x1: 79,  z0: 172, z1: 195 },
+  { n: 6, id: 'ch6', label: 'San Francisco, Patronus', marker: 'SAN FRANCISCO', side: 'RIGHT', x0: 176, x1: 227, z0: 204, z1: 227 },
+  { n: 7, id: 'ch7', label: 'The climb',             marker: 'THE CLIMB',     side: 'LEFT',  x0: 28,  x1: 79,  z0: 230, z1: 253 },
+]
+
+/** Every overworld allocation by id. Separate from ALL above, because the two
+ *  surveys are two coordinate systems and a single map would let a typo in
+ *  one world resolve to a plot in the other. */
+export const LAND_ALL = Object.fromEntries([LAND, ...CHAPTERS].map(p => [p.id, p]))
+
+/** Look up a chapter (or the landscape) by id, loudly. Same contract as
+ *  `plot`, different survey. */
+export function landPlot(id) {
+  const found = LAND_ALL[id]
+  if (!found) {
+    throw new Error(`no overworld plot ${JSON.stringify(id)} -- known: ${Object.keys(LAND_ALL).join(', ')}`)
+  }
+  return found
+}
+
+/** PATCH -> WORLD for the overworld's origin, so a chapter can print a /tp
+ *  that actually goes somewhere. The archive's `toWorld` uses the archive's
+ *  origin and would be 41 blocks and 40 rows wrong here. */
+export function toLandWorld(px, py, pz) {
+  return [px - LAND_ORIGIN_X, py, pz - LAND_ORIGIN_Z]
+}

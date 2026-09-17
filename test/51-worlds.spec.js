@@ -23,7 +23,7 @@ const SHOTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screensho
  * origin used for the mountain patch. Both render a plausible world. So every
  * assertion below names a fact that is true of exactly one of the three:
  *
- *   overworld        128 wide, GENERATED, floor at y=132 (four layers, no
+ *   overworld        256 wide, GENERATED, floor at y=132 (four layers, no
  *                    bedrock below), grass under your feet at y=135, and
  *                    NOTHING standing on it.
  *   claude-opus-5-1  the same generated superflat with the eight-stage
@@ -37,7 +37,7 @@ const SHOTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screensho
  *                    175/116, a snow block on a jagged peak at y=198.
  *
  * The width is the sharpest of those: it is a property of the BYTES that were
- * fetched, and no amount of correct switching machinery can make a 128-wide
+ * fetched, and no amount of correct switching machinery can make a 256-wide
  * asset report 256. Swapping the two asset URLs in the registry fails on it
  * immediately -- which is how this was checked (see the commit message).
  *
@@ -107,7 +107,9 @@ test('the registry knows four worlds and the bare superflat is the one you boot 
     const s = await survey(page)
     expect(s.active).toBe('overworld')
     expect(s.terrain.source).toBe('generated')
-    expect(s.terrain.width).toBe(128)
+    /* 256 since the landscape landed, and the same number as `mountains` --
+     * which is why the mountain tests below check `source` too. */
+    expect(s.terrain.width).toBe(256)
     /*
      * BOOTING COSTS NO FETCH, which is the reason the imported world is not
      * the default. Only the world you are in has been built; the other two
@@ -211,7 +213,7 @@ test('hopping back and forth does not rebuild anything', async ({ page }) => {
 
   await enter(page, 'overworld')
   await settleChunks(page)
-  expect((await survey(page)).terrain.width).toBe(128)
+  expect((await survey(page)).terrain.width).toBe(256)
 
   /*
    * The second entry must not fetch again. `isLoaded` is what `enter` checks,
@@ -278,9 +280,11 @@ test('the world the model built is reachable, and arrives on its road',
     expect(s.worldName).toBe('claude-opus-5-1')
     expect(s.island).toBe('claude-opus-5-1')
 
-    // GENERATED, which is the half a width check cannot see here: this world
-    // is the same 128-wide superflat as the overworld, so `source` and the
-    // spawn column are the only things that tell the two rows apart.
+    /* GENERATED AND 128 WIDE, which is now the half that discriminates. It
+     * used to be the same 128-wide superflat as the overworld and only
+     * `source` and the spawn column told the rows apart; the overworld is 256
+     * now, so this width IS the archive's geometry and a regression that
+     * regenerated this world at the overworld's size fails right here. */
     expect(s.terrain.source).toBe('generated')
     expect(s.terrain.width).toBe(128)
     expect(s.terrain.missing).toEqual([])
@@ -334,7 +338,7 @@ test('/world switches, and it is still operator-only', async ({ page }) => {
   await page.waitForFunction(() => window.game.dimensions.active === 'overworld',
     null, { timeout: 30_000, polling: 100 })
   await settleChunks(page)
-  expect((await survey(page)).terrain.width).toBe(128)
+  expect((await survey(page)).terrain.width).toBe(256)
 })
 
 

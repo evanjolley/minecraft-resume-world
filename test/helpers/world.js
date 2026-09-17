@@ -40,15 +40,22 @@ export const SURFACE_Y = 136
 export const SPAWN = [0.5, SURFACE_Y + 2, 0.5]
 
 /**
- * World bounds, in world coordinates, mirroring island.js. The patch is
- * 128x128 with the spawn column at the origin, so it is NOT symmetric --
- * which is itself worth asserting, since a symmetric-island assumption is
- * exactly what these tests used to be full of.
+ * World bounds, in world coordinates, mirroring island.js. The overworld is a
+ * 256x256 patch with origin 128/16, so x is symmetric (-128..127, spawn in
+ * the middle) and z is NOT (-16..239, spawn sixteen blocks in from the north
+ * edge with the whole walk in front of it). The asymmetry is asserted in
+ * test/25-orientation.spec.js because a stale mental model gets exactly this
+ * wrong, and because these numbers and island.js's WORLDS row have to stay in
+ * step.
+ *
+ * These were -87..40 / -56..71 while the overworld was 128 at origin 87/56.
+ * THE NETHER IS STILL THAT PATCH, so any spec probing the Nether's edges
+ * wants those numbers and not these.
  */
-export const MIN_X = -87
-export const MAX_X = 40
-export const MIN_Z = -56
-export const MAX_Z = 71
+export const MIN_X = -128
+export const MAX_X = 127
+export const MIN_Z = -16
+export const MAX_Z = 239
 
 /*
  * A column with grass at SURFACE_Y - 1 and NOTHING above it, four blocks west

@@ -1,5 +1,6 @@
 /*
- * The world: a 128x128 patch, 128 blocks on a side, one dimension at a time.
+ * The world: a square patch, one dimension at a time. 256 blocks on a side
+ * for the overworld, 128 for the Nether and the archive, 256 for the mountains.
  *
  * THIS FILE HAS BEEN THREE THINGS. It built an 80x80 island out of noise
  * functions; then it looked up a 128x128 cut of REAL Minecraft 1.21.8
@@ -53,11 +54,14 @@
  * dimension is a hard gate rather than a best effort. A generated dimension
  * simply cannot be in that state, which is one fewer way to be wrong.
  *
- * WHY 128x128 AND NOT MORE: this used to be an argument about download size
- * and it is not any more -- generating 512x512 would cost nothing to ship.
- * It stays because the owner is building inside a defined area with a working
- * barrier perimeter around it, and because 128 blocks is eight Minecraft
- * chunks, enough that the far side is a walk rather than a glance.
+ * HOW BIG, AND WHY IT STOPPED BEING ONE NUMBER: this used to be an argument
+ * about download size and it has not been one since flatworld.js started
+ * generating the ground. What decides it now is what has to fit. 128 was
+ * "enough that the far side is a walk rather than a glance", which was true
+ * of an empty field and false of seven plots on alternating sides of a
+ * winding path -- see the overworld row below for the arithmetic. The
+ * barrier, the chunk callback and every spec read the size out of WORLDS, so
+ * the number is a row in a table rather than a constant in a comment.
  */
 import { decode } from './terrainFormat.js'
 /* Plot geometry only -- a plain data module with no imports of its own, which
@@ -148,11 +152,55 @@ import { SPAWN_PATCH_X, SPAWN_PATCH_Z, ORIGIN_X, ORIGIN_Z } from './builds/plots
  * its spawn landed somewhere arbitrary.
  */
 export const WORLDS = {
+  /*
+   * THE OVERWORLD IS 256 NOW, and the arithmetic is the whole argument.
+   *
+   * The owner asked for a winding path through a living landscape with seven
+   * plots on alternating sides, "more space between them than previously",
+   * and explicitly "less cramped than the previous build". Seven plots at
+   * roughly the old 56x28 is ~10,200 blocks of reserved ground. A 128 patch
+   * is 16,384 columns TOTAL, so the plots alone would be 62% of the world
+   * before one block of path, river, verge or tree. The old world fit eight
+   * plots into 128 by making the gap between them zero -- which is exactly
+   * the cramped feeling being complained about. There is no layout that
+   * satisfies the brief at 128; the size is the brief.
+   *
+   * 256 IS FOUR TIMES THE GROUND for no download (flatworld.js generates it)
+   * and no new machinery: `mountains` has been a 256 row in this table since
+   * the day it landed, so every consumer of `size` already handles it.
+   *
+   * THE ORIGIN MOVED, and it is not arbitrary. Two fixed points had to hold:
+   *
+   *   - Spawn is horizontal (0, 0) in EVERY world. test/51-worlds.spec.js
+   *     asserts the property, test/08-death.spec.js asserts you respawn at
+   *     x=0.5/z=0.5, and every "look at the block under your feet" spec reads
+   *     getBlock(0, SURFACE_Y - 1, 0). Moving spawn to the middle of the new
+   *     map would cost that invariant for nothing.
+   *   - The walk has to START at spawn and run the length of the map. A
+   *     timeline whose first chapter is 120 blocks behind you is not a walk.
+   *
+   * Both hold if world (0, 0) sits near ONE END of the patch: originX 128
+   * centres the map on x (world x runs -128..127, so the path may wander
+   * either side of you) and originZ 16 puts spawn sixteen blocks in from the
+   * north edge, so the path runs away SOUTH (+z) in front of you and z counts
+   * UP as you walk forward through the years. World z runs -16..239.
+   *
+   * REJECTED -- keeping originZ at 56 and letting the map run -56..199. It
+   * costs nothing technically and it puts spawn 56 blocks into the landscape,
+   * which is 56 blocks of scenery behind the visitor that no chapter uses.
+   * REJECTED -- spawning in the middle and running the timeline both ways.
+   * Chronology has one direction; a fork at spawn means half the visitors
+   * walk the life backwards.
+   *
+   * NORTH IS STILL -z. What changed is which way the visitor faces: the old
+   * world spawned at the south end and walked north, this one spawns at the
+   * north end and walks south. See src/builds/land.js for the survey.
+   */
   overworld: {
     /* No spawnX/spawnZ: the origin, which is what `?? 0` in spawnFor means.
      * `drop: 2` is inherited from the old SPAWN constant and is asserted by
      * specs that watch the landing. */
-    size: 128, originX: 87, originZ: 56, surfaceY: 136, drop: 2,
+    size: 256, originX: 128, originZ: 16, surfaceY: 136, drop: 2,
   },
   /*
    * THE BUILT WORLD, AND THE NAMING CONVENTION -- read this before adding the
@@ -169,13 +217,21 @@ export const WORLDS = {
    * one, and so nobody has to guess whether -2 means "second attempt" or
    * "version 2 of the same place". It means the second world.
    *
-   * GEOMETRICALLY IDENTICAL TO THE OVERWORLD, every number of it: same 128
-   * patch, same origin column, same ground at 136. That is not laziness, it
-   * is what keeps the builds valid -- src/builds/plots.js is written in patch
-   * indices against a 128x128 patch with its ground at GROUND_Y, and
-   * stampBuilds throws if handed anything else. The only row field that
-   * differs from the overworld's is the spawn, which is the one thing about
-   * this world that is about the road rather than about the ground.
+   * IT WAS GEOMETRICALLY IDENTICAL TO THE OVERWORLD AND IT IS NOT ANY MORE,
+   * and this row is where that divorce is recorded.
+   *
+   * Every number below is unchanged -- 128 patch, origin column 87/56, ground
+   * at 136 -- and it is unchanged ON PURPOSE. src/builds/plots.js is written
+   * in patch indices against a 128x128 patch with its ground at GROUND_Y and
+   * stampBuilds throws if handed anything else, so this row IS the archive's
+   * contract. The overworld grew to 256 around it; this world did not move a
+   * block, which is the test of whether the geometry was ever really shared
+   * or merely coincident. It was coincident.
+   *
+   * The consequence to know: `PATCH_SIZE` below is the OVERWORLD's size and
+   * is now 256, so nothing may size this world from it. src/dimensions.js
+   * reads WORLDS['claude-opus-5-1'].size instead, and test/70-builds.spec.js
+   * asserts the census of this world is what it was.
    */
   'claude-opus-5-1': {
     size: 128, originX: 87, originZ: 56, surfaceY: 136, drop: 2,
@@ -220,9 +276,13 @@ export const WORLDS = {
   mountains: { size: 256, originX: 175, originZ: 116, surfaceY: 199, drop: 1 },
 }
 
-/** The overworld's width. Kept as an export because src/dimensions.js sizes
- *  the generated superflat with it; it is WORLDS.overworld.size and nothing
- *  else may assume it describes the world you are standing in. */
+/** The overworld's width, and READ THE SECOND SENTENCE. It is
+ *  WORLDS.overworld.size -- 256 since the landscape landed -- and nothing
+ *  else may assume it describes the world you are standing in. It very nearly
+ *  did: src/dimensions.js sized BOTH generated worlds from this constant back
+ *  when they were both 128, which would have silently regenerated the
+ *  archive at 256 the moment this number changed. Both rows now name their
+ *  own world's size. */
 export const PATCH_SIZE = WORLDS.overworld.size
 
 /*

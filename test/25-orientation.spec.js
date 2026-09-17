@@ -88,10 +88,14 @@ test.describe('world orientation', () => {
    * Asserted because a stale mental model gets exactly this wrong, and because
    * the numbers here and in island.js have to stay in step.
    */
-  test('the patch runs -87..40 in x and -56..71 in z', async ({ page }) => {
-    expect([MIN_X, MAX_X, MIN_Z, MAX_Z]).toEqual([-87, 40, -56, 71])
-    expect(await page.evaluate(() => window.game.terrain.originX)).toBe(87)
-    expect(await page.evaluate(() => window.game.terrain.originZ)).toBe(56)
+  test('the patch runs -128..127 in x and -16..239 in z', async ({ page }) => {
+    /* Was -87..40 / -56..71, when the overworld was a 128 patch at origin
+     * 87/56. It is 256 at origin 128/16 now: centred on x so the path may
+     * wander either side of you, and offset on z so spawn is at the START of
+     * the walk rather than in the middle of it. */
+    expect([MIN_X, MAX_X, MIN_Z, MAX_Z]).toEqual([-128, 127, -16, 239])
+    expect(await page.evaluate(() => window.game.terrain.originX)).toBe(128)
+    expect(await page.evaluate(() => window.game.terrain.originZ)).toBe(16)
 
     expect(await page.evaluate(([x, y, z]) => window.game.voxelAt(x, y, z),
       [MIN_X, SURFACE_Y - 1, 0])).not.toBe(ID.barrier)

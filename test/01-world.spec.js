@@ -36,14 +36,16 @@ test.describe('world generation', () => {
     expect(bootErrors).toEqual([])
   })
 
-  test('the world is a 128x128 patch with an invisible wall around it',
+  test('the world is a 256x256 patch with an invisible wall around it',
     async ({ page }) => {
       /*
-       * REWRITTEN ONCE, not relaxed since. This used to assert an 80x80 island
-       * with open void past its rim. The world is a 128x128 patch with spawn
-       * at the origin, so it runs -87..40 on x and -56..71 on z -- deliberately
-       * not symmetric, and the asymmetry is asserted because it is the thing a
-       * stale mental model gets wrong.
+       * REWRITTEN TWICE, not relaxed once. This used to assert an 80x80 island
+       * with open void past its rim, then a 128x128 patch running -87..40 on
+       * x and -56..71 on z. The overworld is 256x256 now, at origin 128/16:
+       * x runs -128..127 (symmetric, spawn in the middle) and z runs -16..239
+       * (not symmetric, spawn at the START of the walk). Both facts are read
+       * from the helper rather than typed here, and 25-orientation asserts
+       * the literals.
        *
        * (It ran -40..87 until the terrain asset stopped being mirrored in X.
        * Same patch, same spawn column, reached from the other end. The bounds
@@ -57,7 +59,7 @@ test.describe('world generation', () => {
        *
        * ASKED OF THE GENERATOR, not of noa.getBlock, for the reason the strata
        * test below spells out at length: getBlock answers 0 for a chunk that is
-       * not resident, and 0 is also air. The far corner is 87 blocks out, past
+       * not resident, and 0 is also air. The far corner is 239 blocks out, past
        * noa's horizontal load range from spawn, so the old getBlock version of
        * this went from "there is a wall there" to "there is nothing loaded
        * there" the moment the world's long axis flipped -- and the in-patch
@@ -84,14 +86,14 @@ test.describe('world generation', () => {
        * ...and the wall is really standing in the world, not only in the
        * generator: noa has to agree about the edge nearest the player.
        *
-       * THE +X EDGE, which is 41 blocks from spawn and the closest of the four
-       * now that spawn is the origin again (the others are 57, 72 and 88). It
-       * moved to the +Z edge for a day, when spawn was the south end of the
-       * road; the reason is unchanged and only the arithmetic moved. noa
+       * THE -Z EDGE, which is 17 blocks behind spawn and by far the closest of
+       * the four now that the map is 256 and spawn sits near its north edge
+       * (the others are 128, 128 and 240). It has been the +X edge and the +Z
+       * edge before; the reason is unchanged and only the arithmetic moved. noa
        * answers 0 for a chunk it has not loaded and 0 is also air, so probing
        * a far edge here would go quietly vacuous rather than failing.
        */
-      expect(await getBlock(page, MAX_X + 1, SURFACE_Y - 1, 0)).toBe(ID.barrier)
+      expect(await getBlock(page, 0, SURFACE_Y - 1, MIN_Z - 1)).toBe(ID.barrier)
     })
 
   test('the barrier is solid but draws nothing and cannot be targeted',
@@ -285,14 +287,14 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
     const s = await survey(page, SURFACE_Y)
 
     /*
-     * THE SAMPLE, ASSERTED BEFORE THE RESULT. 128x128 columns and 65 blocks
+     * THE SAMPLE, ASSERTED BEFORE THE RESULT. 256x256 columns and 65 blocks
      * of headroom each (SURFACE_Y=136 up to the ceiling at 200), which is
-     * 1,064,960 voxels. If any of those numbers is zero the "above === 0"
+     * 4,259,840 voxels. If any of those numbers is zero the "above === 0"
      * below is a sentence about nothing.
      */
     expect(s.world).toBe('overworld')
-    expect(s.columns).toBe(128 * 128)
-    expect(s.sampled).toBe(128 * 128 * 65)
+    expect(s.columns).toBe(256 * 256)
+    expect(s.sampled).toBe(256 * 256 * 65)
 
     // The claim. Not "no builds near spawn" -- no block above the grass
     // anywhere in the patch, which is the only form of "bare" worth asserting
@@ -306,11 +308,11 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
      * the line above would pass on nothing.
      *
      * It is also a second, independent reading of "bare". Pointing the
-     * overworld row back at stampBuilds turns 16384 into 6631, because the
+     * overworld row back at a stamper turns 65536 into fewer, because the
      * road and the plot paving REPLACE grass at ground level rather than
      * standing on top of it -- which the count above cannot see at all.
      */
-    expect(s.grass).toBe(128 * 128)
+    expect(s.grass).toBe(256 * 256)
 
     /*
      * And the road specifically, because it is the one build that would be
@@ -328,8 +330,14 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
     const s = await survey(page, SURFACE_Y)
 
     expect(s.world).toBe(BUILT_WORLD)
-    // Same patch, same geometry: that is what makes the plot table valid in
-    // this world and is asserted rather than assumed.
+    /*
+     * STILL 128, AND THAT IS NOW THE POINT. It used to say "same patch as the
+     * overworld, which is what makes the plot table valid"; the overworld is
+     * 256 and this world did not move, so these two lines are the archive's
+     * geometry asserted against a world that grew around it. A regression
+     * that sized this world from PATCH_SIZE fails here and in
+     * test/51-worlds.spec.js, before anybody looks at a block.
+     */
     expect(s.columns).toBe(128 * 128)
     expect(s.sampled).toBe(128 * 128 * 65)
 

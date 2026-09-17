@@ -142,7 +142,9 @@
  *
  * REJECTED -- vanilla's 8:1 scale. It exists because the Nether is a
  * shortcut across a world that is effectively infinite. Both dimensions here
- * are the same 128x128 patch, so dividing by 8 collapses the entire island
+ * were the same 128x128 patch when this was written (the overworld is 256
+ * now; see the section at the end of this comment, which is what that change
+ * cost), so dividing by 8 collapses the entire island
  * into a 16x16 corner of the Nether and every portal on it lands within two
  * chunks of every other. The rule would still be vanilla and the result
  * would be nonsense.
@@ -185,12 +187,77 @@
  * purpose before the bug is reachable at all. Named so the next person finds
  * it written down instead of discovering it standing in an empty field.
  *
+ * AND THEN THE OVERWORLD BECAME 256 AND HALF OF IT HAS NO NETHER UNDER IT.
+ *
+ * The 1:1 mapping above was argued when both dimensions were the same 128
+ * square pinned to the same origin column. The overworld is now 256 blocks on
+ * a side with its origin at 128/16 (see WORLDS in src/island.js for why it
+ * had to grow and why the origin moved); the Nether is still the imported
+ * 128 patch at 87/56. In world coordinates:
+ *
+ *     overworld   x -128..127   z  -16..239
+ *     nether      x  -87..40    z  -56..71
+ *
+ * The Nether covers 128 x 88 of the overworld's 256 x 256 -- about 17% of it,
+ * a rectangle sitting over the first third of the walk. Everything south of
+ * world z = 71, and everything east of x = 40 or west of x = -87, maps to a
+ * column that does not exist in the Nether.
+ *
+ * THE DECISION: KEEP 1:1, ACCEPT THE DEAD REGION, AND DO NOT GROW THE NETHER.
+ * Three options were weighed and two were rejected on grounds worth keeping.
+ *
+ * REJECTED -- GROWING THE NETHER TO 256. It is the answer that makes the
+ * table symmetrical and it is the one this repo is least able to ship. The
+ * Nether is not generated, it is public/terrain/nether.bin: the output of
+ * Mojang's world generator, cut by scripts/terrain/nether.mjs from region
+ * files nobody has established may be republished -- DECISIONS.md #1 and the
+ * FORBIDDEN note in scripts/check-deploy-assets.mjs. Re-cutting it four times
+ * larger means four times as much of somebody else's terrain in the repo, and
+ * it multiplies a 1.4MB-class asset by four on a boot path that
+ * flatworld.js spent its whole existence getting off. A generated Nether is a
+ * real answer and a different project: it is a new module, a new preset and a
+ * biome, and it is FUTURE.md's, not this pass's.
+ *
+ * REJECTED -- RESCALING, so that overworld (x, z) maps to nether (x/2, z/2)
+ * and the 256 folds onto the 128. It restores full coverage with two
+ * divisions. It also silently halves every distance you know, so two portals
+ * sixteen blocks apart in the overworld land on the SAME nether column and
+ * the search radius picks whichever was lit first -- the exact nonsense the
+ * 8:1 rejection above describes, at 2:1 and therefore harder to notice.
+ *
+ * WHAT MAKES ACCEPTING IT SAFE, and this was checked in src/portals.js rather
+ * than assumed, because "a portal that drops you outside a world" is the
+ * failure that matters: THE 1:1 COORDINATE IS NEVER USED AS A DESTINATION.
+ * `destinationIn` searches the `lit` registry -- portals this module itself
+ * wrote into that dimension -- for one within 16 blocks, and returns null if
+ * there is none. Null means `enter()`'s own arrival stands, which is
+ * `spawnFor(dim)`. So the mapping only ever selects between portals that
+ * exist, each of which is by construction inside its own patch, and the
+ * fallback is a spawn point. Build a portal at world (-120, 200) in the
+ * overworld and you arrive at the Nether's spawn, not at a column 120 blocks
+ * outside the Nether: out of register, never out of bounds. Nothing in
+ * portals.js was changed to make that true; it was already true, and the
+ * check is the reason this section can end here.
+ *
+ * WHAT A VISITOR ACTUALLY EXPERIENCES: portals built in the first third of
+ * the walk -- Omaha through roughly the school chapter -- are in exact
+ * register with the Nether and behave exactly as the argument above intends.
+ * Portals built further south are one-way in the sense that matters: you get
+ * there, you get back, you simply do not come back out where you went in
+ * unless you lit a portal at the far end too. That is a smaller surprise than
+ * either alternative buys.
+ *
+ * THE ASYMMETRY ABOVE IS UNCHANGED AND NOT MADE WORSE. portals.js still picks
+ * its destination with `active === 'nether' ? 'overworld' : 'nether'`, so a
+ * return trip lands in the overworld whichever overworld-ish world you left.
+ * This pass added no second overworld and no new name to that branch.
+ *
  * `mountains` is still outside the argument entirely -- different seed,
  * different size, different origin, no portal relationship with anything.
  */
 import {
   loadTerrain, generateTerrain, setDimension as setIslandDimension, isLoaded,
-  currentDimension, spawnFor, SURFACE_Y, PATCH_SIZE,
+  currentDimension, spawnFor, SURFACE_Y, PATCH_SIZE, WORLDS,
 } from './island.js'
 import { flatPatch, FLAT_PRESETS } from './flatworld.js'
 /* Named here rather than left to flatPatch's default, so that the ONE fact
@@ -332,7 +399,21 @@ export const DIMENSIONS = {
     id: 'minecraft:overworld',
     generate: () => flatPatch({
       preset: FLAT_PRESETS.classic,
-      width: PATCH_SIZE, depth: PATCH_SIZE,
+      /*
+       * ITS OWN SIZE, NOT PATCH_SIZE, and this line is the whole reason the
+       * archive survived the overworld growing.
+       *
+       * Both generated rows used to read `width: PATCH_SIZE`, which was
+       * correct exactly while both worlds were 128. PATCH_SIZE is
+       * WORLDS.overworld.size; the day the overworld became 256 that line
+       * would have regenerated this world at 256 as well, and every plot in
+       * src/builds/plots.js -- patch indices into a 128 square -- would have
+       * landed in the north-west quarter of a world four times too big, with
+       * stampBuilds's own geometry check the only thing between that and a
+       * silently wrong museum. The check would have caught it. Not relying on
+       * the check is better: a world states its own width.
+       */
+      width: WORLDS['claude-opus-5-1'].size, depth: WORLDS['claude-opus-5-1'].size,
       surfaceY: SURFACE_Y, ceilingY: CEILING_Y,
       /* The default, said out loud. The two generated rows now differ in
        * exactly this field, which is the point of naming it in both. */
