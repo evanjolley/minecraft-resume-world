@@ -39,12 +39,12 @@ import {
  *
  * All of it sits inside the 80-block island and above the grass at y=64.
  */
-// 320 cells, 20 a row. It was 14 rows for the 280 slab and stair variants and
+// 340 cells, 20 a row. It was 14 rows for the 280 slab and stair variants and
 // held exactly them, so the five torch ids overflowed it the day they landed;
-// signs going from eight ids to twenty overflowed it again at 305. Both times
-// the check below did its job and both times the answer was one more row, not
-// a bigger assertion.
-const IDS_AT = { x: 8, y: 72, z: 0, wide: 20, deep: 16 }
+// signs going from eight ids to twenty overflowed it again at 305; bamboo's
+// thirteen overflowed it a third time at 322. Every time the check below did
+// its job and every time the answer was one more row, not a bigger assertion.
+const IDS_AT = { x: 8, y: 72, z: 0, wide: 20, deep: 17 }
 const ORIENT_AT = { x: -10, y: 76, z: 0 }
 /*
  * The slab/stair rig, built in mid-air well clear of the terrain.
