@@ -127,6 +127,31 @@ s.pattern({
   otherwise. A character that is in neither throws, with its row and column.
 - Ragged rows are fine. A short row just stops.
 
+#### TEXT COMES OUT MIRRORED, AND IT COST TWO AGENTS AN AFTERNOON
+
+**Babylon is left-handed.** Facing `+x`, `+z` is on your *left*; facing north,
+`-x` is on your right. So for a reader standing in front of your wall, the
+characters of a row run **right to left**, not left to right.
+
+Nothing about a pattern of bricks reveals this. Anything with a readable
+shape does, immediately and embarrassingly:
+
+- Harvard cut `2024` into Widener's frieze and shipped **`4202`** on a `zy`
+  wall, caught only by a screenshot from above.
+- Patronus put `2026` on a hoarding and shipped it backwards on an `xy` wall,
+  and its growth chart came out with the bars climbing the wrong way and the
+  red line *rising* — which inverted the meaning of the thing it was drawing.
+
+Both were found by looking, neither by a census, and **the fix in both cases
+was to reverse each row before stamping**. Which plane is affected depends on
+which way the wall faces, so do not memorise a rule from this paragraph:
+
+**Draw it, screenshot it, and read it.** That is the only check that works.
+The same handedness is why some drawings on one side of the road come out
+correct with no reversal at all, which is precisely what makes it a trap —
+it is not consistently wrong, so a spot check that happens to pass proves
+nothing about the next wall.
+
 ### `at` is the other one
 
 ```js
@@ -144,6 +169,26 @@ one line. The child shares the parent's block counter and its copy-on-write
 bookkeeping — it is a lens on the same stamper, not a second one.
 
 ---
+
+## Lighting a build, which is newer than it looks
+
+The block light engine shipped the same day these plots were laid out, so
+nothing in this repo had been *built against it* before stage 1. Two things
+about it change how you place lamps, and both were found by photographing a
+build that looked fine in the source:
+
+- **Light falls one level per block and stops dead at a solid block.** A lamp
+  in the next room lights the next room. "There is a glowstone near it" is not
+  lighting; every aisle between two shelf runs is its own room as far as light
+  is concerned, and needs its own source.
+- **A sign, a chart or a plaque has to be its own light**, or carry a lit
+  valance. Harvard photographed every unlit sign as grey and had to go back and
+  light each one individually.
+
+And the obvious one that is still worth saying: **a glowstone block sits at
+eye level if you put it at `y = 1` or `y = 2`.** Three builds independently
+placed lamps, monitors or desktops exactly in the eyeline and had to move them
+down. Stand where the visitor stands before you decide a height.
 
 ## House rules
 
