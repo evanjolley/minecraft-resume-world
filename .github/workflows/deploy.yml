@@ -142,12 +142,25 @@ jobs:
       # publish it. A deploy of a dist/ missing its atlases is the exact
       # failure this whole pipeline exists to prevent, and it is silent from
       # the outside -- the site loads, the world is checkerboard.
+      #
+      # The font here is `.woff2`, NOT `.ttf`, and the difference is the second
+      # bug this pipeline had. 6b374d1 subsetted Monocraft from 1,475
+      # codepoints to 177 -- 210 KB of .ttf became 2.6 KB of .woff2, the .ttf
+      # moved to fonts-src/ as build input, and this assertion went on naming
+      # a file that no longer ships. Nobody found out, because no CI run had
+      # ever got this far to fail on it.
+      #
+      # So it also checks that index.html actually REFERENCES the file, which
+      # is the assertion that survives the next format change. A verify step
+      # that names paths by hand goes stale exactly this quietly.
       - name: Verify the build is complete
         run: |
           set -euo pipefail
-          for f in dist/index.html dist/fonts/Monocraft.ttf dist/ui/hotbar.png; do
+          for f in dist/index.html dist/fonts/Monocraft.woff2 dist/ui/hotbar.png; do
             test -s "$f" || { echo "missing or empty: $f"; exit 1; }
           done
+          grep -q 'fonts/Monocraft.woff2' dist/index.html \
+            || { echo "index.html does not load the font that shipped"; exit 1; }
           for n in 0 1 2 3 4; do
             test -s "dist/textures/atlas$n.png" || { echo "missing atlas$n.png"; exit 1; }
           done
