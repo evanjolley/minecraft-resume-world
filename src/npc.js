@@ -258,10 +258,31 @@ export function installNPC(noa, {
    * because the opposite is easy to assume and would mean SPAWN_DROP had to
    * scale with him.
    */
+  /*
+   * HE GETS A SHADOW, and it used to be `false` -- not by decision, but
+   * because nothing chose. The line arrived in 19f974b, the commit that gave
+   * him a body, as the last positional argument of a seven-argument call, and
+   * neither that commit's message nor any comment ever mentioned it.
+   *
+   * Vanilla draws a shadow under every entity it renders. The only reason you
+   * never see your OWN is that the renderer skips the camera's entity in
+   * first person (see perspective.js), and Evan is never the camera. With his
+   * off and the player's now hidden in first person, this world had NO
+   * shadows in the view you spend all your time in -- which is further from
+   * Minecraft than where it started, not closer.
+   *
+   * Honest about what he gets: noa's disc is a flat 30-gon at a fixed 50%
+   * black, snapped to a rounded Y. It is not vanilla's per-block quad and it
+   * does not fade with light or camera distance (78-shadow.spec.js pins
+   * both). On the flat ground he stands on it reads correctly and it grounds
+   * him; over a step it would hang. Rejected the alternative of writing a
+   * real terrain-conforming shadow first: that is a renderer, and a man
+   * standing on flat grass does not need one to stop looking pasted on.
+   */
   const drop = [position[0], position[1] + SPAWN_DROP, position[2]]
   const entity = noa.entities.add(
     drop, MC.PLAYER_WIDTH, height,
-    null, null, /* doPhysics */ true, /* shadow */ false)
+    null, null, /* doPhysics */ true, /* shadow */ true)
 
   const body = noa.ents.getPhysics(entity).body
 

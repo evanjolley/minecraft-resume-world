@@ -1,5 +1,7 @@
 import { test, expect } from './fixtures.js'
-import { aim, teleport, waitFrames, waitTicks, settleOnGround, setBlock, ID, SURFACE_Y } from './helpers/world.js'
+import {
+  aim, teleport, waitFrames, waitTicks, settleOnGround, setBlock, getBlock, ID, SURFACE_Y,
+} from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 
 /*
@@ -128,13 +130,107 @@ test.describe('the player shadow', () => {
   })
 
   /*
-   * Evan, for the same reason: `src/npc.js` passes `shadow: false`, so the
-   * world currently has a man with no shadow standing next to a player whose
-   * shadow you cannot see. Whether that stays is a judgement call, and the
-   * screenshot is what the judgement is made against.
+   * WHAT noa's DISC IS NOT, measured rather than asserted in a comment.
+   *
+   * Vanilla's shadow responds to block light twice over. renderBlockShadow
+   * refuses to emit a quad at all where `getMaxLocalRawBrightness(blockPos)`
+   * is <= 3, and where it does emit one the alpha is multiplied by that
+   * block's brightness:
+   *
+   *   alpha = clamp((strength * (1 - d^2/256) - 0.5*(entityY - blockY))
+   *                 * 0.5 * brightness, 0, 1)
+   *
+   * (EntityRenderDispatcher.renderShadow / renderBlockShadow, 1.21.8.) So a
+   * vanilla shadow fades as the light does and is simply absent in the dark.
+   *
+   * noa's material is a frozen StandardMaterial with a black diffuse and a
+   * hardcoded alpha of 0.5, created inside the component and never handed to
+   * `trackEntityLight`, so nothing in this world's lighting can reach it. It
+   * subtracts the same half of the ground's brightness in a sealed dark room
+   * as it does at noon.
+   *
+   * This test exists to PIN that divergence, not to call it acceptable. If
+   * someone later teaches the disc about light, this is the test that should
+   * go red and be rewritten.
    */
-  test('screenshot: Evan', async ({ page }) => {
+  test('the disc ignores block light, where vanilla fades with it', async ({ page, terrain }) => {
+    const material = () => page.evaluate(() => {
+      const m = window.noa.rendering.getScene().materials
+        .find((x) => x.name === 'shadow_component_mat')
+      return m ? { alpha: m.alpha, diffuse: m.diffuseColor.asArray() } : null
+    })
+
+    await settleOnGround(page)
+    await cycle(page, 1)
+    await aim(page, { pitch: (Math.PI / 180) * 40 })
+    await waitFrames(page, 3)
+
+    // The guard: if the material cannot be found, everything below compares
+    // null to null and passes without having looked at anything.
+    const lit = await material()
+    expect(lit).not.toBeNull()
+    expect(lit.alpha).toBeGreaterThan(0)
+    await shot(page, '78-third-person-daylight')
+
+    // A sealed stone shell, so the floor inside is at block light 0.
+    const [cx, cz] = [12, 12]
+    const floor = SURFACE_Y - 1
+    const ceil = floor + 4
+    await terrain.keep([cx - 3, floor, cz - 3], [cx + 3, ceil, cz + 3])
+    await page.evaluate(([x, z, y0, y1, stone, air]) => {
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dz = -2; dz <= 2; dz++) {
+          for (let y = y0; y <= y1; y++) {
+            const shell = Math.abs(dx) === 2 || Math.abs(dz) === 2 || y === y0 || y === y1
+            window.noa.setBlock(shell ? stone : air, x + dx, y, z + dz)
+          }
+        }
+      }
+    }, [cx, cz, floor, ceil, ID.stone, ID.air])
+    await waitTicks(page, 4)
+    expect(await getBlock(page, cx, ceil, cz)).toBe(ID.stone)
+
+    await teleport(page, cx + 0.5, floor + 1.5, cz + 0.5)
+    await settleOnGround(page)
+    await aim(page, { pitch: (Math.PI / 180) * 40 })
+    await waitFrames(page, 3)
+    const dark = await material()
+    await shot(page, '78-third-person-dark')
+    await cycle(page, 2)
+
+    // Identical. That is the finding.
+    expect(dark).toEqual(lit)
+  })
+
+  /*
+   * EVAN HAS ONE, and this is the half of the decision that is not about you.
+   *
+   * Vanilla draws a shadow under every entity it renders, and Evan is never
+   * the camera, so the vanilla-shaped answer is that his is always there.
+   * `src/npc.js` said `false` -- never decided, just never chosen; the commit
+   * that gave him a body (19f974b) passed it as the seventh positional
+   * argument and said nothing about it in the message.
+   *
+   * Asserted and not merely screenshotted, because the alternative reading --
+   * "the world simply has no shadows" -- is a coherent position somebody could
+   * re-adopt by flipping one word, and this is the line that would argue back.
+   */
+  test('Evan casts one, because he is never the camera', async ({ page }) => {
     const pos = await page.evaluate(() => [...window.game.aiEvan.position])
+
+    // Local coordinates, matching the meshes: noa rebases the world around
+    // the player, so the shadow instance's position is nowhere near the
+    // world-space position `aiEvan.position` reports.
+    const under = await page.evaluate(() => {
+      const { noa } = window
+      const rpos = noa.ents.getPositionData(window.game.aiEvan.entity)._renderPosition
+      return noa.rendering.getScene().meshes
+        .filter((m) => m.name.startsWith('shadow_instance') && m.isEnabled())
+        .filter((m) => Math.hypot(m.position.x - rpos[0], m.position.z - rpos[2]) < 1)
+        .length
+    })
+    expect(under).toBe(1)
+
     await teleport(page, pos[0] + 3.5, pos[1] + 1, pos[2] + 3.5)
     await settleOnGround(page)
     // heading 0 looks along +Z and +PI/2 along +X (helpers/world.js HEADING),
