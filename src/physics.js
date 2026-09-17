@@ -1014,20 +1014,67 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
    * body's velocity. The 0.2 per Minecraft tick is resampled to noa's dt the
    * same way createDrive does it, because a fixed 0.2 against a variable dt
    * approaches at whatever the frame rate happens to be.
+   *
+   * AND THIS TICK IS THE LOWEST-RANKED WRITER OF THAT FIELD, which is the
+   * whole of the one `continue` below. Writing gravity every tick is only
+   * "the same kind of assignment" as the one-off further up this file if
+   * nobody else is assigning it too, and three other places are: `setFlying`
+   * (0 while you fly), respawn.js's `stopCorpse` (0 while you are dead), and
+   * npc.js's frozen branch (0 while Evan hangs over an unloaded chunk). This
+   * loop landed after all of them and runs after all of them, so it won, and
+   * creative flight quietly stopped holding anyone up -- you flew and fell at
+   * the same time, at a full 32 b/s^2.
+   *
+   * IT REACHED THE SUITE AS A TARGETING BUG, which is why this comment is
+   * long. Three assertions in 73-targeting.spec.js say "the crosshair is on
+   * nothing" while aiming a level camera at a torch from a block and a half
+   * away, and every one of them had sunk out of the air before the aim was
+   * read. Nothing in targeting.js, highlight.js or blockMeshes.js was wrong;
+   * the rays fired directly at `noa.pick` in the same file never stopped
+   * passing, because those do not need the player to be anywhere.
+   *
+   * npc.js hit exactly this bug against exactly this field one commit later
+   * and fixed it by taking a `gravityFor` provider, so the shape had already
+   * been named here: two owners, one field, no error, later writer wins.
+   *
+   * THE RULE IS "ZERO IS SOMEBODY ELSE'S". Every other owner of this field
+   * writes 0 and only 0 -- they all mean "no gravity at all, and not because
+   * of a potion" -- and each hands ownership back by writing a real
+   * multiplier again (`setFlying(false)` writes 1, `releaseCorpse` restores
+   * what it saved). So a body sitting at 0 that this loop did not zero is not
+   * this loop's to touch. Slow Falling's multiplier is 0.125 and never 0, so
+   * the only 0 written here is Levitation's, and `levitated` is the record of
+   * having written it.
+   *
+   * Rejected: a claim/release registry that respawn.js and npc.js call into.
+   * It is the general answer, and it is three more files edited to say
+   * something the values already say without ambiguity.
+   *
+   * Rejected: remembering the last value written and skipping when the field
+   * has changed since. It reads like the same idea and it wedges -- flight
+   * hands back a literal 1 rather than whatever this loop last wrote, so a
+   * body that flew while under Slow Falling would never be written again.
    */
+  /** Bodies whose current gravity of 0 is Levitation's, which is to say ours. */
+  const levitated = new WeakSet()
   noa.on('tick', (dt) => {
     const dtSec = dt / 1000
     for (const entity of everyBody(noa)) {
       const body = noa.ents.getPhysics(entity)?.body
       if (!body) continue
+      // Flight, death, or the NPC floor guard is driving this body. Leave it
+      // alone entirely: a frozen corpse must not levitate either.
+      if (body.gravityMultiplier === 0 && !levitated.has(body)) continue
       const lift = effects.levitationSpeed(entity)
       if (lift > 0) {
         body.gravityMultiplier = 0
+        levitated.add(body)
         // 1 - 0.8^(ticks elapsed): the same resampling createDrive uses, so a
         // 30 Hz frame and a 60 Hz frame reach the target at the same RATE.
         const k = 1 - 0.8 ** (MC.TICKS_PER_SECOND * dtSec)
         body.velocity[1] += (lift - body.velocity[1]) * k
       } else {
+        levitated.delete(body)
         // Vanilla's gate: Slow Falling only applies while descending, so it
         // softens the landing without floating the jump.
         body.gravityMultiplier = effects.gravityMultiplier(entity, body.velocity[1] <= 0)
