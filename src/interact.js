@@ -37,6 +37,19 @@ const CREATIVE_BREAK_INTERVAL_MS = 250
 
 export function installInteraction(noa, inv, fx, authority) {
   const swing = fx.swing
+  /*
+   * Haste and Mining Fatigue, finally wired.
+   *
+   * effects.js shipped `digMultiplier` complete and measured -- Haste is
+   * x(1 + 0.2 * level), Mining Fatigue is x(0.3 ^ level) -- and reported it
+   * with "no consumer: interact.js doesn't call a dig-speed multiplier". This
+   * is the call. It is one division, because vanilla's formula is stated as a
+   * SPEED and this file keeps a duration: twice the speed is half the time.
+   *
+   * Falls back to 1 so the file still works with an fx bag that has no
+   * effects in it, which is how every existing spec constructs it.
+   */
+  const digMultiplier = () => fx.effects?.digMultiplier(noa.playerEntity) ?? 1
   let breaking = null // { x, y, z, id, elapsed, total }
   let creativeCooldown = 0
 
@@ -193,7 +206,14 @@ export function installInteraction(noa, inv, fx, authority) {
        * hotbar while holding the button, and it keeps the timer monotonic.
        */
       const held = inv.selectedStack()
-      const total = miningSeconds(id, held ? held.id : 0)
+      /*
+       * Read ONCE here, with the tool, for the reason the note above gives --
+       * and that now applies to the effect too. Drinking a Haste potion
+       * halfway through a block does not speed up the block you are already
+       * on, which is a visible difference from vanilla (it recomputes every
+       * tick) and is what keeps the progress bar monotonic.
+       */
+      const total = miningSeconds(id, held ? held.id : 0) / digMultiplier()
       breaking = { x: pos[0], y: pos[1], z: pos[2], id, elapsed: 0, total }
     }
 

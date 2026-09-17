@@ -102,7 +102,11 @@ async function emitItems(resolve) {
   const dir = join(OUT, 'item')
   mkdirSync(dir, { recursive: true })
   const missing = []
-  for (const { name, from } of ITEM_TEXTURES) {
+  for (const { name, from, layers } of ITEM_TEXTURES) {
+    if (layers) {
+      if (!await emitLayered(dir, name, layers, resolve)) missing.push(name)
+      continue
+    }
     const src = await resolve(name, from)
     // A missing sprite is a reportable gap, not a crash. One absent file
     // used to take the whole build down and leave public/ half-written.
@@ -116,6 +120,81 @@ async function emitItems(resolve) {
       .png().toFile(join(dir, `${name}.png`))
   }
   return missing
+}
+
+/* ------------------------------------------------------------------ *
+ * MULTI-LAYER ITEM SPRITES, which arrived with potions and which vanilla has
+ * had all along.
+ *
+ * `models/item/potion.json` is an `item/generated` with TWO textures:
+ *
+ *   layer0  item/potion_overlay   the liquid, greyscale, TINTED at render time
+ *   layer1  item/potion           the glass bottle, full colour, untinted
+ *
+ * The liquid is underneath and the glass goes over it, which is why a potion
+ * reads as a coloured fluid seen THROUGH glass rather than as a coloured
+ * bottle. Vanilla decides the tint at runtime from the item's
+ * `potion_contents` component; here the tint is baked in at build time and one
+ * finished PNG comes out per potion colour.
+ *
+ * WHY BAKE IT. Three renderers draw an item sprite in this world -- the DOM
+ * inventory, heldItem.js's extruded mesh and itemEntity.js's floating plane --
+ * and each of them takes a URL. Tinting at runtime means teaching all three
+ * about a second layer and a colour, in files two other agents own. Baking
+ * means they keep taking one URL and never learn that potions exist.
+ *
+ * The cost is one PNG per distinct colour rather than two PNGs total: 17
+ * bottles and 17 splash bottles at 16x16, which is about 6 KB of build output.
+ * The extended and enhanced variants of a potion share their base's colour
+ * (they are the same effect at a different length or strength), so they share
+ * a sprite -- see POTION_SPRITE in items.js.
+ *
+ * Rejected: a CSS filter over a greyscale layer in the inventory. `filter`
+ * can hue-rotate but cannot multiply by an arbitrary RGB, so the colour would
+ * be approximate in exactly the way the effect colours are not allowed to be,
+ * and it would still leave the other two renderers untinted.
+ * ------------------------------------------------------------------ */
+
+/** Straight alpha "over": `top` composited onto `bottom`, both raw RGBA. */
+function over(bottom, top) {
+  for (let i = 0; i < bottom.length; i += 4) {
+    const a = top[i + 3] / 255
+    if (a === 0) continue
+    const inv = 1 - a
+    const ba = bottom[i + 3] / 255
+    const outA = a + ba * inv
+    for (let c = 0; c < 3; c++) {
+      bottom[i + c] = Math.round((top[i + c] * a + bottom[i + c] * ba * inv) / outA)
+    }
+    bottom[i + 3] = Math.round(outA * 255)
+  }
+  return bottom
+}
+
+/**
+ * One finished sprite from an ordered list of `{ texture, from, tint }`.
+ *
+ * `tint` is a `[r,g,b]` multiply, the same operation the biome tints and the
+ * CE substitutes above use -- Minecraft's own tintindex is a multiply too.
+ * Layers are listed bottom-first, matching layer0/layer1 in a vanilla model.
+ *
+ * @returns {boolean} false if any layer's art is missing, which is a reportable
+ *   gap rather than a crash -- see the missing-item list in emitItems.
+ */
+async function emitLayered(dir, name, layers, resolve) {
+  let acc = null
+  for (const layer of layers) {
+    const src = await resolve(layer.texture, layer.from ?? 'item')
+    if (!src || !existsSync(src)) return false
+    const data = await sharp(src)
+      .resize(TILE, TILE, { kernel: 'nearest' }).ensureAlpha()
+      .raw().toBuffer()
+    if (layer.tint) multiply(data, layer.tint)
+    acc = acc ? over(acc, data) : data
+  }
+  await sharp(acc, { raw: { width: TILE, height: TILE, channels: 4 } })
+    .png().toFile(join(dir, `${name}.png`))
+  return true
 }
 
 /*

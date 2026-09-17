@@ -53,12 +53,19 @@ import { ITEMS, stackMax } from './items.js'
  * fits. NOTE the row split is inferred from those sprite names plus
  * "top-left to bottom-right"; the wiki never states it as a sentence.
  *
- * Four of vanilla's fourteen are deliberately absent, and each absence is a
- * fact about THIS world rather than a shortcut:
+ * Three of vanilla's fourteen are deliberately absent, and each absence is a
+ * fact about THIS world rather than a shortcut.
+ *
+ * FOOD & DRINKS WAS THE FOURTH AND IS NOT ANY MORE. Its note used to read
+ * "nothing is edible here. survival.js drains a hunger bar; no item restores
+ * it, so the tab would be empty" -- which was true and is the right test. It
+ * now holds 58 potions and a milk bucket, none of them food and all of them
+ * drinks, which is where vanilla files them too: potions are Food & Drinks in
+ * 1.19.3's arrangement, not Ingredients and not Brewing (the Brewing tab was
+ * one of the nine that reshuffle abolished). The day something edible lands
+ * it has a tab to land in.
  *
  *   Spawn Eggs          there are no mobs. The tab would be empty.
- *   Food & Drinks       nothing is edible here. survival.js drains a hunger
- *                       bar; no item restores it, so the tab would be empty.
  *   Operator Utilities  its entire content here would be the barrier block,
  *                       which items.js deliberately has no item for (it is
  *                       `invisible`, so there is no icon to draw and nothing
@@ -110,10 +117,22 @@ export const TABS = [
 
   { id: 'tools_and_utilities', label: 'Tools & Utilities', row: 'bottom', column: 0, icon: 'diamond_pickaxe' },
   { id: 'combat', label: 'Combat', row: 'bottom', column: 1, icon: 'netherite_sword' },
-  { id: 'ingredients', label: 'Ingredients', row: 'bottom', column: 2, icon: 'iron_ingot' },
+  /*
+   * Vanilla's icon is a Golden Apple, which does not exist here and would not
+   * mean anything if it did -- there is no food. The Potion of Healing is the
+   * closest thing this world has to the idea the apple stands for, and it is
+   * also the single most recognisable item IN the tab.
+   *
+   * Column 2, which is vanilla's own slot for it: Tools & Utilities, Combat,
+   * Food & Drinks, Ingredients. Ingredients and Survival Inventory each move
+   * right by one, which is the "close up the gaps" rule this list already
+   * follows for the absent tabs, run the other way.
+   */
+  { id: 'food_and_drinks', label: 'Food & Drinks', row: 'bottom', column: 2, icon: 'potion_healing' },
+  { id: 'ingredients', label: 'Ingredients', row: 'bottom', column: 3, icon: 'iron_ingot' },
   // Vanilla: Chest, at the far right of the bottom row. A barrel is the only
   // other container in the palette and it is the one that has a sprite.
-  { id: 'inventory', label: 'Survival Inventory', row: 'bottom', column: 3, icon: 'barrel', special: 'inventory' },
+  { id: 'inventory', label: 'Survival Inventory', row: 'bottom', column: 4, icon: 'barrel', special: 'inventory' },
 ]
 
 /** The tabs that list items by rule -- everything but Search and Inventory. */
@@ -144,6 +163,25 @@ const RULES = [
     'Tools & Utilities: the five tool shapes plus shears, flint and steel, buckets and rods. '
     + 'The filled buckets are spelled out rather than matched as a `_bucket` suffix, because '
     + 'vanilla files the MILK bucket under Foods -- a suffix rule would be wrong the day it lands'],
+  /*
+   * Potions, first of everything, because they are the one family whose keys
+   * carry another item's name inside them: `potion_water_breathing` contains
+   * `water`, and a rule ordered after the block rules would have to be lucky
+   * rather than right. An anchored prefix on both forms is the whole rule --
+   * potions.js generates every key as `potion_<id>` or `splash_potion_<id>`.
+   *
+   * Vanilla files all three potion items (drinkable, splash, lingering) under
+   * Food & Drinks, alongside the milk bucket. It is a strange tab for a thrown
+   * weapon and it is where the game puts it.
+   */
+  [/^(splash_)?potion_/, 'food_and_drinks',
+    'Food & Drinks, where vanilla lists every potion -- drinkable and splash alike'],
+  [/^milk_bucket$/, 'food_and_drinks',
+    'the milk bucket is Foods in vanilla, which is why the bucket rule below spells '
+    + 'out its three buckets by name instead of matching a `_bucket` suffix'],
+  [/^glass_bottle$/, 'ingredients',
+    'Ingredients: the empty bottle is a brewing input, not a drink. It is what a '
+    + 'drunk potion hands back'],
   [/^(stick|coal|charcoal|flint|clay_ball|leather|string|feather|gunpowder|paper|book|wheat|slime_bal)/,
     'ingredients', 'Ingredients holds every crafting material that is not a block'],
   [/^(iron|gold|copper|netherite)_(ingot|nugget|scrap)$|^raw_(iron|gold|copper)$/, 'ingredients',

@@ -150,12 +150,19 @@ test.describe('the categories, which are rules and not a list', () => {
     expect(where.brickBlock).toBe('building_blocks')
   })
 
-  test('the tab set and order is vanilla, minus the four this world cannot fill',
+  test('the tab set and order is vanilla, minus the three this world cannot fill',
     async ({ page }) => {
+      /*
+       * WAS four. Food & Drinks was the fourth and it was absent for a stated
+       * reason -- "nothing is edible here" -- which stopped being true the day
+       * potions landed. It sits at bottom column 2, which is vanilla's own
+       * slot for it, and Ingredients and Survival Inventory each shift right
+       * by one rather than leaving a hole where a tab used to be.
+       */
       expect(await tabs(page)).toEqual([
         'building_blocks', 'colored_blocks', 'natural_blocks', 'functional_blocks',
         'redstone_blocks', 'search',
-        'tools_and_utilities', 'combat', 'ingredients', 'inventory',
+        'tools_and_utilities', 'combat', 'food_and_drinks', 'ingredients', 'inventory',
       ])
       // No tab is empty: an empty tab reads as a broken screen, and
       // creative.js throws at module load rather than drawing one.

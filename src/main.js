@@ -17,7 +17,7 @@ import { createFluids, installFluids } from './fluids.js'
 import { createInventory, installInventoryScreen } from './inventory.js'
 import {
   TABS as creativeTabs, CATEGORY_TABS as creativeCategoryTabs, PICKER_ITEMS as pickerItems,
-  tabItems, ruleFor as creativeRuleFor, creativeListClick, uncategorisedItems,
+  tabItems, ruleFor as creativeRuleFor, creativeListClick, uncategorisedItems, searchItems,
   blocksWithoutEntry,
 } from './creative.js'
 import { installInteraction, installHotbarControls } from './interact.js'
@@ -45,6 +45,15 @@ import { installParticles } from './particles.js'
 import { installWeather } from './weather.js'
 import { installItemEntities } from './itemEntity.js'
 import { installBuckets } from './bucket.js'
+import { installPotions } from './potions.js'
+/*
+ * The potion TABLE, separately from the installed behaviour, and for the same
+ * reason `creative` and `inventoryScreen.creative` are two handles: which
+ * potions exist and what vanilla says they do is pure data a spec can check
+ * without opening a bottle, while `potions` below is the live thing that
+ * drinks and throws.
+ */
+import * as potionData from './potions.js'
 import { installFurnaceDrops } from './furnace.js'
 import { installHighlightStyle } from './highlight.js'
 import { createAuthority, OP_PASSPHRASE } from './authority.js'
@@ -366,8 +375,7 @@ const survival = createSurvival(noa, {
  * today -- see the report. The day npc.js grows health, this is one more case
  * in this switch and nothing in effects.js changes.
  */
-const effects = createEffects(noa, {
-  vitalsFor: (entity) => (entity === noa.playerEntity ? {
+const vitalsFor = (entity) => (entity === noa.playerEntity ? {
     get health() { return survival.health },
     get maxHealth() { return survival.maxHealth },
     get absorption() { return survival.absorption },
@@ -375,8 +383,17 @@ const effects = createEffects(noa, {
     damage: (n, cause) => survival.damage(n, cause),
     setAbsorption: (n) => survival.setAbsorption(n),
     setBonusMaxHealth: (n) => survival.setBonusMaxHealth(n),
-  } : null),
-})
+} : null)
+
+/*
+ * Named rather than inlined into createEffects, because potions.js needs the
+ * SAME adapter. A splashed Instant Damage at half potency cannot go through
+ * `effects.give` (there is nowhere to put the magnitude scale -- see the note
+ * in potions.js), so it reaches survival.js through this instead. One adapter
+ * means one gate: creative and spectator invulnerability is decided in exactly
+ * the same line for a thrown Potion of Harming as for a lava dip.
+ */
+const effects = createEffects(noa, { vitalsFor })
 
 const movement = installSpeedModes(noa, move, survival, fluids)
 // Speed, Slowness, Jump Boost, Slow Falling and Levitation, handed to the
@@ -505,7 +522,9 @@ const authority = createAuthority({
 const interaction = installInteraction(noa, inventory,
   // useBlock is a thunk because inventoryScreen is declared further down; it
   // only ever runs on a right-click, long after everything is constructed.
-  { crack, held, swing, inputLock, useBlock: (id, pos) => inventoryScreen.useBlock(id, pos) },
+  // `effects` is here for ONE reason: the dig-speed multiplier. Haste and
+  // Mining Fatigue had no consumer until this line -- see interact.js.
+  { crack, held, swing, inputLock, effects, useBlock: (id, pos) => inventoryScreen.useBlock(id, pos) },
   authority)
 
 /*
@@ -606,6 +625,13 @@ const drops = installItemEntities(noa, { inventory, authority, sounds, inputLock
  *                     own drop uses, so a furnace's contents land like ore.
  */
 const buckets = installBuckets(noa, { inventory, authority, inputLock, effects })
+/*
+ * Potions: the fourth listener on 'alt-fire', and the ordering rule is
+ * bucket.js's unchanged -- interact.js runs first and takes the inputLock if
+ * it opened a screen, so everything after it is already guarded. A potion's
+ * `places` is 0, so interact.js's placement path ignores it as well.
+ */
+const potions = installPotions(noa, { inventory, effects, inputLock, authority, vitalsFor })
 installFurnaceDrops(inventory.furnaces, authority, drops.popResource)
 
 /*
@@ -1082,6 +1108,13 @@ window.game = {
    * without typing a command, which is what `give` is here for.
    */
   effects, effectSwirl,
+  /*
+   * The bottles. `potions.applyPotion` and `potions.drinkNow` are the two
+   * seams a spec measures a duration through without waiting 1.6 real seconds
+   * per potion, and `potions.throwSplash` / `potions.splashed` are the same
+   * for the thrown half.
+   */
+  potions, potionData,
   /* The icon row, so a spec can assert which ROW an effect landed in --
      something a screenshot of two coloured squares cannot report. */
   effectHud: hud?.effects ?? null,
@@ -1098,6 +1131,9 @@ window.game = {
     TABS: creativeTabs, CATEGORY_TABS: creativeCategoryTabs, PICKER_ITEMS: pickerItems,
     tabItems, ruleFor: creativeRuleFor, listClick: creativeListClick,
     uncategorised: uncategorisedItems, blocksWithoutEntry,
+    // The Search tab's own matcher, which is pure and is the only way a spec
+    // can assert "typing swiftness finds all six bottles" without a keyboard.
+    searchItems,
   },
   /*
    * Identity and the agent, for the console and for the test suite. `roster`
@@ -1119,7 +1155,7 @@ window.game = {
   // Key -> item id, for the console and for the test suite. Item ids above
   // ITEM_BASE are positional, so anything outside this module that wants an
   // iron pickaxe has to ask rather than hardcode 1040-something.
-  itemId,
+  itemId, itemName,
   /*
    * The drop tables, for the console and for the test suite. `dropFor` is pure
    * and returns a distribution, so a spec can assert "lapis ore drops 4 to 9
