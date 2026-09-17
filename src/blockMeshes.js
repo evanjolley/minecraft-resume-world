@@ -528,6 +528,57 @@ for (const facing of SIGN_FACINGS) {
   SHAPE_BOXES[`sign_wall_${facing}`] = wallSignBoxes(facing)
 }
 
+/* ------------------------------------------------------------------ *
+ * A PAINTING'S FRAME, which is a much simpler shape than a sign's and is
+ * here for the same reason: it is the same geometry on every wall, so it is
+ * the one part of a painting a thin instance can express.
+ *
+ * ONE CELL OF FRAME PER BLOCK. A painting is a RECTANGLE of these -- a 3x2
+ * is six blocks of the same id side by side -- and the picture that spans
+ * them is a separate mesh in src/paintingArt.js. That split is forced: noa
+ * varies position, rotation and scale per voxel and nothing else, and six
+ * voxels showing one photograph is not a transform of anything.
+ *
+ * FULL FACE, ONE PIXEL DEEP, flush against the wall. Vanilla's
+ * `Painting.DEPTH = 0.0625F` (1.21.8 Painting.java), and its bounding box
+ * confirms the placement: `Vec3.atCenterOf(pos).relative(direction, -0.46875)`
+ * puts the centre 0.5 - 0.46875 = 0.03125 off the wall, which is exactly half
+ * of 0.0625 -- so the BACK face is flush with the wall and the front stands
+ * one pixel out. Transcribed, not tuned.
+ * ------------------------------------------------------------------ */
+
+/** Vanilla `Painting.DEPTH`, in blocks. One pixel. */
+export const PAINTING_DEPTH = 1 / 16
+
+function paintingWallBoxes(facing) {
+  const { a, p, s, wall } = signAxes(facing)
+  const box = [0, 0, 0, 0, 0, 0]
+  // The whole face of the cell: a painting tiles edge to edge with itself.
+  box[p] = 0; box[p + 3] = 1
+  box[1] = 0; box[4] = 1
+  // Sorted, because `s` is -1 on two of the four facings and a box with
+  // lo > hi draws inside-out -- the same trap wallSignBoxes documents.
+  const far = wall + s * PAINTING_DEPTH
+  box[a] = Math.min(wall, far); box[a + 3] = Math.max(wall, far)
+  return [box]
+}
+
+/** The four facings a painting can take, in the order blocks.js assigns ids. */
+export const PAINTING_FACINGS = SIGN_FACINGS
+export const paintingShapeKey = (facing) => `painting_wall_${facing}`
+
+for (const facing of PAINTING_FACINGS) {
+  SHAPE_BOXES[paintingShapeKey(facing)] = paintingWallBoxes(facing)
+}
+/*
+ * NO TARGET_BOXES ENTRY, and that is the interesting half. A sign needs one
+ * because vanilla's interaction shape is not its rendered board (4.5..12.5
+ * against 4 1/3..12 1/3). A painting's is: you aim at the picture, the
+ * picture fills the cell, and the box above IS the picture. So the crosshair
+ * lands on exactly what you can see, and the outline it draws is one cell of
+ * the real rectangle rather than an approximation of it.
+ */
+
 /**
  * The facing name for a block face's outward normal, or null for up and down.
  * The inverse of the FACINGS table, and the thing that turns "which face did
@@ -915,6 +966,14 @@ export const PASS_THROUGH_SHAPES = new Set([
   // are, so a seventeenth would be in this set without anyone remembering to
   // add it -- which is the failure mode a hand-typed list of four had.
   ...Array.from({ length: SIGN_SEGMENTS }, (_, s) => signShapeKey(s)),
+  /*
+   * And paintings, the third family to take this opt-out. Vanilla's is not a
+   * block at all, so there is no `.noCollission()` row to cite -- the
+   * equivalent is `Entity.canBeCollidedWith` returning false, which neither
+   * Painting nor HangingEntity nor BlockAttachedEntity overrides. You walk
+   * through a painting in Minecraft; you walk through one here.
+   */
+  ...PAINTING_FACINGS.map(paintingShapeKey),
 ])
 
 /** Minecraft's player step height: onto a slab, never onto a full block. */

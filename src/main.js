@@ -5,6 +5,10 @@ import {
   installAttachment, shapeBoxesFor, targetShapeBoxesFor,
 } from './blockMeshes.js'
 import { installSignText, setSignText, clearSignText, signTextStats } from './signText.js'
+import {
+  installPaintingArt, hangPainting, registerPainting, clearPainting, paintingAt, paintingStats,
+  resetPaintings, paintingTextureBytes,
+} from './paintingArt.js'
 import { installSignScreen } from './signScreen.js'
 import { getVoxelID, terrainInfo, SPAWN } from './island.js'
 import { installPhysics, installSpeedModes, MC } from './physics.js'
@@ -635,6 +639,21 @@ installAttachment(noa, BLOCK_SUPPORT, (x, y, z) => {
 installSignText(noa)
 
 /*
+ * And paintings show something, which is the other half of blockMeshes.js's
+ * painting frame.
+ *
+ * FOURTH AND LAST of the setBlock wraps, one place after installSignText, for
+ * signText's reason plus one of its own. The shared reason is that only after
+ * placement and attachment have run is the id at a coordinate the id that is
+ * really going to be there. The extra one is that a painting's teardown
+ * WRITES -- it erases the other cells of a broken painting -- and it writes
+ * through the innermost setBlock deliberately, so that exactly one item drops
+ * (see the teardown note in paintingArt.js). Installing it last means its
+ * unwrapped handle is the real one rather than another wrap.
+ */
+installPaintingArt(noa)
+
+/*
  * F3. Installed after `drops` and `particles` because it counts both, and it
  * is handed `inputLock` to READ rather than to take: F3 is an overlay, not a
  * screen -- the world keeps ticking and you keep walking with it open. All the
@@ -1019,6 +1038,14 @@ window.game = {
    * atlas however many signs are in the world, which is the claim.
    */
   signs: { setSignText, clearSignText, signTextStats },
+  /*
+   * Paintings, for the console and for the suite. `registerPainting` rather
+   * than `hangPainting` is what is exposed here: hangPainting takes a
+   * STAMPER and is a build-time call, and a spec has a live world and world
+   * coordinates rather than a plot.
+   */
+  paintings: { hangPainting, registerPainting, clearPainting, paintingAt, paintingStats,
+    resetPaintings, paintingTextureBytes },
   /*
    * The edit screen, for the console and for the test suite. A spec cannot
    * type into a screen it cannot find, and `editingAt`/`lines` are how it

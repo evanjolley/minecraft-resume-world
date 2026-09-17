@@ -2,6 +2,7 @@ import {
   FACINGS, SHAPE_BOXES, SHAPE_ROTATION, PASS_THROUGH_SHAPES, buildShapeMesh,
   createMaterialCache, facingFromNormal, installNonCubeCollision,
   installPlacementOrientation, installThinInstanceUploadFix, SIGN_FACINGS,
+  PAINTING_FACINGS, paintingShapeKey, PAINTING_DEPTH,
   SIGN_SEGMENTS, segmentFromHeading, segmentNormal, signShapeKey,
 } from './blockMeshes.js'
 import { EMISSION } from './blockLight.js'
@@ -1244,9 +1245,133 @@ export const signNormal = (id) => {
 export const isWallSign = (id) =>
   id >= SIGN_ID + SIGN_SEGMENTS && id < SIGN_ID + SIGN_SEGMENTS + 4
 
+/* ------------------------------------------------------------------ *
+ * Paintings, which are the first blocks in this world that are ONE OBJECT
+ * SPREAD OVER SEVERAL CELLS.
+ *
+ * Four ids, one per wall facing. There is no standing variant and there is no
+ * ceiling variant, because vanilla's `HangingEntityItem.useOn` rejects a
+ * vertical face outright (`!direction.getAxis().isVertical()`) -- a painting
+ * hangs on a wall or it does not hang.
+ *
+ * WHY A BLOCK AND NOT AN ENTITY is argued at length at the top of
+ * src/paintingArt.js, which is also where the picture is drawn. The one-line
+ * version: five of the six things a painting needs are already built in this
+ * repo and all five are keyed on block ids.
+ *
+ * THE CANONICAL IS NORTH and keeps the bare key `painting`, the same
+ * arrangement the torch and the sign both have -- a real placeable variant
+ * that is ALSO the thing every other variant drops, rather than a fifth id
+ * that only ever exists as an item.
+ *
+ * APPENDED LAST, after the signs. Ids are save data; see the note on
+ * SIGN_ID for what that rule is currently protecting and what it is not.
+ * ------------------------------------------------------------------ */
+const PAINTING_ID = 680
+
+/** facing -> block id. North is 680 and is the canonical `painting`. */
+export const PAINTING_WALL = new Map(
+  PAINTING_FACINGS.map((f, i) => [f, PAINTING_ID + i]))
+
+const PAINTING_BLOCKS = PAINTING_FACINGS.map((facing, i) => ({
+  id: PAINTING_ID + i,
+  key: i === 0 ? 'painting' : `painting_wall_${facing}`,
+  name: 'Painting',
+  /*
+   * OAK PLANKS FOR THE FRAME, and this is a substitution worth naming.
+   * Vanilla's frame edge samples `painting/back.png`, a 16x16 that ships in
+   * the painting directory rather than in `block/` -- so it is not an atlas
+   * material here and cannot be one without teaching build-textures.mjs
+   * about a second texture directory, which is another agent's file today.
+   * back.png is a plain oak-coloured plank weave; oak_planks is the same
+   * wood at the same resolution, and it is the edge of a one-pixel-deep
+   * frame, which is the least-looked-at surface in the world.
+   */
+  all: 'oak_planks',
+  shape: paintingShapeKey(facing),
+  /*
+   * NO VANILLA NUMBER EXISTS TO COPY, which is the one place this family has
+   * to invent rather than transcribe. A painting is an entity there: it has
+   * HEALTH, not a mining time, and one hit takes it off the wall.
+   *
+   * 0.2 is the block translation of "one hit" -- fast enough that a painting
+   * comes away the moment you decide to move it, slow enough that it is not
+   * in the instant-break class alongside a torch and a flower, which would
+   * mean brushing a wall with a swing took the picture down. Not tool-gated,
+   * because there is no tool a painting is meant to be removed with.
+   */
+  hardness: T(0.2, false),
+  ...(i === 0
+    // Only the canonical is ever an ITEM. `item/painting.png` is a real
+    // sprite in the jar, so `flatFrom: 'item'` -- the sign's case, not the
+    // torch's.
+    ? { flatItem: true, flatFrom: 'item' }
+    : { drops: PAINTING_ID }),
+}))
+
+/*
+ * Which of the four you get: the face you clicked, exactly as a wall torch
+ * resolves. There is no heading branch and there must not be one -- a sign
+ * reads the heading because a STANDING sign can face sixteen ways, and a
+ * painting has no standing form to disambiguate.
+ *
+ * A click on a floor or a ceiling has no wall facing, and `facingFromNormal`
+ * answers null. Returning the canonical anyway would plant a north-facing
+ * painting flat on the ground; returning PAINTING_ID and letting
+ * installAttachment's sweep take it straight back off is what actually
+ * happens, because the block north of it is air. That is the same "one rule,
+ * both directions" the attachment note describes, and it is why this line
+ * does not need a rejection of its own.
+ */
+NON_CUBE_VARIANTS.set(PAINTING_ID, (_facing, _half, normal) => {
+  const wall = facingFromNormal(normal)
+  return wall ? PAINTING_WALL.get(wall) : PAINTING_ID
+})
+
+/*
+ * Every cell of a painting needs the block behind IT, not behind the painting
+ * -- which is vanilla's rule stated per cell. `HangingEntity.survives` walks
+ * `calculateSupportBox()` and requires `allMatch(isSolid)` over the whole
+ * rectangle, so a 3x2 painting with one block missing behind it falls down in
+ * vanilla too. Here that falls out of installAttachment for free, one cell at
+ * a time, and paintingArt.js turns the first cell to pop into the whole
+ * painting coming off the wall.
+ */
+for (const facing of PAINTING_FACINGS) {
+  BLOCK_SUPPORT.set(PAINTING_WALL.get(facing), FACINGS[facing].map(v => (v ? -v : 0)))
+}
+
+/**
+ * facing -> the BLOCK KEY a stamper writes, which is not `painting_wall_north`
+ * for north and that is the point of the map existing.
+ *
+ * The canonical variant keeps the bare key `painting` (the torch's and the
+ * sign's arrangement), so a caller building the key by string concatenation
+ * gets three facings right and throws on the fourth. `hangPainting` used to do
+ * exactly that. Derived from PAINTING_BLOCKS rather than retyped, so the two
+ * cannot disagree.
+ */
+export const PAINTING_KEYS = new Map(
+  PAINTING_FACINGS.map((facing, i) => [facing, PAINTING_BLOCKS[i].key]))
+
+/** Is this id a painting? Exported for paintingArt.js. */
+export const isPaintingId = (id) => id >= PAINTING_ID && id < PAINTING_ID + 4
+
+/**
+ * The UNIT VECTOR the picture faces. A vector rather than a compass name for
+ * signNormal's reason: the mirror derivation in paintingArt.js is written as
+ * a rotation of a vector, and handing it a name would mean looking the vector
+ * back up at the other end.
+ */
+export const paintingNormal = (id) =>
+  isPaintingId(id) ? FACINGS[PAINTING_FACINGS[id - PAINTING_ID]] : null
+
+export { PAINTING_DEPTH }
+
 export const BLOCK_TYPES = normaliseHardness(
   [...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER, ...FLUID_FLOW_BLOCKS, ...TORCHES,
-    ...SIGNS])
+    ...SIGNS,
+    ...PAINTING_BLOCKS])
 
 // Ids must be contiguous from 1. noa fills any gap with a silently-registered
 // filler block that has no material, which renders as untextured white and is
