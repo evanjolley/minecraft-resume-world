@@ -279,9 +279,23 @@ on effort.
 
    **What is still open**, in the order it would be worth doing:
 
-   - **The text-entry screen.** A player cannot write on a sign; only a build
-     can. That needs `inputLock.js` and `menu.js` and is a second feature,
-     still paired with written books below.
+   - ~~**The text-entry screen.**~~ **SHIPPED** — `src/signScreen.js`. Placing
+     a sign opens it on line 1, four rows, arrow keys between them, Escape or
+     Done to finish, and the sign renders live as you type. It hangs off
+     `interaction.onBlockPlace` rather than a `setBlock` wrap, because
+     vanilla hangs it off `SignItem` and a build stamping a plot must not be
+     interrupted to type four lines. It cost less than this entry expected,
+     and the reason is the pointer-lock refactor: it registers with
+     `inputLock.js` as `lock('sign')` and the four "is a screen open"
+     conditions were correct about it for free, which is exactly what that
+     note said the fifth screen would get. Written books are still below and
+     are now a smaller job than they were.
+
+     Not done and worth knowing: you cannot RE-open the screen on a sign
+     already placed. Vanilla lets you right-click one, and the seam exists --
+     `interact.js` calls `fx.useBlock(id, position)` before placing, which is
+     how a crafting table opens -- so it is one wiring line plus the rule
+     about when it may not fire (sneaking, adventure mode, whose sign it is).
    - **The board does not take block light.** A sign in a sealed dark room
      photographs at full brightness, because a non-cube object mesh is not
      lit by `blockLight.js` at all. That is a happy accident for legibility

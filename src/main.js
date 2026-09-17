@@ -5,6 +5,7 @@ import {
   installAttachment, shapeBoxesFor, targetShapeBoxesFor,
 } from './blockMeshes.js'
 import { installSignText, setSignText, clearSignText, signTextStats } from './signText.js'
+import { installSignScreen } from './signScreen.js'
 import { getVoxelID, terrainInfo, SPAWN } from './island.js'
 import { installPhysics, installSpeedModes, MC } from './physics.js'
 import { createSurvival } from './survival.js'
@@ -722,6 +723,25 @@ const chat = installChat(noa, {
  */
 survival.onDeath((detail) => chat.announceDeath(roster.displayNameOf(LOCAL_ID), detail))
 
+/*
+ * The sign edit screen, and where it hangs off is the decision.
+ *
+ * `onBlockPlace` and NOT a setBlock wrap. Vanilla opens this from `SignItem`
+ * -- the ITEM being used, not the block appearing -- and interaction's event
+ * is the only seam here that means the same thing. Hooking setBlock (where
+ * installPlacementOrientation and signText.js both live) would stop the world
+ * and ask for four lines when a build stamps a plot or a `/setblock` runs.
+ *
+ * Wired here rather than inside installSignScreen for the reason the death
+ * message above is: the screen is a VIEW, and a view that subscribes to the
+ * interaction model reaches into game state it has no business holding.
+ */
+const signScreen = installSignScreen(noa, {
+  inputLock,
+  requestPointerLock: () => requestLockPersistently(noa),
+})
+interaction.onBlockPlace(({ position }) => signScreen.open(...position))
+
 // The whole command set is one call. /tp <plot> for the resume plots goes in
 // commands.js once the plots exist.
 // `playerName` is gone from this call: commands.js never read it, and the
@@ -999,6 +1019,12 @@ window.game = {
    * atlas however many signs are in the world, which is the claim.
    */
   signs: { setSignText, clearSignText, signTextStats },
+  /*
+   * The edit screen, for the console and for the test suite. A spec cannot
+   * type into a screen it cannot find, and `editingAt`/`lines` are how it
+   * asserts WHICH sign has the keyboard rather than that a div is visible.
+   */
+  signScreen,
   /*
    * The two views of the non-cube box table, for the test suite. Exposed
    * because the BEHAVIOUR they produce cannot always tell them apart: a spec

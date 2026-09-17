@@ -330,6 +330,19 @@ export function setSignText(x, y, z, lines, opts = {}) {
   if (ctx) renderSign(x, y, z, entry)
 }
 
+/**
+ * What a coordinate already says, or undefined.
+ *
+ * For signScreen.js, which has to prefill its four boxes: a sign just placed
+ * says nothing, and a sign being edited a second time must not be blanked by
+ * the screen that opened to edit it. Returns the stored entry rather than a
+ * copy, and the caller reads it -- a clone would be honest and would also
+ * suggest that writing to it does something, which it does not.
+ */
+export function signTextAt(x, y, z) {
+  return texts.get(keyOf(x, y, z))
+}
+
 /** Take the words off, without touching the block. */
 export function clearSignText(x, y, z) {
   const key = keyOf(x, y, z)

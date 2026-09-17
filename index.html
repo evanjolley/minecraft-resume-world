@@ -395,6 +395,35 @@
     body.inv-open #chat, body.menu-open #chat,
     body.inv-open #chat-bar, body.menu-open #chat-bar { display: none; }
 
+    /* ---------------- sign edit screen ----------------
+       OWNED BY src/signScreen.js, which sets every size in Minecraft GUI
+       pixels against hud.js's SCALE. What lives here is positioning, the
+       panel's colours and the fact that the four rows are borderless -- the
+       text you are actually reading is on the SIGN, in the world behind this
+       panel, which is why the panel is small and sits low rather than filling
+       the screen the way a container does.
+
+       z-index 20 puts it in the same band as the container screens, since it
+       is the same kind of thing: a panel in front of the world that owns the
+       keyboard. NO full-screen scrim, unlike #inventory -- vanilla dims
+       nothing here, because you are meant to watch the sign render as you
+       type and a 55% black wash over it would defeat the whole screen. */
+    #sign-edit { position: absolute; inset: 0; z-index: 20; pointer-events: none;
+      display: flex; align-items: flex-end; justify-content: center; }
+    #sign-edit-panel { pointer-events: auto; margin-bottom: 56px;
+      background: rgba(0, 0, 0, 0.72); border: 2px solid #565656;
+      display: flex; flex-direction: column; gap: 4px; }
+    .sign-edit-line { display: block; width: 100%; box-sizing: border-box;
+      background: rgba(0, 0, 0, 0.45); border: 0; outline: 0; padding: 0 4px;
+      font-family: inherit; color: #e0e0e0; text-shadow: 2px 2px 0 #383838;
+      text-align: center; }
+    /* The focused row is the one the cursor is on, and vanilla marks it. */
+    .sign-edit-line:focus { background: rgba(255, 255, 255, 0.12); }
+    #sign-edit-done { margin-top: 6px; }
+    /* Same rule chat and the tab list take: a screen hides the HUD chatter. */
+    body.sign-open #chat, body.sign-open #chat-bar,
+    body.sign-open #tab-list { display: none; }
+
     /* ---------------- tab player list ----------------
        OWNED BY src/tabList.js. Every size and offset is computed there, in
        Minecraft GUI pixels against hud.js's SCALE, because the panel's width
@@ -507,6 +536,13 @@
   <div id="creative" class="hidden">
     <div id="creative-panel"></div>
   </div>
+  <!-- OWNED BY src/signScreen.js: it builds the four rows and the Done
+       button into the panel, because their count is SIGN_LINES and their
+       size is computed there. -->
+  <div id="sign-edit" class="hidden">
+    <div id="sign-edit-panel"></div>
+  </div>
+
   <div id="inv-carried" class="hidden"></div>
 
   <div id="pause" class="hidden">
