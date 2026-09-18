@@ -834,6 +834,28 @@ export function installPotions(noa, {
       age: 0,
     }
     flying.push(shot)
+    /*
+     * BUILD THE SPRITE NOW, not on the first frame that happens to catch the
+     * bottle mid-air.
+     *
+     * meshFor was only ever reached from beforeRender, which couples whether
+     * the projectile has a body at all to the frame rate. noa runs its ticks
+     * and its render off the same rAF -- a slow frame runs the whole batch of
+     * ticks first and renders once at the end -- so on a machine that renders
+     * slower than a potion flies, every tick of the flight and the splash all
+     * land inside one frame and beforeRender first sees an empty `flying`.
+     * The bottle is then never drawn and never even constructed. Under
+     * software GL that is every throw; on a real GPU it is the throw that
+     * lands in under a frame, which is the one you make at a wall in front of
+     * you.
+     *
+     * Still lazy per item key -- this is the same one-mesh-per-potion cache,
+     * asked at the moment there is something to draw rather than at the
+     * moment we are already drawing. It also gives the texture a frame's head
+     * start to upload. A null return (gfx not loaded yet) is ignored for the
+     * same reason beforeRender ignored it.
+     */
+    meshFor(itemKey)
     sounds?.throw?.()
     return shot
   }
