@@ -2,6 +2,8 @@ import { CreateLineSystem } from '@babylonjs/core/Meshes/Builders/linesBuilder'
 import { Vector3 } from '@babylonjs/core/Maths/math.vector'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { targetShapeBoxesFor } from './blockMeshes.js'
+import { isPaintingId, paintingNormal } from './blocks.js'
+import { paintingAt, viewerRight } from './paintingArt.js'
 
 /*
  * The selection outline: a wireframe of the block's SHAPE.
@@ -64,6 +66,58 @@ const VIEW_OFFSET = 1 / 4096
 /** What a block with no shape table entry is outlined as. */
 const FULL_CUBE = [[0, 0, 0, 1, 1, 1]]
 
+/* ------------------------------------------------------------------ *
+ * A PAINTING IS OUTLINED AS ONE RECTANGLE, NOT AS SIX SQUARES.
+ *
+ * Everywhere else in this file the outline is a function of the BLOCK, and
+ * that is honest: a slab is a slab whatever is next to it. A painting is the
+ * one thing in this world where the block is not the object. A 3x2 painting
+ * is six `painting_wall_*` blocks showing ONE picture -- paintingArt.js's
+ * whole argument -- so outlining the cell under the crosshair drew a box
+ * around one sixth of a photograph and told the player the wrong thing about
+ * what they were about to break. (And breaking any cell takes the whole
+ * painting off the wall, which is the behaviour the outline has to agree
+ * with.)
+ *
+ * Vanilla does not have this problem and therefore has no answer to copy: its
+ * painting is an entity, `renderHitOutline` never runs on one, and what you
+ * get is the entity's own selection box around the whole rectangle. That is
+ * the shape reproduced here, arrived at from the other direction.
+ *
+ * The rectangle is built from the ANCHOR cell -- the bottom-left as a viewer
+ * sees it, which is the cell paintingArt.js keys everything on -- so the mesh
+ * is positioned there rather than at the targeted cell. `right` and the
+ * normal come from paintingArt.js and blocks.js rather than from the facing
+ * NAME, for the reason those files both give: the east/west flip is the thing
+ * that gets remembered wrong.
+ *
+ * Rejected: unioning the cells' boxes and letting build() emit twelve edges
+ * per cell. Same silhouette, six times the lines, and the internal seams are
+ * exactly the creases vanilla's edge rasteriser exists to suppress.
+ * ------------------------------------------------------------------ */
+const paintingOutline = (id, position) => {
+  if (!isPaintingId(id)) return null
+  const p = paintingAt(position[0], position[1], position[2])
+  // A painting block with no art registered against it is a bare frame --
+  // /setblock can make one -- and a bare frame really is one cell.
+  if (!p) return null
+
+  const right = viewerRight(paintingNormal(id))
+  const cell = (targetShapeBoxesFor(id) ?? FULL_CUBE)[0]
+  const box = [...cell]
+
+  // The axis the rectangle grows along, and which way. `right` is an axis
+  // vector, so this is +1 or -1 on exactly one of x and z.
+  const r = right[0] ? 0 : 2
+  if (right[r] > 0) box[r + 3] += p.w - 1
+  else box[r] -= p.w - 1
+  // ...and it grows UP from the anchor, which is why only the top moves.
+  box[4] += p.h - 1
+
+  const [ax, ay, az] = p.anchor.split(',').map(Number)
+  return { key: `${id}:${p.w}x${p.h}`, boxes: [box], origin: [ax, ay, az] }
+}
+
 export function installHighlightStyle(noa) {
   /*
    * noa parks its own plane on the struck face via a `targetBlockChanged`
@@ -76,8 +130,12 @@ export function installHighlightStyle(noa) {
   noa.off('targetBlockChanged', noa.defaultBlockHighlightFunction)
 
   let mesh = null
-  /** The block id `mesh` was built for. Geometry is a function of the id. */
-  let builtFor = -1
+  /**
+   * What `mesh` was built for. The block id for everything except a painting,
+   * whose geometry is also a function of its size -- hence a string key and
+   * not a number. Two paintings of the same size on the same wall share it.
+   */
+  let builtFor = null
   const local = [0, 0, 0]
 
   /*
@@ -88,9 +146,8 @@ export function installHighlightStyle(noa) {
    * key -- which is also why a slab and a stair of the same wood, being
    * different ids, cannot share a stale outline.
    */
-  const build = (id) => {
+  const build = (key, boxes) => {
     if (mesh) mesh.dispose()
-    const boxes = targetShapeBoxesFor(id) ?? FULL_CUBE
     const lines = []
     for (const [x0, y0, z0, x1, y1, z1] of boxes) {
       const v = (x, y, z) => new Vector3(x, y, z)
@@ -120,7 +177,7 @@ export function installHighlightStyle(noa) {
      * for this, which moves every time you look somewhere else.
      */
     noa.rendering.addMeshToScene(mesh, false, [0, 0, 0])
-    builtFor = id
+    builtFor = key
   }
 
   /*
@@ -135,9 +192,19 @@ export function installHighlightStyle(noa) {
       if (mesh) mesh.setEnabled(false)
       return
     }
-    if (target.blockID !== builtFor) build(target.blockID)
+    /*
+     * The shape, and WHERE the shape is anchored. They come back together
+     * because for a painting they disagree with `target.position`: the
+     * rectangle is drawn from its bottom-left cell however far away that is
+     * from the one the crosshair struck.
+     */
+    const painting = paintingOutline(target.blockID, target.position)
+    const key = painting ? painting.key : String(target.blockID)
+    if (key !== builtFor) {
+      build(key, painting ? painting.boxes : (targetShapeBoxesFor(target.blockID) ?? FULL_CUBE))
+    }
 
-    noa.globalToLocal(target.position, null, local)
+    noa.globalToLocal(painting ? painting.origin : target.position, null, local)
     /*
      * ...and then toward the camera, by a fixed fraction of how far away it
      * is. See the VIEW_OFFSET note at the top: this is vanilla's line-layering

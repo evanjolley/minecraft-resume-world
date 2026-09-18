@@ -284,7 +284,7 @@ const ART_DEPTH_FACTOR = -1
  * And per that same README, a derivation is not a check: the painting is
  * screenshotted and looked at in test/87-paintings.spec.js.
  * ------------------------------------------------------------------ */
-const viewerRight = (normal) => [-normal[2], 0, normal[0]]
+export const viewerRight = (normal) => [-normal[2], 0, normal[0]]
 
 /* ------------------------------------------------------------------ *
  * The registry. Module-level and writable before noa exists, for exactly the
