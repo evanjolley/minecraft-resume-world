@@ -526,3 +526,81 @@ test('a guest cannot light a portal, and walks through one that is lit', async (
 
   await shot(page, '44-portal-guest-in-nether')
 })
+
+/*
+ * THE RETURN TRIP LANDS IN THE WORLD YOU LEFT.
+ *
+ * portals.js used to pick its destination with
+ * `active === 'nether' ? 'overworld' : 'nether'`, which is a true sentence
+ * about a world with two rows in its dimension table. There are four, and two
+ * of them are overworlds: `claude-opus-5-1` is the same 128 patch at the same
+ * origin, in exact 1:1 register with the Nether, so a portal there takes you
+ * down correctly and the old branch brought you back up into the SUPERFLAT at
+ * those coordinates -- a bare field instead of the road you walked in from.
+ * dimensions.js's header named it and left it; this is the assertion that
+ * keeps it named.
+ *
+ * WHAT MAKES THIS A DISCRIMINATION rather than a round trip that happens to
+ * work: the departure world is deliberately NOT the default one. A version
+ * that hard-codes 'overworld' passes every other test in this file and fails
+ * only this one, because every other test leaves from the overworld and
+ * cannot tell the two rules apart.
+ *
+ * CREATIVE THROUGHOUT, so the dwell is one tick rather than eighty and the
+ * test is three teleports instead of twelve seconds of standing still.
+ */
+test('a portal back out of the Nether lands in the world you left, not in the overworld',
+  async ({ page, terrain }) => {
+    await keepBox(terrain)
+    await grantOp(page)
+    await useGamemode(page, 'creative')
+    try {
+      await page.evaluate(() => window.game.dimensions.enter('claude-opus-5-1'))
+      await page.waitForFunction(
+        () => window.game.dimensions.active === 'claude-opus-5-1', null, { timeout: 30_000 })
+      /*
+       * STAND WHERE THE FRAME GOES BEFORE WRITING IT, in both worlds. noa
+       * keeps three chunks of 32 around the player, and both arrivals are at
+       * a spawn point rather than at y=200 -- a setBlock into a chunk that is
+       * not resident is silently lost, which is what a frame that refuses to
+       * light means here.
+       */
+      await teleport(page, X0 + 1.5, Y0 + 1, Z + 0.5)
+      await waitTicks(page, 25)
+      await buildFrame(page)
+      expect((await light(page)).ok, 'the frame in claude-opus-5-1 lit').toBe(true)
+      await teleport(page, X0 + 1.5, Y0 + 1, Z + 0.5)
+      await page.waitForFunction(
+        () => window.game.dimensions.active === 'nether', null, { timeout: 20_000 })
+
+      /*
+       * A second frame, in the Nether, at the same column, and the same
+       * stand-there-first rule as above.
+       */
+      await teleport(page, X0 + 1.5, Y0 + 1, Z + 0.5)
+      await waitTicks(page, 25)
+      await page.evaluate(([a, b, c, d, e, f]) => {
+        for (let x = a; x <= d; x++)
+          for (let y = b; y <= e; y++)
+            for (let z = c; z <= f; z++) window.noa.setBlock(0, x, y, z)
+      }, [X0, Y0, Z, X1, Y1, Z])
+      await buildFrame(page)
+      expect((await light(page)).ok, 'the frame in the Nether lit').toBe(true)
+
+      /*
+       * NO TELEPORT HERE, and the missing line is the point: lighting a
+       * portal around yourself puts you inside it, so the dwell is already
+       * running. Teleporting into it again after the trip has fired lands you
+       * in the FIRST portal, in the other world, and sends you straight back
+       * -- which reads as "the return never happened".
+       */
+      await page.waitForFunction(
+        () => window.game.dimensions.active !== 'nether', null, { timeout: 20_000 })
+      expect(await page.evaluate(() => window.game.dimensions.active),
+        'came back to the world the portal was lit in').toBe('claude-opus-5-1')
+    } finally {
+      await page.evaluate(() => window.game.dimensions.enter('overworld'))
+      await waitTicks(page, 20)
+      await useGamemode(page, 'survival')
+    }
+  })

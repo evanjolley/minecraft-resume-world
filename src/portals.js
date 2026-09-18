@@ -383,10 +383,37 @@ export function installPortals(noa, {
   const dwellTicks = () =>
     authority.gamemode === 'creative' ? PORTAL.DWELL_CREATIVE : PORTAL.DWELL_SURVIVAL
 
+  /*
+   * WHICH OVERWORLD DID I LEAVE.
+   *
+   * The return trip used to be `active === 'nether' ? 'overworld' : 'nether'`,
+   * which is a correct sentence about a world with two rows in its table and
+   * a wrong one about a world with four. `claude-opus-5-1` is an overworld --
+   * same patch, same origin, same 1:1 register with the Nether -- so a portal
+   * there takes you down correctly and the way back dropped you in the
+   * SUPERFLAT at those coordinates instead, in a bare field rather than on the
+   * road you walked in from. dimensions.js's header names this exactly and
+   * says the fix is a memory in this file. This is it.
+   *
+   * ONE VARIABLE, WRITTEN AT THE MOMENT OF DEPARTURE, and the seeded value is
+   * the same 'overworld' the old branch hard-coded -- so a session that
+   * never leaves the default world behaves identically, including the case
+   * where you are somehow in the Nether at boot.
+   *
+   * Rejected: keying it off `DIMENSIONS[active].id === 'minecraft:overworld'`
+   * and picking the first such row. That is the same guess with more steps,
+   * and it answers `mountains` -- a world with no portal relationship to
+   * anything -- with as much confidence as it answers the right one. Where
+   * you came from is a fact, not something to re-derive.
+   */
+  let fromOverworld = 'overworld'
+
   async function travel() {
     travelling = true
     try {
-      const to = dimensions.active === 'nether' ? 'overworld' : 'nether'
+      const from = dimensions.active
+      if (from !== 'nether') fromOverworld = from
+      const to = from === 'nether' ? fromOverworld : 'nether'
       const p = noa.ents.getPositionData(noa.playerEntity).position
       const here = [p[0], p[1], p[2]]
       const landing = destinationIn(to, here)
