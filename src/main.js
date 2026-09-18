@@ -524,7 +524,33 @@ const interaction = installInteraction(noa, inventory,
   // only ever runs on a right-click, long after everything is constructed.
   // `effects` is here for ONE reason: the dig-speed multiplier. Haste and
   // Mining Fatigue had no consumer until this line -- see interact.js.
-  { crack, held, swing, inputLock, effects, useBlock: (id, pos) => inventoryScreen.useBlock(id, pos) },
+  /*
+   * ...and the SECOND thing a right-click can open is a sign.
+   *
+   * A placed sign opened its screen once, from `onBlockPlace`, and then could
+   * never be edited again -- you could write a typo into the world and the
+   * only fix was to mine the sign. Vanilla re-opens the same screen from
+   * `SignBlock.useWithoutItem`, which is a right-click on the block, and
+   * `useBlock` is this world's right-click-on-a-block seam. So it is one more
+   * clause here rather than a second listener on alt-fire, which would race
+   * interact.js exactly as inventory.js's own note warns.
+   *
+   * AND THE RULE FOR WHEN IT MAY NOT FIRE. Opening a crafting table is not
+   * building, which is why interact.js asks `useBlock` BEFORE it asks the
+   * authority for `mayBuild`. Editing a sign IS building -- it writes text
+   * into the world -- so this clause asks for the permission the surrounding
+   * code has not asked for yet. Adventure and spectator right-click a sign and
+   * read it, which is vanilla's behaviour and this world's rule stated once.
+   *
+   * Order matters only in that `inventoryScreen.useBlock` gets first refusal;
+   * no id is both a sign and a furnace, so the || is a sequence and not a
+   * priority.
+   */
+  {
+    crack, held, swing, inputLock, effects,
+    useBlock: (id, pos) => inventoryScreen.useBlock(id, pos)
+      || (authority.caps().mayBuild && signScreen.open(...pos)),
+  },
   authority)
 
 /*
