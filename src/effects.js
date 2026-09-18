@@ -519,19 +519,43 @@ export function createEffects(noa, { vitalsFor = () => null } = {}) {
    * Instant health and instant damage. `4 << amplifier` and `6 << amplifier`
    * -- a SHIFT, so each level doubles.
    *
+   * `scale` IS SPLASH'S FALLOFF, and it is the argument this function grew so
+   * that potions.js could stop keeping its own copy of the arithmetic. A
+   * timed effect splashed at half strength lasts half as long; an instant one
+   * lands at half MAGNITUDE, because there is no "briefly" to heal for -- so
+   * `give(entity, key, seconds, amplifier)` had nowhere to put it and the
+   * caller went round the side. One fact, one owner: the `4 << i` shift, the
+   * undead inversion and the `+ 0.5` truncation all live here now.
+   *
    * NOT reproduced: the undead inversion, where instant health hurts a zombie
    * and instant damage heals it. It is real and it is a property of the mob,
    * and this world has one NPC who is a person. The hook is `v.undead`, unset
    * everywhere, so the day a zombie exists it is a flag rather than a rewrite.
    */
-  function applyInstant(entity, def, amplifier) {
+  function applyInstant(entity, def, amplifier, scale = 1) {
     const v = vitalsFor(entity)
-    if (!v) return
-    if (def.key === 'saturation') { v.feed?.(amplifier + 1); return }
+    if (!v) return false
+    /*
+     * SATURATION IGNORES THE SCALE, and that is vanilla rather than an
+     * omission. HealOrHarmMobEffect multiplies by `d`; SaturationMobEffect's
+     * applyInstantenousEffect is `foodData.eat(amplifier + 1, 1.0F)` and the
+     * argument is not in it. A splashed saturation feeds the same at the edge
+     * of the cloud as at the centre.
+     */
+    if (def.key === 'saturation') { v.feed?.(amplifier + 1); return true }
     const heal = def.key === 'instant_health'
-    const amount = (heal ? INSTANT_HEALTH_BASE : INSTANT_DAMAGE_BASE) * (2 ** Math.max(0, amplifier))
+    const base = (heal ? INSTANT_HEALTH_BASE : INSTANT_DAMAGE_BASE) * (2 ** Math.max(0, amplifier))
+    /*
+     * `int j = (int)(d * (double)(4 << i) + 0.5)`. On a non-negative value
+     * that is a floor of x + 0.5, not a round-half-even, which is why it is
+     * written out. At scale 1 the base is already an integer and this is the
+     * identity, so the drink path is bit-for-bit what it was.
+     */
+    const amount = Math.floor(scale * base + 0.5)
+    if (amount <= 0) return false
     if (heal === !v.undead) v.heal(amount)
     else v.damage(amount, 'magic')
+    return true
   }
 
   /*
@@ -820,6 +844,24 @@ export function createEffects(noa, { vitalsFor = () => null } = {}) {
 
   return {
     give, clear, active, has, level, instance,
+    /**
+     * Hand an entity one instant effect at a magnitude scale.
+     *
+     * The seam potions.js's splash needed. `give` cannot express it -- its
+     * `seconds` argument is meaningless for an effect vanilla never stores --
+     * and a sixth argument on `give` would be a parameter that four of the
+     * five callers must pass as 1. Keyed by `key` rather than by a registry
+     * row so callers do not need EFFECT_BY_KEY to call it.
+     *
+     * @returns {boolean} whether anything landed. False for an entity with no
+     *   vitals adapter (Evan), and false when the scale rounds the dose to
+     *   nothing -- which is the outer edge of a splash.
+     */
+    applyInstant(entity, key, amplifier = 0, scale = 1) {
+      const def = EFFECT_BY_KEY.get(key)
+      if (!def?.instant) return false
+      return applyInstant(entity, def, amplifier, scale)
+    },
     speedMultiplier, jumpMultiplier, gravityMultiplier, levitationSpeed,
     safeFallBlocks, damageTaken, damageBonus, digMultiplier, breathes,
     fireproof, swirlColor, swirlChance,

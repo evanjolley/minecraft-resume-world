@@ -587,11 +587,18 @@ const MAX_FLIGHT_SECONDS = 20
 
 /**
  * @param noa
- * @param deps inventory, effects, inputLock, authority, vitalsFor, sounds
+ * @param deps inventory, effects, inputLock, authority, sounds
+ *
+ * `vitalsFor` used to be in that list and is gone: the only thing this file
+ * ever did with health was the splash dose, and that now goes through
+ * effects.applyInstant, which has the adapter already. main.js still passes
+ * it, which is a no-op on a destructuring and is one line for whoever owns
+ * that file next.
+ *
  * @returns handles for the console and the test suite
  */
 export function installPotions(noa, {
-  inventory, effects, inputLock, authority, vitalsFor = () => null, sounds = null,
+  inventory, effects, inputLock, authority, sounds = null,
   swirl = null,
 } = {}) {
   const scene = noa.rendering.getScene()
@@ -664,15 +671,13 @@ export function installPotions(noa, {
    *                    edge of a splash heals less; it does not heal briefly,
    *                    because there is no "briefly" to heal for.
    *
-   * THE INSTANT PATH DOES NOT GO THROUGH effects.give, and that is the one
-   * place this file duplicates arithmetic that belongs to effects.js.
-   * `give(entity, key, seconds, amplifier)` has nowhere to put a magnitude
-   * scale, so a splashed Instant Damage at half potency cannot be expressed
-   * through it. effects.js is read-only this pass; the change it wants is a
-   * sixth argument on `give`, or an exported `applyInstant(entity, key, amp,
-   * scale)`. Reported rather than made. Note the drink path DOES go through
-   * `give` -- potency is exactly 1 there, so there is nothing to scale and no
-   * reason to take the private route.
+   * THE INSTANT PATH GOES THROUGH effects.applyInstant, which is the seam
+   * this file used to report as missing and used to route around with its own
+   * copy of `4 << amplifier`. `give(entity, key, seconds, amplifier)` still
+   * cannot express a magnitude scale -- `seconds` is meaningless for an effect
+   * vanilla never stores -- so effects.js grew the one extra entry point
+   * rather than a sixth argument nobody else would pass. The shift, the
+   * undead inversion and the `+ 0.5` truncation now have one owner.
    */
   function applyPotion(entity, id, potency = 1) {
     const applied = []
@@ -680,7 +685,7 @@ export function installPotions(noa, {
       const def = EFFECT_BY_KEY.get(e.key)
       const amp = e.amp ?? 0
       if (def?.instant) {
-        if (applyInstant(entity, e.key, amp, potency)) applied.push(e.key)
+        if (effects.applyInstant(entity, e.key, amp, potency)) applied.push(e.key)
         continue
       }
       const ticks = potency === 1 ? e.ticks : splashTicks(e.ticks, potency)
@@ -691,31 +696,19 @@ export function installPotions(noa, {
   }
 
   /*
-   * HealOrHarmMobEffect.applyInstantenousEffect, verbatim:
+   * HealOrHarmMobEffect.applyInstantenousEffect used to be reproduced here:
    *
    *   int j = (int)(d * (double)(4 << i) + 0.5);   // heal
    *   int j = (int)(d * (double)(6 << i) + 0.5);   // harm
    *
-   * `4 << amplifier` is a SHIFT, so Healing II is 8 health and not 6, and the
-   * shift is what effects.js writes as `2 ** amplifier` against the same base.
-   *
-   * Instant Damage goes through `v.damage(n, 'magic')`, which is survival.js's
-   * ONE GATE -- so a creative player is immune to a Potion of Harming for the
-   * same reason they are immune to lava, in the same line of code, and Evan
-   * (who has no vitals adapter) takes none of it because there is nothing to
-   * take it with.
+   * It lives in effects.js now, where the same arithmetic was already written
+   * for the drink path. What it means for THIS file is unchanged and is worth
+   * keeping: Instant Damage goes through `v.damage(n, 'magic')`, which is
+   * survival.js's ONE GATE -- so a creative player is immune to a Potion of
+   * Harming for the same reason they are immune to lava, in the same line of
+   * code, and Evan (who has no vitals adapter) takes none of it because there
+   * is nothing to take it with.
    */
-  function applyInstant(entity, key, amp, potency) {
-    const v = vitalsFor(entity)
-    if (!v) return false
-    const heal = key === 'instant_health'
-    const base = (heal ? 4 : 6) * (2 ** Math.max(0, amp))
-    const amount = Math.floor(potency * base + 0.5)
-    if (amount <= 0) return false
-    if (heal) v.heal(amount)
-    else v.damage(amount, 'magic')
-    return true
-  }
 
   /* ---------------- drinking ---------------- */
 
