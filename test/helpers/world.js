@@ -248,13 +248,34 @@ export function installVoxelRecorder(page) {
     window.__voxelLogOff = false
     const inner = noa.setBlock.bind(noa)
     noa.setBlock = (id, x, y, z) => {
-      if (!window.__voxelLogOff) {
-        const key = `${noa.worldName}|${x}|${y}|${z}`
-        // FIRST write only: the original is what we want back, not the
-        // second-to-last state a test passed through.
-        if (!log.has(key)) log.set(key, noa.getBlock(x, y, z))
-      }
-      return inner(id, x, y, z)
+      if (window.__voxelLogOff) return inner(id, x, y, z)
+      const key = `${noa.worldName}|${x}|${y}|${z}`
+      const prev = noa.getBlock(x, y, z)
+      const out = inner(id, x, y, z)
+      /*
+       * RECORD ONLY WHAT ACTUALLY CHANGED, and this is the whole safety of
+       * the thing.
+       *
+       * `noa.getBlock` answers 0 for a chunk that is not resident, and
+       * `noa.setBlock` into one is a silent no-op. Recording the read alone
+       * therefore files "this coordinate used to be air" about terrain nobody
+       * could see, and the restore later writes that air into solid ground
+       * once the chunk has loaded -- which is a hole punched by the thing
+       * whose job is to fill them. Comparing the voxel before and after the
+       * write costs one more read and reports the truth: a dropped write
+       * changes nothing and is not recorded, and neither is a write of the id
+       * that was already there.
+       *
+       * It also survives the five src/ wrappers underneath this one, which
+       * are free to store something other than the id they were handed.
+       * "Different afterwards" is true of those; "equals the id I passed" is
+       * not.
+       *
+       * FIRST change only: the original is what we want back, not the
+       * second-to-last state a test passed through.
+       */
+      if (noa.getBlock(x, y, z) !== prev && !log.has(key)) log.set(key, prev)
+      return out
     }
   })
 }
@@ -1202,6 +1223,17 @@ export const BUILT_WORLD = 'claude-opus-5-1'
  */
 export async function enterWorld(page, name) {
   const res = await page.evaluate(n => window.game.dimensions.enter(n), name)
+  /*
+   * ALREADY THERE IS NOT A FAILURE, and this line is why it has to be said.
+   *
+   * `dimensions.enter` refuses a move to the world you are standing in, which
+   * is right for a chat command and wrong for a helper whose job is "be in
+   * this world when I return". Half a dozen specs open or close a test with
+   * `enterWorld(page, 'overworld')` to come home, and the moment resetWorld
+   * started bringing them home first, every one of those lines threw on a
+   * post-condition that was already true.
+   */
+  if (!res.ok && /^Already in the /.test(res.error ?? '')) return res
   if (!res.ok) throw new Error(`enterWorld(${name}): ${res.error}`)
   await waitTicks(page, 20)
   await waitFrames(page, 10)

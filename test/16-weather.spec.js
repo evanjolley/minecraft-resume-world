@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.js'
 import {
   chatCommand, grantOp, useGamemode, teleport, look, waitTicks, waitFrames,
-  measureFps, OP_PASSPHRASE,
+  measureFps, settleOnGround, OP_PASSPHRASE, SURFACE_Y,
 } from './helpers/world.js'
 import { shot } from './helpers/shots.js'
 
@@ -389,6 +389,20 @@ test.describe('rain', () => {
         return { under, above, strays: strays.slice(0, 5), sheltered: rain.sheltered }
       }, roof)
 
+      /*
+       * THE SAMPLE FIRST, or the claim below is vacuous.
+       *
+       * `above` was computed and then interpolated into a failure message and
+       * never asserted, which made "no rain under the roof" true of a world
+       * with no rain in it at all. Every way the rig can fail silently --
+       * weather never started, the mesh has no live slots, the player is not
+       * where the test thinks, the whole footprint filter rejects everything
+       * -- lands on `under === 0` and passed. The sibling test at :301 guards
+       * itself this way already; this one did not.
+       */
+      expect(sheltered.above,
+        'no drops landed on the roof either, so the count below proves nothing')
+        .toBeGreaterThan(0)
       expect(sheltered.under, `${sheltered.under} drops under the roof`
         + ` (${sheltered.above} landing on top of it): ${JSON.stringify(sheltered.strays)}`)
         .toBe(0)
@@ -508,7 +522,16 @@ test.describe('the sky from elsewhere', () => {
     await shot(page, 'clouds-above')
 
     await useGamemode(page, 'survival')
-    await teleport(page, 0, 68, 0)
+    /*
+     * SURFACE_Y, not 68. 68 was six blocks over an island whose sea level was
+     * y=64, and the overworld has been a superflat with its grass at y=135 for
+     * a while -- so this put a SURVIVAL player 64 blocks into the void and
+     * photographed the sunset from a camera that was falling out of the world.
+     * The picture is meant to be of a cloud layer seen from under it, which
+     * means standing on the ground.
+     */
+    await teleport(page, 0, SURFACE_Y + 1, 0)
+    await settleOnGround(page)
     // 12200 is just past sunset, where the cloud tint and the sky gradient
     // disagree most -- the frame that catches a cloud layer lit by the wrong
     // half of the day.

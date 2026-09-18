@@ -37,7 +37,14 @@ import {
  * at spawn -- but written down they can be handed to the terrain undo fixture,
  * which is what keeps a 20x10 stone rig from being the next spec's problem.
  *
- * All of it sits inside the 80-block island and above the grass at y=64.
+ * WHERE IT SITS, and the comment that used to be here was two worlds out
+ * of date. There is no 80-block island and no grass at y=64; the overworld
+ * is a superflat with its grass at y=135 and nothing above it. Both rigs
+ * below are in open air BELOW that floor, which works only because noa's
+ * vertical add distance from spawn still reaches them. RIG at :74 was
+ * migrated up and these two were not, so they are a trip wire rather than
+ * a choice -- trim chunkAddDistance and they start writing into unloaded
+ * chunks, which noa drops without a word.
  */
 // 340 cells, 20 a row. It was 14 rows for the 280 slab and stair variants and
 // held exactly them, so the five torch ids overflowed it the day they landed;
@@ -104,8 +111,21 @@ test.describe('non-cube blocks', () => {
 
       expect(placement.bad, `${placement.bad.length} of ${placement.count} ids did not`
         + ` round-trip: ${placement.bad.slice(0, 5).join(' | ')}`).toEqual([])
-      // Sanity on the fixture itself: 15 rows of 20 is the box kept above, and
-      // a table that outgrows it would silently leave blocks behind.
+      /*
+       * Sanity on the fixture itself, and it needs BOTH ends.
+       *
+       * The upper bound is the one that has earned its keep -- 15 rows of 20
+       * is the box kept above, and a table that outgrows it silently leaves
+       * blocks behind. The lower bound is the one that was missing: `bad` is
+       * built by a loop over `defs`, and a `defs` that came back empty gives
+       * `bad === []` and `count === 0`, which satisfies both the round-trip
+       * assertion above and an upper bound. An empty shape table is exactly
+       * the regression this file exists to catch, and it was the one input
+       * that made every assertion in the test vacuously true.
+       */
+      expect(placement.count,
+        'no non-cube blocks were placed at all, so the round-trip above'
+        + ' proved nothing').toBeGreaterThan(100)
       expect(placement.count,
         `${placement.count} non-cube blocks, more than the scratch box holds`)
         .toBeLessThanOrEqual(IDS_AT.wide * IDS_AT.deep)

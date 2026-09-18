@@ -343,12 +343,21 @@ test.describe('sounds', () => {
      * The mapping asserted through the actual graph: a real fall onto a real
      * leaf block, captured as whichever sample started.
      *
-     * The drop column rather than spawn, for the reason helpers/world.js
-     * gives -- spawn is under a dark forest canopy. Two blocks is enough to
-     * beat LAND_MIN_SPEED and nowhere near fall damage, so nothing else fires.
+     * The drop column rather than spawn, because every other fall test in the
+     * suite uses it and a column two specs disagree about is a column that
+     * gets built on. Two blocks is enough to beat LAND_MIN_SPEED and nowhere
+     * near fall damage, so nothing else fires.
+     *
+     * THE LEAVES GO IN THE COLUMN THE PLAYER ACTUALLY LANDS IN, and the fact
+     * that this needs saying is the whole history of the test. It placed them
+     * at x=+4 and dropped the player at DROP_X, which is -4.5: the literal
+     * did not follow when the terrain stopped being mirrored in X. The player
+     * landed on plain grass, `step/grass` played because grass is grass, and
+     * the test went green without ever touching a leaf block. Derived from
+     * DROP_X/DROP_Z rather than written out, so it cannot come apart again.
      */
     const leaves = await page.evaluate(() => window.game.itemId('oak_leaves'))
-    const ground = [4, SURFACE_Y - 1, 0]
+    const ground = [Math.floor(DROP_X), SURFACE_Y - 1, Math.floor(DROP_Z)]
     const was = await getBlock(page, ...ground)
     await setBlock(page, leaves, ...ground)
 

@@ -217,11 +217,33 @@ test.describe('an entity is shaded by two fixed lights, not one', () => {
         + ` ${s.minusZ.toFixed(4)}`).toBeLessThan(0.06)
     })
 
-  test('the arithmetic this rig is supposed to implement', () => {
+  test('the arithmetic this rig is supposed to implement', async ({ page }) => {
     /*
-     * Pure, no browser. The pixel tests above can only say "these differ";
-     * this says by how much they are MEANT to differ, and it is the number
-     * that makes 1.12 a floor rather than a guess.
+     * IT ASKS THE ENGINE FOR ITS INPUTS FIRST, and it did not use to, which
+     * made it a test of this file by this file.
+     *
+     * `mixLight` is built out of D0, D1, FLOOR and POWER, all four retyped at
+     * the top of this spec. D0 and D1 are pinned against `scene.lights` by
+     * the rig test above, so a retune of the directions fails there. FLOOR
+     * and POWER were pinned against nothing: src/entityLight.js could set
+     * ENTITY_FLOOR to 0.9 and every number below would still come out 0.7395
+     * and 0.4970, because every number below is arithmetic over constants
+     * this file owns. The test had no browser in its signature at all.
+     *
+     * The split is reachable. entityLight.js writes ENTITY_DIFFUSE into the
+     * skin material's diffuseColor and defines ENTITY_FLOOR as 1 minus it, so
+     * one number off the live material pins both.
+     */
+    const diffuse = await page.evaluate(() => window.game.skinMaterial.diffuseColor.r)
+    expect(diffuse, 'the rig no longer splits the light the way POWER says')
+      .toBeCloseTo(POWER, 5)
+    expect(1 - diffuse, 'the rig no longer leaves the floor FLOOR says')
+      .toBeCloseTo(FLOOR, 5)
+
+    /*
+     * The pixel tests above can only say "these differ"; this says by how
+     * much they are MEANT to differ, and it is the number that makes 1.12 a
+     * floor rather than a guess.
      *
      * A face pointing along Z gets 0.568 of the light power, one pointing
      * along X gets 0.162, and after `* 0.6 + 0.4` that is 0.7395 against
