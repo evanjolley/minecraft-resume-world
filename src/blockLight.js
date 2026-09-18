@@ -773,7 +773,26 @@ export function installBlockLight(noa, { ids = {} } = {}) {
       for (let i = 0; i < reseed.length; i += 3) push(reseed[i], reseed[i + 1], reseed[i + 2])
     }
 
-    return { DEFAULT, store, offCount, bufFor, chunkIsOff, get, set, push, propagate, remove, give }
+    /**
+     * The gate's counter, beside a fresh recount of the same buffer.
+     *
+     * A TEST SEAM, and the only honest way to assert the one invariant this
+     * channel has that nothing on screen can be trusted to show: `offCount`
+     * IS the number of voxels off the DEFAULT. Undercount it and the mesh
+     * pass silently skips a chunk that needed the sky lane written; the JS is
+     * all correct and the screen renders daylight through a roof. Every other
+     * way of reading this is a guess at a closure variable.
+     */
+    function audit(ci, cj, ck) {
+      const k = ckey(ci, cj, ck)
+      const buf = store.get(k)
+      if (!buf) return { counted: offCount.get(k) ?? null, actual: null }
+      let n = 0
+      for (let i = 0; i < buf.length; i++) if (buf[i] !== DEFAULT) n++
+      return { counted: offCount.get(k) ?? 0, actual: n }
+    }
+
+    return { DEFAULT, store, offCount, bufFor, chunkIsOff, get, set, push, propagate, remove, give, audit }
   }
 
   /*
@@ -912,13 +931,43 @@ export function installBlockLight(noa, { ids = {} } = {}) {
     const buf = skyCh.bufFor(k0, ci, cj, ck)
     const aboveLoaded = !!world._storage.getChunkByIndexes(ci, cj + 1, ck)
     /*
-     * Counted over TRANSPARENT voxels only, and that is the difference
-     * between a useful gate and a useless one. A solid stone voxel stores 0
-     * because the removal walk must not read a stale 15 out of a wall -- but
-     * the mesher never samples a solid voxel, so a chunk of solid stone has
-     * nothing for the sky lane to write and must not be flagged as if it did.
-     * Count the solids and every chunk with ground in it pays the full
-     * readback forever.
+     * EVERY voxel that is not at the DEFAULT, solids included, and the
+     * "included" is a fix rather than a preference.
+     *
+     * This used to count TRANSPARENT voxels only, on the reasoning that the
+     * mesher never samples a solid voxel so a chunk of solid stone has
+     * nothing for the sky lane to write. The reasoning is right about what
+     * the GATE wants and wrong about what the COUNTER is: `set` above is the
+     * only other writer of `offCount`, and it adjusts on `was === DEFAULT` /
+     * `v === DEFAULT` with no idea whether the voxel is solid. Seeding with a
+     * transparent-only total and then maintaining it with an all-voxel rule
+     * leaves `offCount` permanently BELOW the number it is supposed to be, by
+     * however many solids the chunk was generated with.
+     *
+     * MEASURED, not reasoned about: on a surface chunk at spawn the counter
+     * read 4,246 against 20,637 voxels actually off the default -- an offset
+     * of 16,391, which is that chunk's solid population. See
+     * `test/96-sky-gate.spec.js`, which asserts the two agree.
+     *
+     * WHY IT MATTERS, since the offset is constant and so mostly invisible:
+     * `chunkIsOff` is the gate `writeVertexLight` and `boxIsShaded` sit
+     * behind, and a FALSE answer means the sky lane is not written for that
+     * mesh at all -- which, because the lane is stored inverted, renders as a
+     * fully daylit surface. An undercount can reach 0 while real shadow
+     * remains; an overcount only ever costs work. This world cannot currently
+     * exhibit it (its terrain is a thin shell, so no chunk is solid enough
+     * for the offset to swallow the count) and a world with ordinary
+     * Minecraft depth would: a cave hollowed inside an all-stone chunk adds
+     * nothing to the counter, because a mined voxel underground stays at sky
+     * 0 and never passes through `set` at all.
+     *
+     * The cost the old comment was protecting against is real in principle
+     * and is not paid here: the gate is `> 0`, and on this world every chunk
+     * that gains solids to its count was already over zero without them --
+     * 20,487 where it used to say 4,246, same answer. A world of deep stone
+     * would see chunks flip from "skip" to "sieve", and the sieve under the
+     * gate, `boxSkyValue`, is what carries the outdoor case anyway. Correct
+     * and occasionally slower beats fast and occasionally roofless.
      */
     let off = 0
     for (let i = 0; i < size; i++) {
@@ -1723,6 +1772,11 @@ export function installBlockLight(noa, { ids = {} } = {}) {
      * a buffer for it and the old single number meant exactly that.
      */
     chunkCount: () => new Set([...blockCh.store.keys(), ...skyCh.store.keys()]).size,
+    /** Test seam: `{counted, actual}` for the sky channel's per-chunk gate
+     *  counter at the chunk containing this voxel. They must be equal; see
+     *  `audit` and `test/96-sky-gate.spec.js`. */
+    skyGateAudit: (x, y, z) =>
+      skyCh.audit(cdiv(Math.floor(x)), cdiv(Math.floor(y)), cdiv(Math.floor(z))),
     /** Daylight the terrain shader is being handed this tick. Test seam --
      *  the only honest way to read it is from the module that binds it. */
     terrainLight: () => terrainLevel,
