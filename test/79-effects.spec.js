@@ -1,7 +1,8 @@
 import { test, expect } from './fixtures.js'
 import {
   waitTicks, measureSpeed, measureJumpApex, look, HEADING, chatCommand,
-  OP_PASSPHRASE, teleport, settleOnGround, SPAWN,
+  OP_PASSPHRASE, teleport, settleOnGround, SPAWN, useGamemode, doubleTapFly,
+  isFlying,
 } from './helpers/world.js'
 import { shot, shotRegion } from './helpers/shots.js'
 
@@ -23,6 +24,10 @@ import { shot, shotRegion } from './helpers/shots.js'
 
 const WALK = 4.317
 const SPRINT = 5.612
+/* MC.FLY_SPEED, restated: 0.05 b/tick of acceleration against a 0.91
+ * retention, measured in game at 10.89 rather than the 11.1 the closed form
+ * gives. See src/physics.js's table for why. */
+const FLY = 10.89
 const JUMP_APEX = 1.2522
 
 /* Vanilla's own values, restated here rather than imported, so that moving a
@@ -138,6 +143,65 @@ test.describe('movement', () => {
       expect(target, `Speed II maxSpeed was ${target.toFixed(4)}, vanilla ${want.toFixed(4)}`)
         .toBeCloseTo(want, 3)
       expect(target).not.toBeCloseTo(WALK * 1.2 * 1.2, 2)
+    })
+
+  /*
+   * FLIGHT IS A SECOND GEAR CHANGE AND NOTHING COVERED IT.
+   *
+   * `Player.travel` multiplies `flyingSpeed` by the movement-speed attribute,
+   * so Speed makes creative flight faster in the real game -- src/physics.js
+   * says so in a comment next to the line that scales `move.maxSpeed`. While
+   * you are flying, `move.maxSpeed` is a field nothing reads: createDrive
+   * zeroes moveForce for the duration of a flight and Minecraft's own
+   * recurrence drives the horizontal off the gear handed to `flight.tick`.
+   * That argument was passed unscaled, so the comment was true of a number
+   * and false of the player.
+   *
+   * MEASURED FROM THE AIR, high over the superflat, because the thing being
+   * measured only exists while flying. Forty blocks up on the describe's own
+   * +X heading gives 127 blocks of empty sky against the seventeen a
+   * measurement covers, so the number comes back from flight rather than from
+   * a collision.
+   */
+  test('Speed I scales creative flight too, which is the gear nothing reads maxSpeed for',
+    async ({ page }) => {
+      const flySpeed = async () => {
+        await teleport(page, SPAWN[0], SPAWN[1] + 40, SPAWN[2])
+        await waitTicks(page, 2)
+        if (!await isFlying(page)) await doubleTapFly(page)
+        expect(await isFlying(page), 'flight is on before measuring it').toBe(true)
+        /*
+         * A LONG WARM-UP, and it is the measurement rather than a fudge.
+         * Flight's horizontal is Minecraft's 0.91-per-tick retention, which
+         * resampled onto noa's 30 Hz is 0.9396 and needs about 75 ticks to
+         * come within a percent of terminal. measureSpeed's default 900 ms is
+         * 27 of them, and a run that starts 81% of the way there measures
+         * 9.82 against a true 10.89 -- which is a stopwatch started too early
+         * and not a slow player. Four seconds puts the error under a
+         * thousandth.
+         */
+        return measureSpeed(page, ['KeyW'], { warmupMs: 4000 })
+      }
+
+      await useGamemode(page, 'creative')
+      const plain = await flySpeed()
+      expect(await give(page, 'speed', 60, 0)).toBe(true)
+      await waitTicks(page, 2)
+      const fast = await flySpeed()
+
+      // MC.FLY_SPEED is 10.89 and Speed I is ADD_MULTIPLIED_TOTAL's 1.2 on it.
+      const want = FLY * (1 + SPEED_PER_LEVEL)
+      expect(plain, `plain flight was ${plain.toFixed(3)} b/s, vanilla ${FLY}`)
+        .toBeGreaterThan(FLY * 0.94)
+      expect(fast, `Speed I flight was ${fast.toFixed(3)} b/s, vanilla ${want.toFixed(3)}`)
+        .toBeGreaterThan(want * 0.94)
+      expect(fast).toBeLessThan(want * 1.06)
+      // The failure this was written for: the unscaled gear, which measures as
+      // ordinary flight with an effect icon on the HUD.
+      expect(fast, 'Speed I flight is not plain flight').toBeGreaterThan(plain * 1.1)
+
+      await page.evaluate(() => window.game.effects.clear(window.noa.playerEntity))
+      await useGamemode(page, 'survival')
     })
 
   test('Slowness IV cuts the walk to 40%, and Slowness VII pins you rather than reversing you',

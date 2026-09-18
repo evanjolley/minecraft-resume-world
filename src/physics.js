@@ -823,7 +823,8 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
      * multiplied by the movement-speed attribute in Player.travel, so Speed
      * makes creative flight faster in the real game as well.
      */
-    move.maxSpeed *= effects.speedMultiplier(noa.playerEntity)
+    const speedEffect = effects.speedMultiplier(noa.playerEntity)
+    move.maxSpeed *= speedEffect
 
     /*
      * Jump Boost, as a scale on the CALIBRATED impulse rather than a recompute
@@ -841,7 +842,24 @@ export function installSpeedModes(noa, move, survival, fluids = null) {
      * -- landing clears it -- which is why the ground branch below re-reads
      * flight.flying rather than assuming an else.
      */
-    flight.tick(dt, S, flySpeed)
+    /*
+     * THE SCALED GEAR, not the raw one, and this line is the whole of a bug
+     * that the comment above described as already fixed.
+     *
+     * `move.maxSpeed` is scaled by Speed and Slowness a few lines up and its
+     * comment says "FLIGHT IS SCALED TOO, deliberately" -- and it was, on a
+     * field nothing reads while you are flying. createDrive zeroes moveForce
+     * for the duration of a flight, so noa's movement component never pushes
+     * and never consults maxSpeed; the number that actually moves a flier is
+     * the one handed to flight.tick, and that was the unscaled local. Two
+     * writers, one fact, and the writer with the comment on it was the one
+     * nobody read.
+     *
+     * Kept as a separate argument rather than re-read off move.maxSpeed
+     * inside flight.tick, for the reason tick's own docblock gives: the
+     * sprint gear change has to land on the tick it happens.
+     */
+    flight.tick(dt, S, flySpeed * speedEffect)
 
     /*
      * Ice, slime and soul sand. The lookup misses for every ordinary block,
