@@ -464,6 +464,108 @@ test.describe('the landscape', () => {
     }
   })
 
+  /*
+   * THE WALK IS LIT, AND EVERY LAMP IS A POST.
+   *
+   * src/builds/path.js spaces a three-block post with a torch on it every
+   * eighteen to twenty-six blocks, ALTERNATING SIDES, and the world had ONE
+   * lamp in it -- at the very first spine sample, four rows from the north
+   * edge, behind the visitor and outside the walk. The offset was
+   * `(side > 0 ? wr : -wl) + 1.8`, which is 1.8 blocks outside the right edge
+   * and 0.8 blocks inside the LEFT one, so every left-hand candidate landed on
+   * the path, was correctly refused, and never flipped `side` back. One
+   * refusal wedged it for the remaining 410 blocks.
+   *
+   * WHY A COUNT AND NOT A SCREENSHOT: the failure is invisible by day and the
+   * night frames this file takes are of places, not of a census. A lamp
+   * missing from a bend reads as a dark bend. Nineteen posts spread over 250
+   * rows is a claim a picture cannot make.
+   *
+   * AND THE SIDES ARE THE ASSERTION THAT DISCRIMINATES. A regression to the
+   * old expression puts every post within a block of the centreline, so the
+   * signed offset is what fails, with the offsets in the message.
+   */
+  test('the walk is lit on both sides, and every lamp is a post',
+    async ({ page }) => {
+      test.setTimeout(120_000)
+      await waitTicks(page, 5)
+
+      const lamps = await page.evaluate(() => {
+        const v = window.game.voxelAt
+        const t = window.game.terrain
+        const torch = window.game.ids.torch
+        const keyOf = new Map()
+        const key = (id) => {
+          let k = keyOf.get(id)
+          if (k === undefined) { k = window.game.blockKey(id); keyOf.set(id, k) }
+          return k
+        }
+        const out = []
+        let scanned = 0
+        for (let pz = 0; pz < t.depth; pz++) {
+          for (let px = 0; px < t.width; px++) {
+            for (let y = 131; y <= 200; y++) {
+              scanned++
+              if (v(px - t.originX, y, pz - t.originZ) !== torch) continue
+              const below = []
+              for (let k = 1; k <= 3; k++) {
+                below.push(key(v(px - t.originX, y - k, pz - t.originZ)))
+              }
+              out.push({ px, pz, y, below })
+            }
+          }
+        }
+        return { out, scanned }
+      })
+
+      // The sample, before the claim. A scan of nothing finds no bad posts.
+      expect(lamps.scanned).toBeGreaterThan(1_000_000)
+      expect(lamps.out.length,
+        'the path has no lamps on it').toBeGreaterThanOrEqual(12)
+
+      const malformed = lamps.out.filter(l =>
+        l.below.some(k => k !== 'stripped_oak_log'))
+      expect(malformed.length,
+        `a torch with something other than a post under it: ${JSON.stringify(malformed)}`)
+        .toBe(0)
+
+      /* WHICH SIDE EACH ONE IS ON, measured against the spine's own normal --
+       * the same vector src/builds/path.js offsets along, so this is the
+       * quantity that was wrong rather than a proxy for it. */
+      const samples = sampleSpine(SPINE)
+      const offsets = lamps.out.map(({ px, pz }) => {
+        let best = samples[0], bestD = Infinity
+        for (const sp of samples) {
+          const d = Math.hypot(sp.x - px, sp.z - pz)
+          if (d < bestD) { bestD = d; best = sp }
+        }
+        return (px - best.x) * best.nx + (pz - best.z) * best.nz
+      })
+      const left = offsets.filter(d => d < 0).length
+      const right = offsets.filter(d => d > 0).length
+      expect(left, `lamps by side: ${JSON.stringify(offsets.map(d => +d.toFixed(1)))}`)
+        .toBeGreaterThanOrEqual(5)
+      expect(right, `lamps by side: ${JSON.stringify(offsets.map(d => +d.toFixed(1)))}`)
+        .toBeGreaterThanOrEqual(5)
+      /* Beside the walk, not on it and not out in the field: the path is at
+       * most 2.15 blocks wide either side of the centreline and the offset is
+       * that edge plus 1.8. */
+      for (const d of offsets) {
+        expect(Math.abs(d), `a lamp ${d.toFixed(1)} from the centreline`)
+          .toBeGreaterThan(2)
+        expect(Math.abs(d)).toBeLessThan(6)
+      }
+
+      /* AND SPREAD DOWN THE WHOLE WALK. One lamp at the top of the map and
+       * nothing after it is exactly the bug, and a bare count of 12 clustered
+       * in the first fifty rows would pass everything above. */
+      const rows = lamps.out.map(l => l.pz)
+      expect(Math.min(...rows), `lamps run z ${Math.min(...rows)}..${Math.max(...rows)}`)
+        .toBeLessThan(60)
+      expect(Math.max(...rows), `lamps run z ${Math.min(...rows)}..${Math.max(...rows)}`)
+        .toBeGreaterThan(200)
+    })
+
   test('the crossing onto the island is built of the same things as the bridge',
     async ({ page }) => {
       await waitTicks(page, 5)
@@ -708,6 +810,30 @@ test.describe('the walk, biome by biome', () => {
      * the treeline is real up there and it is in the way. */
     await frameAt(page, '91-6-peaks-foot', [74, 246], { heading: WEST, pitch: -0.28 })
     await frameAt(page, '91-6-climb', [168, 236], { heading: WEST })
+  })
+
+  /*
+   * AND THE SAME WALK AT NIGHT, which is the only condition the lamps are for
+   * and therefore the only frame that can show they are there.
+   *
+   * Taken after the count in 'the walk is lit on both sides' rather than
+   * instead of it: the census proves nineteen posts exist and are spread down
+   * the map, and these two frames prove the light they cast lands on the
+   * ground somebody is walking on. While the world had one lamp in it both of
+   * these came back as an unlit path, and nothing in the suite said so.
+   *
+   * setTime rather than waiting out a day. resetWorld puts the clock back.
+   */
+  test('the lamps at night, from the path', async ({ page }) => {
+    test.setTimeout(180_000)
+    await page.evaluate(() => window.game.sky.setTime(18000))
+    await waitTicks(page, 8)
+
+    /* The first lamp on the walk, from spawn, looking back up the path. */
+    await frameAt(page, '91-lamp-night-spawn', [128, 12], { heading: N, pitch: -0.02 })
+    /* And one on the Omaha bend, which is the first one a visitor walking
+     * south actually passes. */
+    await frameAt(page, '91-lamp-night-bend', [110, 44], { heading: N, pitch: -0.02 })
   })
 
   test('every transition, from the ground', async ({ page }) => {
