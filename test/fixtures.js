@@ -51,7 +51,25 @@ const worldFixture = [async ({ browser }, use) => {
   // Snapshotted here rather than read in the first spec, so "did the world
   // load clean" does not silently depend on file ordering.
   const bootErrors = errors.list()
-  await use({ page, errors, bootErrors })
+  /*
+   * Boot-time facts that a later test CHANGES AND CANNOT CHANGE BACK.
+   *
+   * `dimensions.loaded` is the case that forced this. It is a lazy build
+   * cache, and the claim test/51-worlds.spec.js makes about it -- "booting
+   * costs no fetch, only the world you are in has been built" -- is a
+   * statement about the boot, not about this instant. Read live, it was true
+   * only while 51 happened to be the first spec to touch a second world;
+   * 01-world, 85-millard-north and 91-biomes all enter the archive, and any
+   * of them running first turned a real assertion into a file-ordering one.
+   *
+   * Snapshotted rather than reset between tests on purpose: unloading a
+   * built world would throw away the meshing the next spec to enter it pays
+   * for, which is the expense the lazy cache exists to avoid.
+   */
+  const bootInfo = {
+    loadedWorlds: await page.evaluate(() => window.game.dimensions.loaded),
+  }
+  await use({ page, errors, bootErrors, bootInfo })
   await page.close()
 }, { scope: 'worker' }]
 
@@ -70,6 +88,9 @@ export const test = base.extend({
 
   /** Errors seen between navigation and a fully meshed, standing world. */
   bootErrors: async ({ world }, use) => use(world.bootErrors),
+
+  /** What the boot itself produced, for claims about the boot. See above. */
+  bootInfo: async ({ world }, use) => use(world.bootInfo),
 
   /*
    * Voxel undo. resetWorld deliberately does NOT regenerate terrain -- that

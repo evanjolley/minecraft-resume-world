@@ -93,7 +93,7 @@ test.afterEach(async ({ page }) => {
 })
 
 test('the registry knows four worlds and the bare superflat is the one you boot into',
-  async ({ page }) => {
+  async ({ page, bootInfo }) => {
     /*
      * THE ORDER IS THE TABLE'S, not sorted: `names` is Object.keys(DIMENSIONS)
      * and this is the row order a reader of src/dimensions.js sees. Asserting
@@ -115,8 +115,16 @@ test('the registry knows four worlds and the bare superflat is the one you boot 
      * the default. Only the world you are in has been built; the other two
      * rows are data until someone asks for them.
      */
-    const loaded = await page.evaluate(() => window.game.dimensions.loaded)
-    expect(loaded).toEqual(['overworld'])
+    /*
+     * THE BOOT'S answer, not this instant's. `dimensions.loaded` is a cache
+     * that only ever grows, so read live this asserted "no spec before me in
+     * the run has entered another world" -- which is a fact about file
+     * ordering and not about the registry. 01-world, 85-millard-north and
+     * 91-biomes all enter the archive, and this went red whenever one of them
+     * ran first. `bootInfo` is captured in test/fixtures.js the moment the
+     * page finishes booting, which is the only moment the claim is about.
+     */
+    expect(bootInfo.loadedWorlds).toEqual(['overworld'])
   })
 
 test('switching to the mountains loads ITS asset, not another world\'s',

@@ -210,8 +210,89 @@ export async function waitForWorld(page) {
   }, null, { timeout: 30_000, polling: 50 })
 
   await enableScriptedCamera(page)
+  await installVoxelRecorder(page)
   await page.evaluate(() => document.getElementById('game').focus())
   return page
+}
+
+/**
+ * Record every voxel a test writes, so resetWorld can put them back.
+ *
+ * WHY this exists when `terrain.keep` already does: `terrain.keep` is opt-in,
+ * and the six known cross-spec failures in this suite are all a spec that
+ * forgot it. A spec cannot forget this one. The `terrain` fixture stays --
+ * it undoes at the END of the test that made the mess, which is where a
+ * screenshot taken by the NEXT test in the same file wants it -- and this is
+ * the net underneath it. By the time reset runs, anything `terrain.keep`
+ * already restored reads as unchanged here and costs a comparison.
+ *
+ * `noa.setBlock` is the single funnel: src/authority.js:13 says nothing in
+ * the game writes a voxel behind it, and five modules in src/ already wrap it
+ * the same way (blockMeshes, fluids, paintingArt, signText). This wrap is
+ * installed LAST, so it sees every write including the ones those layers make
+ * on their own account -- a flowing fluid's spread, a painting's backing.
+ *
+ * Keyed by worldName, because a voxel written in the Nether is not a voxel in
+ * the overworld and restoring it by coordinate alone would punch a hole in a
+ * world that never had one.
+ */
+export function installVoxelRecorder(page) {
+  return page.evaluate(() => {
+    if (window.__voxelLog) return
+    const noa = window.noa
+    const log = new Map()
+    window.__voxelLog = log
+    // A flag rather than uninstalling: resetWorld's own restore writes go
+    // through this same wrapper, and recording them would refill the map with
+    // the values we just put back.
+    window.__voxelLogOff = false
+    const inner = noa.setBlock.bind(noa)
+    noa.setBlock = (id, x, y, z) => {
+      if (!window.__voxelLogOff) {
+        const key = `${noa.worldName}|${x}|${y}|${z}`
+        // FIRST write only: the original is what we want back, not the
+        // second-to-last state a test passed through.
+        if (!log.has(key)) log.set(key, noa.getBlock(x, y, z))
+      }
+      return inner(id, x, y, z)
+    }
+  })
+}
+
+/**
+ * Put back every voxel written since the last reset, and report how many were
+ * still wrong -- which is the count of blocks a spec leaked.
+ *
+ * Restored in REVERSE insertion order for the same reason the `terrain`
+ * fixture unwinds its snapshots in reverse: two tests that touched the same
+ * coordinate have to be undone newest-first or the older original loses.
+ */
+export function restoreVoxels(page) {
+  return page.evaluate(() => {
+    const noa = window.noa
+    const log = window.__voxelLog
+    if (!log) return 0
+    const world = noa.worldName
+    let leaked = 0
+    window.__voxelLogOff = true
+    try {
+      for (const [key, id] of [...log].reverse()) {
+        const [w, x, y, z] = key.split('|')
+        // Another world's edits are dropped rather than applied here: changing
+        // worldName re-requests every chunk from the generator (see
+        // src/dimensions.js), so they are already gone.
+        if (w !== world) continue
+        const [a, b, c] = [+x, +y, +z]
+        if (noa.getBlock(a, b, c) === id) continue
+        leaked++
+        noa.setBlock(id, a, b, c)
+      }
+    } finally {
+      window.__voxelLogOff = false
+      log.clear()
+    }
+    return leaked
+  })
 }
 
 /** Reload and wait it out. The whole point is that the module graph is rebuilt
@@ -299,9 +380,33 @@ export function waitFrames(page, n = 1) {
  * Put the world back to a known state between tests.
  *
  * This is the price of sharing one booted page: booting costs ~8 s under
- * software GL, and 30 tests x 8 s is a suite nobody runs. Everything a test
- * can mutate is listed here; anything NOT listed (broken voxels) is the
- * individual test's job via `restoreRegion`.
+ * software GL, and 30 tests x 8 s is a suite nobody runs.
+ *
+ * THE CONTRACT, in the order it runs. Anything global a test can reach is
+ * listed here, and the rule for adding to it is that state which leaks
+ * invisibly must be DERIVED rather than enumerated -- see gameruleNames,
+ * which exists because a hardcoded list of three rules silently missed
+ * `doWeatherCycle` for as long as weather has existed.
+ *
+ *   held keys and mouse buttons   the open inventory screen
+ *   the world you are standing in (leaveWorld)
+ *   every voxel any test wrote    (installVoxelRecorder / restoreVoxels)
+ *   op, every gamerule, weather, game mode
+ *   chat, the pause menu, the F3 overlay and its two sub-toggles
+ *   health/hunger/fall tracking, inventory, carried stack, dropped items
+ *   the fluid queue AND the fluid engine's on switch
+ *   status effects, the terrain animation's pause flag, furnace contents
+ *   position, velocity, camera, pointer state, time of day, perspective
+ *
+ * Flight, no-clip and gravityMultiplier are restored transitively: /deop
+ * drops you to adventure, and gamemode.js hands the new capability row to
+ * flight.setAbilities, which cancels a flight and puts gravity back. Worth
+ * knowing, because it means the deop line is load-bearing for physics and
+ * not only for privilege.
+ *
+ * STILL NOT RESTORED, and each is a live handoff rather than an oversight:
+ * `weather.rainLevel` fades over five seconds instead of snapping (no seam
+ * in src/weather.js), NPC state, and paintings.
  */
 export async function resetWorld(page) {
   for (const k of ALL_KEYS) await page.keyboard.up(k).catch(() => {})
@@ -314,6 +419,29 @@ export async function resetWorld(page) {
   if (await page.evaluate(() => window.game.inventory.open)) {
     await page.keyboard.press('Escape')
   }
+
+  /*
+   * HOME, first, because everything below it is measured in a world.
+   *
+   * This used to be every spec's own job via `leaveWorld` in an afterEach,
+   * and three specs -- 01-world, 85-millard-north, 91-biomes -- either never
+   * wrote one or skipped it on a failed assertion, which is what left
+   * test/51-worlds.spec.js standing in the archive asserting the overworld.
+   * An afterEach cannot be the contract here: a failing test skips it, and
+   * the whole reason reset runs BEFORE rather than after is that teardown
+   * that only runs on success is not teardown.
+   *
+   * Free when you are already home -- one property read -- and it has to be,
+   * since it runs before all ~900 tests in the suite.
+   */
+  await leaveWorld(page)
+
+  /*
+   * Every voxel any test wrote, back where it was. See installVoxelRecorder.
+   * Before the player is repositioned, so a spec that left a pillar under
+   * spawn does not get to catch the next player on the way down.
+   */
+  await restoreVoxels(page)
 
   /*
    * Privilege, game mode and game rules, back to what a stranger gets.
@@ -331,6 +459,20 @@ export async function resetWorld(page) {
     const a = window.game.authority
     await a.requestOp(pass)
     for (const rule of rules) await a.requestGamerule(rule, 'true')
+    /*
+     * Weather, which is op-gated and therefore has to happen inside this
+     * window. A duration is passed rather than letting `/weather clear`
+     * sample RAIN_DELAY, because a sampled 10-to-150 minute countdown is a
+     * suite that rains on somebody eventually and nobody can reproduce it.
+     * 180000 ticks is the top of vanilla's own range.
+     *
+     * KNOWN GAP, deliberate: this clears the weather STATE. `rainLevel` fades
+     * over five seconds rather than snapping, so a spec that runs immediately
+     * after a thunderstorm spec still sees a fraction of a storm on screen.
+     * Closing it needs a seam in src/weather.js that does not exist -- see
+     * the handoff note in the commit.
+     */
+    await a.requestWeather('clear', 180000)
     await a.requestDeop()
   }, [OP_PASSPHRASE, await gameruleNames(page)])
 
@@ -384,6 +526,45 @@ export async function resetWorld(page) {
      */
     game.effects?.clearAll?.()
 
+    /*
+     * The fluid engine RUNNING, not merely empty.
+     *
+     * `flow.reset()` above drops the queue; this drops the off switch. Six
+     * specs (41, 46, 57, 62, and the two that wrote their own teardown
+     * because of them) call `setEnabled(false)` to freeze a pour they want to
+     * photograph, and three of them never turn it back on -- 62 turns it on
+     * inside the body of its LAST test, which is a re-enable that a failure
+     * anywhere above skips. Everything downstream then measures a fluid
+     * simulation that is not running and reads it as "water does not spread".
+     */
+    game.fluids?.flow?.setEnabled?.(true)
+
+    /*
+     * The layer-remap animation, for the same reason: a spec that wants to
+     * prove a texture MOVED has to stop it to get two comparable frames, and
+     * a paused animation handed to the next spec makes "this texture moves"
+     * false without making anything red in the file that paused it.
+     */
+    game.terrainAnim?.setPaused?.(false)
+
+    /*
+     * Furnaces are a side table keyed by POSITION, so the terrain fixture
+     * putting a furnace block back does not put its contents back -- and a
+     * furnace that is still burning goes on advancing on its own tick.
+     * test/42-furnace.spec.js clears them before its own tests and never
+     * after; test/45-buckets.spec.js clears them defensively, which is the
+     * tell that 42 leaks.
+     */
+    game.inventory?.furnaces?.clear?.()
+
+    /*
+     * The F3 overlay. Closing it is also what turns chunk borders and
+     * hitboxes off (src/debugScreen.js), so this is three toggles, and two of
+     * them put extra geometry in the scene -- which is exactly the input to
+     * the vertex-count and photograph assertions that half this suite makes.
+     */
+    if (game.debug?.isOpen) game.debug.toggle()
+
     noa.ents.setPosition(noa.playerEntity, spawn)
     const body = noa.ents.getPhysics(noa.playerEntity).body
     body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
@@ -398,6 +579,22 @@ export async function resetWorld(page) {
     // every screenshot drift with wall-clock time between runs.
     game.sky.setTime(6000)
   }, SPAWN)
+
+  /*
+   * First person, again.
+   *
+   * Third person draws the player model and the nametag INTO THE FRAME, which
+   * every screenshot assertion in the suite is written against the absence
+   * of. src/perspective.js publishes a getter and no setter, so the only way
+   * back is the key a player would press -- three at most, since F5 cycles
+   * three modes. Guarded by the getter rather than pressed blindly so the
+   * common case (already first person) costs one property read.
+   */
+  for (let i = 0; i < 3; i++) {
+    if (await page.evaluate(() => window.game.perspective.isFirstPerson)) break
+    await page.keyboard.press('F5')
+    await waitFrames(page, 2)
+  }
 
   // Sprint latches until a tick sees `forward` released, so give it one.
   await waitTicks(page, 2)
@@ -1012,17 +1209,16 @@ export async function enterWorld(page, name) {
 }
 
 /**
- * Put the world back, for an afterEach.
+ * Put the world back.
  *
- * resetWorld does NOT do this -- it restores the player, the inventory and
- * the clock, all of which are per-test, and the world you are standing in is
- * not: one booted page is shared by a whole worker, so a spec that ends
- * somewhere else hands the next spec somewhere else. Same reasoning as
- * test/34-nether.spec.js and test/51-worlds.spec.js, which is where this
- * pattern came from.
+ * resetWorld CALLS THIS NOW, which is the change: it used to be every spec's
+ * own afterEach, and an afterEach is skipped by the assertion failure that
+ * most needs it. Specs may still call it mid-test -- coming home before a
+ * second measurement is a thing a test body legitimately wants -- but they no
+ * longer have to remember it at the end.
  *
- * A no-op when you are already home, so it is safe in an afterEach that runs
- * after a test that failed before it switched.
+ * A no-op when you are already home: one property read, which is what lets it
+ * sit in front of every test in the suite.
  */
 export async function leaveWorld(page) {
   if (await page.evaluate(() => window.game.dimensions.active) === 'overworld') return
