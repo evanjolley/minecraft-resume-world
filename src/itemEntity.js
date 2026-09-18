@@ -16,6 +16,7 @@ import { createHeldBlockMesh, blockTextureUrl } from './heldItem.js'
 import { trackEntityLight } from './entityLight.js'
 import { keepMaterialLive } from './playerModel.js'
 import { item, isBlockItem, stackMax, dropFor, rollDrops } from './items.js'
+import { itemTexture, itemTextureUrl } from './itemModel.js'
 
 /*
  * Dropped item entities: the little spinning cube a broken block leaves behind.
@@ -195,8 +196,27 @@ export function installItemEntities(noa, deps = {}) {
        */
       mesh = CreatePlane(`drop-${def.key}`, { size: 1, sideOrientation: 2 }, scene)
       mesh.material = noa.rendering.makeStandardMaterial(`drop-${def.key}-mat`)
-      const tex = textureFor(`/textures/item/${def.texture}.png`)
-      tex.hasAlpha = true
+      /*
+       * itemModel.js's texture, NOT the local `textureFor` two branches up.
+       *
+       * THE BUG THIS LINE IS THE FIX FOR, and itemModel.js predicted it by
+       * name: "heldItem.js passes false there for the block atlas, so copying
+       * that call would have been the obvious move -- and would have uploaded
+       * every item sprite upside down." `textureFor` below IS that copy. It
+       * is right for the branch above, whose texture is the block atlas and
+       * whose UVs were cut for invertY false; it is wrong for a sprite, and
+       * every dropped stick, ingot and pickaxe has been lying on the floor
+       * vertically mirrored -- the same art the hotbar draws the right way up
+       * two inches away.
+       *
+       * Sharing the cache was the trap. One `textureFor` serving two UV
+       * conventions cannot be right for both, and which convention a URL
+       * wants is a property of the ART rather than of the caller. So the
+       * sprite branch asks the file that owns item sprites, and gets the
+       * held item's own Texture object back rather than a second upload of
+       * the same PNG.
+       */
+      const tex = itemTexture(scene, itemTextureUrl(def))
       mesh.material.diffuseTexture = tex
       // Item sprites are cut-outs. Without this the transparent margin renders
       // as an opaque black square, which is unmistakable and was.
@@ -252,6 +272,17 @@ export function installItemEntities(noa, deps = {}) {
     return sys
   }
 
+  /*
+   * The BLOCK ATLAS, and only the block atlas.
+   *
+   * invertY FALSE is correct here and is wrong one branch over -- the atlas's
+   * UVs are cut for it (heldItem.js passes the same false) and an item
+   * sprite's are not. This used to serve both, which is how every dropped
+   * sprite came out upside down; see the note at the sprite branch above.
+   * Left as a cache of one convention rather than growing an invertY
+   * parameter, because a cache that can answer either way is a cache whose
+   * key is a lie.
+   */
   const textures = new Map()
   function textureFor(path) {
     if (!textures.has(path)) {
