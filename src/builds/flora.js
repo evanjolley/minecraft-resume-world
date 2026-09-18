@@ -431,15 +431,8 @@ function groundCover(s, model, dist) {
          */
         const rock = hash(x, z, 77) < 0.5 ? 'cobblestone' : 'mossy_cobblestone'
         s.set(x, base, z, rock)
-        model.standing[j] = 1
-        /* The second block of the heap answers the same question as the first
-         * and has to ask it: `standing` is checked at the top of this loop for
-         * the column we are ON, and a neighbour is a column somebody else may
-         * already be standing in. */
-        if (hash(x, z, 83) < 0.35 && onMap(x + 1, z)
-          && model.kind[at(x + 1, z)] === KIND.FIELD && !model.standing[at(x + 1, z)]) {
+        if (hash(x, z, 83) < 0.35 && onMap(x + 1, z) && model.kind[at(x + 1, z)] === KIND.FIELD) {
           s.set(x + 1, model.h[at(x + 1, z)], z, rock)
-          model.standing[at(x + 1, z)] = 1
         }
         continue
       }

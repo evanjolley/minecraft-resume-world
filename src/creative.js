@@ -98,8 +98,12 @@ export const TABS = [
   { id: 'building_blocks', label: 'Building Blocks', row: 'top', column: 0, icon: 'bricks' },
   { id: 'colored_blocks', label: 'Colored Blocks', row: 'top', column: 1, icon: 'cyan_wool' },
   { id: 'natural_blocks', label: 'Natural Blocks', row: 'top', column: 2, icon: 'grass' },
-  // Vanilla: Oak Sign. No signs here; the crafting table is the most
-  // recognisable thing in the tab.
+  /*
+   * Vanilla: Oak Sign. There ARE signs here now -- twenty block ids and an
+   * `oak_sign` item, which this comment used to deny -- but the crafting
+   * table stays the icon: it is the one thing in this tab a visitor will
+   * actually open, and an icon is a label rather than a census.
+   */
   { id: 'functional_blocks', label: 'Functional Blocks', row: 'top', column: 3, icon: 'crafting_table' },
   { id: 'redstone_blocks', label: 'Redstone Blocks', row: 'top', column: 4, icon: 'redstone' },
   /*

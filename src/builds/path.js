@@ -262,26 +262,7 @@ export function lampPosts(s, model, samples) {
     const want = 18 + 8 * smoothNoise(i, 0, 23, 59)
     if (since < want) return
     const [wl, wr] = halves(i)
-    /*
-     * 1.8 BLOCKS OUTSIDE THE EDGE, ON WHICHEVER SIDE, and the sign is the
-     * whole of it.
-     *
-     * This read `(side > 0 ? wr : -wl) + 1.8`, which is the right offset on
-     * the right-hand side and lands INSIDE the path on the left: wl runs 1.0
-     * to 2.15, so -wl + 1.8 is -0.35 to +0.8 -- within a block of the
-     * centreline. The check below then correctly refused to stand a post
-     * there and returned WITHOUT flipping `side`, so from the second lamp
-     * onward `side` was stuck at -1 and every candidate for the rest of the
-     * world landed on the path and was refused. The world had ONE lamp in it,
-     * at the first sample, four rows from the north edge behind spawn, and
-     * 412 blocks of walk with nothing lighting them.
-     *
-     * The guard is what made it invisible. It was added after a post landed
-     * dead centre of the path four blocks from spawn, which is a thing you
-     * trip over; it turned that into no lamps at all, which is a thing you
-     * have to count.
-     */
-    const d = side > 0 ? wr + 1.8 : -(wl + 1.8)
+    const d = (side > 0 ? wr : -wl) + 1.8
     const x = Math.round(p.x + p.nx * d)
     const z = Math.round(p.z + p.nz * d)
     if (!onMap(x, z)) return
@@ -303,15 +284,5 @@ export function lampPosts(s, model, samples) {
     const base = model.h[j]
     s.pillar(x, z, base, base + 2, 'stripped_oak_log')
     s.set(x, base + 3, z, 'torch')
-    /*
-     * AND THE COLUMN IS SPOKEN FOR. src/builds/flora.js's ground cover runs
-     * after this and writes a bush, a stump or a boulder at exactly `base` --
-     * the block this post is standing on -- for about eight percent of the
-     * columns it visits. It skips anything with `standing` set, which is the
-     * flag the bamboo pass already uses for the same reason, and a lamp post
-     * never set it. A leaf block where the bottom of a post should be is a
-     * torch floating over a bush.
-     */
-    model.standing[j] = 1
   })
 }

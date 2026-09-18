@@ -114,9 +114,13 @@ test.describe('non-cube blocks', () => {
       /*
        * Sanity on the fixture itself, and it needs BOTH ends.
        *
-       * The upper bound is the one that has earned its keep -- 15 rows of 20
+       * The upper bound is the one that has earned its keep -- 17 rows of 20
        * is the box kept above, and a table that outgrows it silently leaves
-       * blocks behind. The lower bound is the one that was missing: `bad` is
+       * blocks behind. (FIFTEEN rows is what this said, and the box has been
+       * seventeen since bamboo landed; the number in a comment is the one
+       * that goes stale, which is why the capacity is now in the failure
+       * message instead.) Today it is 322 of 340, so eighteen spare: one more
+       * torch family fits and one more sign family does not. The lower bound is the one that was missing: `bad` is
        * built by a loop over `defs`, and a `defs` that came back empty gives
        * `bad === []` and `count === 0`, which satisfies both the round-trip
        * assertion above and an upper bound. An empty shape table is exactly
@@ -127,7 +131,9 @@ test.describe('non-cube blocks', () => {
         'no non-cube blocks were placed at all, so the round-trip above'
         + ' proved nothing').toBeGreaterThan(100)
       expect(placement.count,
-        `${placement.count} non-cube blocks, more than the scratch box holds`)
+        `${placement.count} non-cube blocks, more than the`
+        + ` ${IDS_AT.wide * IDS_AT.deep} the scratch box holds`
+        + ' -- add a row to IDS_AT.deep, which is what the last three families did')
         .toBeLessThanOrEqual(IDS_AT.wide * IDS_AT.deep)
 
       /*
