@@ -246,8 +246,9 @@ export const LAND = {
  * one stage of a life.
  *
  * 52 x 24 each -- a touch smaller than the archive's 56 x 28, which is what
- * the owner asked for -- and MUCH further apart. (ch1 is the exception and
- * is now 66 x 63; see its row.) In the archive the plots
+ * the owner asked for -- and MUCH further apart. (TWO are exceptions now and
+ * both say why in their own rows: ch1 is 66 x 63 and holds a high school,
+ * ch2 is 74 x 76 and holds a nine-storey building, a plaza and a yard.) In the archive the plots
  * tiled: stage 3 began on the row stage 1 ended on, so the walk between two
  * chapters was zero blocks long and the world read as a street. Here the
  * nearest edges of two consecutive chapters are 8 or 9 blocks apart in z AND
@@ -355,10 +356,55 @@ export const CHAPTERS = [
    */
   { n: 1, id: 'ch1', label: 'Omaha, Nebraska',       marker: 'OMAHA',         side: 'LEFT',  x0: 14,  x1: 79,  z0: 22,  z1: 84 },
   /* THE MERGED CHAPTER. The marker stays the one word because the font is
-   * A-Z and a space, 4 columns a character, and the plot is 52 wide: "HARVARD
-   * AND SCHOOL WORK" is 79 blocks and markChapters throws rather than
-   * truncating. The label is where both halves are written down. */
-  { n: 2, id: 'ch2', label: 'Harvard, school work',  marker: 'HARVARD',       side: 'RIGHT', x0: 176, x1: 227, z0: 54,  z1: 77 },
+   * A-Z and a space, 4 columns a character: "HARVARD AND SCHOOL WORK" is 79
+   * blocks, and while THIS row is now wide enough to take it, the plot was 52
+   * when the rule was written and the label is still where both halves are
+   * written down.
+   *
+   * ------------------------------------------------------------------------
+   * AND IT IS 74 x 76 NOW, NOT 52 x 24, which makes it the largest plot in
+   * either survey. The owner's brief for it: "this one is really big and many
+   * stories so you might have to make this plot bigger."
+   *
+   * WHAT IS STANDING ON IT. Harvard's Science Center -- Josep Lluis Sert,
+   * 1970-72 -- is NINE STOREYS plus an observatory, and at this world's
+   * elevation scale (5 blocks a storey; see the header of
+   * src/builds/ch2-science-center.js) that is a fifty-block tower. A tower
+   * needs ground in front of it or the visitor arrives with their nose on the
+   * plinth and never sees the stepped profile that is the whole point of the
+   * building. It also STRADDLES A PEDESTRIAN PASSAGE between Harvard Yard and
+   * the northern campus, so the plot has to hold three things in a row -- the
+   * plaza, the building, and the Yard on the far side of it -- rather than
+   * one object in a field.
+   *
+   * WHICH FOUR DIRECTIONS IT GREW IN, AND WHY IT COULD.
+   *
+   *   WEST (low x), 176 -> 168. The path is the limit on this side and it is
+   *     a hard one: drawPath THROWS if the path touches a plot. The spine's
+   *     eastern swing for this chapter peaks at x = 154 (z = 84) with a
+   *     half-width of at most 2.15 and a spill pass that widens it another
+   *     block or two, so the path's own easternmost column is about x = 158.
+   *     168 keeps ten blocks of grass between the plot line and the widest
+   *     the path can get, which is the same clearance the row had before.
+   *   EAST (high x), 227 -> 241. Open field to the patch edge at 255. Stopped
+   *     at 241 rather than taken to the edge: the last dozen columns of the
+   *     map are the barrier wall's business and a plot that ends ON the
+   *     horizon has nothing behind it.
+   *   NORTH: NOT AT ALL. z0 stays 54. The spur src/builds/path.js draws is
+   *     aimed at z0 + 6 and the arrival works; moving z0 would move the
+   *     entrance for no gain, since the growth this chapter needs is depth
+   *     BEHIND the plaza, not more approach.
+   *   SOUTH, 77 -> 129. Fifty-two rows, and they were free: ch3 is on the
+   *     other hand entirely (x 28..79) and ch4 does not begin until z = 172.
+   *
+   * WHERE IT STOPS, AND IT IS THE RIVER THAT SAYS SO. src/builds/river.js
+   * throws if the channel runs into a plot. Its course at this chapter's x
+   * range is centred near z = 155 with a half width around 5, so the water
+   * and its two-block shelf begin at about z = 148. z1 = 129 leaves nineteen
+   * rows of bank between the last Georgian house in the Yard and the water,
+   * which is walkable landscape rather than a plot line on a shore.
+   * ------------------------------------------------------------------------ */
+  { n: 2, id: 'ch2', label: 'Harvard, school work',  marker: 'HARVARD',       side: 'RIGHT', x0: 168, x1: 241, z0: 54,  z1: 129 },
   /* FOUR ROWS THAT CHANGED HANDS when the merge cost the walk its
    * alternation. Only the x pair moved on any of them; every z is where it
    * has always been, so the pacing down the map is untouched. */
