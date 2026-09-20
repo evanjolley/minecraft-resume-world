@@ -599,3 +599,137 @@ test.describe('a nametag is drawn over the world and under your hand', () => {
         .toBeLessThan(whiteFraction(dry.both) / 2)
     })
 })
+
+
+/* ------------------------------------------------------------------ *
+ * THE DEPTH-CLEAR TABLE, AND WHO IS ALLOWED TO WRITE IT.
+ *
+ * Babylon's autoClearDepthStencil table is global state keyed by a bare
+ * integer, and that is exactly how it went wrong: heldItem.js opened with
+ * `setRenderingAutoClearDepthStencil(1, true, true, true)` under a comment
+ * saying it was for the viewmodel. It had been, once. The viewmodel moved to
+ * group 2 and the line stayed, so a file that has nothing to do with names was
+ * arming the depth clear on the NAMETAG's group -- and the nametag's whole
+ * two-pass design is that the world's depth buffer survives into its group, so
+ * the crisp pass could lose to a mountain.
+ *
+ * The picture was right anyway, for one reason: main.js calls installHeldItem
+ * two lines before installPerspective, and installPerspective builds the local
+ * nametag, which switched the clear back off. The correct render was a
+ * property of the ORDER OF TWO LINES IN AN UNRELATED FILE, and nothing in
+ * either file said so. Swap them and names punch through mountains.
+ *
+ * Both tests below exist because either one alone is weak. The grep cannot see
+ * a render; the render cannot see a second writer that today happens to agree.
+ * ------------------------------------------------------------------ */
+
+test('renderOrder.js is the only file that writes the depth-clear table',
+  async () => {
+    const { readdirSync, readFileSync } = await import('node:fs')
+    const { join, dirname } = await import('node:path')
+    const { fileURLToPath } = await import('node:url')
+    const src = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
+
+    const files = readdirSync(src, { recursive: true })
+      .filter((f) => String(f).endsWith('.js'))
+    // A grep that matched nothing at all would pass this test while proving
+    // nothing, and renderOrder.js is the one file that MUST match.
+    expect(files.length).toBeGreaterThan(20)
+    /*
+     * A RECEIVER, not the bare name. heldItem.js quotes the exact line it used
+     * to ship inside a comment, and renderOrder.js names the Babylon method
+     * twice in prose -- all three of those are the documentation this test is
+     * protecting and a plain substring match flagged them. The method cannot
+     * be invoked without something to invoke it on, so requiring `x.` in front
+     * separates a call from a mention without trying to parse comments, which
+     * is the version of this that fails open.
+     */
+    const CALL = /\w+\s*\.\s*setRenderingAutoClearDepthStencil\s*\(/
+    const offenders = files.filter((f) =>
+      CALL.test(readFileSync(join(src, String(f)), 'utf8')))
+    expect(offenders.sort(), 'the depth-clear table is written from a bare group'
+      + ' number outside renderOrder.js -- that is the shape of the bug where'
+      + ' heldItem.js armed the clear on the nametag\'s group')
+      .toEqual(['renderOrder.js'])
+  })
+
+test.describe('the depth policy survives the installers running in any order', () => {
+  test.beforeEach(async ({ page }) => {
+    await installProject(page)
+    await page.evaluate((t) => window.game.sky.setTime(t), NOON)
+    await waitTicks(page, 2)
+  })
+
+  /*
+   * Reordering the installs is not something a booted page can do -- main.js
+   * runs once, at module load. What CAN be reproduced is the state each order
+   * leaves behind, which is the only thing the order ever decided: heldItem's
+   * line armed the clear on group 1 and the nametag's call switched it off, so
+   * "installHeldItem last" is precisely "the clear is armed on GROUP.nametag".
+   *
+   * So the test arms it by hand, proves the SCREEN breaks in the way the swap
+   * would have broken it, and then proves that a policy call -- the same one
+   * both installers now make, whichever runs last -- puts the picture back.
+   * That is what makes the fix order-independent rather than merely correct
+   * today, and the middle step is what stops this passing vacuously.
+   */
+  test('arming the clear on the nametag group breaks it, and any installer fixes it',
+    async ({ page, terrain }) => {
+      await faceEvan(page)
+      const clear = await passes(page)
+
+      // Stone BETWEEN the camera and the tag -- the same wall the occlusion
+      // case above builds, on the camera's side of Evan rather than behind him.
+      const at = await page.evaluate(() => [...window.game.EVAN_POS])
+      const x = Math.floor(at[0]) + 1
+      const y0 = Math.floor(at[1]), y1 = y0 + 5
+      const z0 = Math.floor(at[2]) - 3, z1 = Math.floor(at[2]) + 3
+      await terrain.keep([x, y0, z0], [x, y1, z1])
+      await page.evaluate(([bx, by0, by1, bz0, bz1, b]) => {
+        for (let y = by0; y <= by1; y++) {
+          for (let z = bz0; z <= bz1; z++) window.noa.setBlock(b, bx, y, z)
+        }
+      }, [x, y0, y1, z0, z1, ID.stone])
+      await waitTicks(page, 4)
+      await waitFrames(page, 2)
+
+      expect(whiteFraction(clear.both), 'the unoccluded control saw no text --'
+        + ' every comparison below would prove nothing').toBeGreaterThan(0.02)
+
+      const occluded = await passes(page)
+      expect(whiteFraction(occluded.both), 'the wall is not occluding the tag,'
+        + ' so this test cannot tell a depth clear from a hole in the wall')
+        .toBeLessThan(whiteFraction(clear.both) / 3)
+
+      try {
+        // heldItem.js's shipped line, verbatim, with the group it meant.
+        await page.evaluate(() => {
+          const scene = window.noa.rendering.getScene()
+          scene.setRenderingAutoClearDepthStencil(
+            window.game.renderOrder.GROUP.nametag, true, true, true)
+        })
+        await waitFrames(page, 2)
+        const broken = await passes(page)
+        await shot(page, 'nametag-order-depth-armed')
+        expect(whiteFraction(broken.both), 'arming the depth clear on the'
+          + ' nametag group did NOT punch the name through the wall -- this'
+          + ' test can no longer see the bug it exists for')
+          .toBeGreaterThan(whiteFraction(clear.both) / 2)
+      } finally {
+        /*
+         * Whichever installer runs last. Both heldItem.js and nametag.js call
+         * exactly this, and it writes every group from renderOrder.js's table
+         * rather than the one group the caller cares about -- so "last writer
+         * wins" stopped being a question that has an answer.
+         */
+        await page.evaluate(() =>
+          window.game.renderOrder.applyDepthPolicy(window.noa.rendering.getScene()))
+        await waitFrames(page, 2)
+      }
+
+      const restored = await passes(page)
+      expect(whiteFraction(restored.both), 'the policy call did not restore the'
+        + ' nametag group -- install order still decides the picture')
+        .toBeLessThan(whiteFraction(clear.both) / 3)
+    })
+})

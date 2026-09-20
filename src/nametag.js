@@ -4,7 +4,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { Quaternion } from '@babylonjs/core/Maths/math.vector'
 import { Constants } from '@babylonjs/core/Engines/constants'
-import { GROUP, keepDepth } from './renderOrder.js'
+import { GROUP, applyDepthPolicy } from './renderOrder.js'
 
 /*
  * NAMETAGS, transcribed from EntityRenderer.renderNameTag rather than
@@ -123,16 +123,22 @@ export function createNametag(noa, { text = '', height = 1.8, name = 'nametag' }
    * was never about where the tag is in space.
    *
    * GROUP.nametag puts the tag after the entire world instead of in a sorting
-   * argument with it. keepDepth is the other half and is not optional: Babylon
+   * argument with it. The depth policy is the other half and is not optional:
+   * Babylon
    * clears depth between rendering groups, and a nametag in a group with a
    * fresh depth buffer has no terrain left to lose the depth test to, so the
    * opaque pass below would draw crisp white THROUGH a mountain and the
    * two-pass scheme would collapse into one. See renderOrder.js for the full
    * stack and for why the hand is above this and not below it.
    *
+   * applyDepthPolicy, rather than a call naming THIS group: it writes all four
+   * entries from renderOrder.js's own table, so it no longer matters whether
+   * this factory runs before or after the other installers that call it.
+   * It used to matter, and heldItem.js was quietly winning the argument.
+   *
    * Not the leaves, though -- see the LEAVES note at the bottom of this file.
    */
-  keepDepth(scene, GROUP.nametag)
+  applyDepthPolicy(scene)
 
   /*
    * One texture, two materials. The see-through pass wants the background and

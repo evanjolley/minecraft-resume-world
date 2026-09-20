@@ -30,6 +30,7 @@ import { installHeldItem } from './heldItem.js'
 import { createSkinMaterial } from './playerModel.js'
 import { createSwing } from './swing.js'
 import { installPerspective } from './perspective.js'
+import * as renderOrder from './renderOrder.js'
 import { installCrackOverlay } from './crackOverlay.js'
 import { installSky, LIGHT_VECTOR } from './sky.js'
 import { installUnderwater } from './underwater.js'
@@ -1083,6 +1084,15 @@ window.game = {
   fluids,
   inventory, survival, move, sky, menu, chat, inputLock, perspective,
   skinMaterial, sounds, particles, drops, weather, underwater,
+  /*
+   * The rendering-group table and the depth-policy writer, exposed so
+   * 80-nametag-order.spec.js can arm the clear on the nametag's group by hand
+   * -- the exact line heldItem.js used to ship -- watch the name punch through
+   * a mountain, and then prove that ANY installer's policy call puts it back.
+   * That is the assertion that makes the fix independent of install order, and
+   * it cannot be written from outside the page.
+   */
+  renderOrder,
   // The layer-remap animation driver. A spec that wants to prove a texture is
   // MOVING has to be able to stop it, which is what `setPaused` is for.
   terrainAnim,

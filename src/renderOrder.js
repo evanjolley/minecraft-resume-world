@@ -17,7 +17,7 @@
  * exactly what the first-person hand wants (it can never be clipped by the
  * wall you are standing against) and exactly what a nametag must NOT have,
  * since half of a nametag is a pass that is supposed to LOSE the depth test.
- * Hence `keepDepth` below.
+ * Hence the KEEP_DEPTH set below, and applyDepthPolicy that writes it.
  *
  * The stack, low to high:
  *
@@ -67,16 +67,47 @@ export const GROUP = {
 }
 
 /**
- * Hand a group the depth buffer the previous group left behind.
- *
- * Idempotent and safe to call from a factory that runs once per nametag: it
- * writes one entry in the scene's RenderingManager table.
- *
- * `setRenderingAutoClearDepthStencil(id, false)` is the whole thing. The
- * alternative -- an onBeforeRenderingGroupObservable that saves and restores
- * the depth attachment -- does the same job for a frame cost and a lot more
- * code, and Babylon already exposes the flag.
+ * Which groups inherit the previous group's depth buffer instead of a fresh
+ * one. Exactly one, and the two-pass nametag is the reason -- see the header.
  */
-export function keepDepth(scene, group) {
-  scene.setRenderingAutoClearDepthStencil(group, false)
+const KEEP_DEPTH = new Set([GROUP.nametag])
+
+/**
+ * Write the depth policy for EVERY group, from the table above.
+ *
+ * TOTAL AND IDEMPOTENT, WHICH IS THE WHOLE POINT, and it is worth a paragraph
+ * because the function this replaced was neither.
+ *
+ * The old one took a group id and set that single entry, so a caller could
+ * write a group it did not own -- and one did. heldItem.js opened with
+ * `setRenderingAutoClearDepthStencil(1, true, ...)` under a comment saying it
+ * was for the viewmodel, from back when the viewmodel WAS group 1. The hand
+ * moved to 2 and the line stayed, so it was arming the clear on the NAMETAG's
+ * group, whose entire two-pass design depends on the world's depth buffer
+ * surviving into it. It rendered correctly anyway, for one reason and only
+ * one: main.js calls installHeldItem on line 429 and installPerspective --
+ * which builds the local nametag, which switched the clear back off -- on line
+ * 431. Two lines swapped in an unrelated refactor and names punch through
+ * mountains, with nothing in either file to say so.
+ *
+ * A total write removes the question. Every installer calls this, every call
+ * writes all four entries from one table, so the LAST caller and the FIRST
+ * caller leave the scene in the same state and install order stops being load
+ * bearing. That is a stronger guarantee than "delete the stale line", which
+ * fixes today and leaves the shape of the trap in place.
+ *
+ * `setRenderingAutoClearDepthStencil(id, autoClear)` is the whole mechanism.
+ * The alternative -- an onBeforeRenderingGroupObservable that saves and
+ * restores the depth attachment -- does the same job for a frame cost and a
+ * lot more code, and Babylon already exposes the flag.
+ *
+ * NOTHING OUTSIDE THIS FILE MAY CALL THAT BABYLON METHOD. It is a global
+ * table keyed by a bare integer, which is precisely how a comment about the
+ * viewmodel ended up governing the nametag; test/80-nametag-order.spec.js
+ * greps src/ and fails if a second caller appears.
+ */
+export function applyDepthPolicy(scene) {
+  for (const group of Object.values(GROUP)) {
+    scene.setRenderingAutoClearDepthStencil(group, !KEEP_DEPTH.has(group), true, true)
+  }
 }

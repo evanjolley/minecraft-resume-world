@@ -11,7 +11,7 @@ import { cachedItemGeometry, displayFor, itemTexture, itemTextureUrl, loadItemGe
 import { createFirstPersonArm, keepMaterialLive } from './playerModel.js'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { trackEntityLight } from './entityLight.js'
-import { GROUP } from './renderOrder.js'
+import { GROUP, applyDepthPolicy } from './renderOrder.js'
 
 /*
  * The first-person hand and held block.
@@ -299,8 +299,25 @@ export function installHeldItem(noa, inventory, skinMaterial, swing) {
   const scene = noa.rendering.getScene()
   const camera = noa.rendering.camera
 
-  // Group 1 needs its own depth clear, or the viewmodel z-fights the world.
-  scene.setRenderingAutoClearDepthStencil(1, true, true, true)
+  /*
+   * The viewmodel's depth clear -- and the group it applies to is NOT written
+   * here any more.
+   *
+   * This line used to be `setRenderingAutoClearDepthStencil(1, true, ...)`
+   * under a comment saying "group 1 needs its own depth clear, or the
+   * viewmodel z-fights the world". Both halves stopped being true when the
+   * viewmodel moved to GROUP.hand: group 1 is the NAMETAG, whose two-pass
+   * design needs the world's depth buffer to survive into its group, and
+   * arming the clear there makes a name draw crisp white through a mountain.
+   * It never did, for one reason -- main.js installs this file on line 429 and
+   * perspective.js, which builds the local nametag and switched the clear back
+   * off, on line 431. Swapping those two lines shipped the bug.
+   *
+   * applyDepthPolicy writes all four groups from renderOrder.js's table, so
+   * this call and the nametag's leave the scene identical and the order they
+   * run in stops being load bearing. See the long note there.
+   */
+  applyDepthPolicy(scene)
 
   /*
    * The viewmodel root: one node holding the hand's PLACE, with the block cube
