@@ -61,6 +61,35 @@ import { MC } from './physics.js'
 const rand = (a, b) => a + Math.random() * (b - a)
 
 /*
+ * The V coordinate of strip cell `frame`, counting cells from the TOP of the
+ * PNG -- and the subtraction is the whole point of the function existing.
+ *
+ * THE BUG THIS FIXES, which shipped and which the owner could see. The strip
+ * is written top-down in animation order: build-textures.mjs stacks
+ * entity_effect's own list, effect_7 (the ring that fills the tile) at byte
+ * offset 0 and effect_0 (a two-pixel speck) last. Age frame 0 must therefore
+ * sample the TOP band. But these textures are invertY (see systemFor's
+ * paragraph -- the flame needs it and it is not negotiable), so V=0 is the
+ * BOTTOM row of the image, and `frame * crop` handed frame 0 the bottom band.
+ * Every spell mote in the world was born a speck and EXPANDED to a ring --
+ * exactly backwards from the collapse that effectSwirl.js and the texture
+ * builder each spend a paragraph describing.
+ *
+ * FIXED HERE RATHER THAN IN THE TEXTURE BUILDER, and both would have worked.
+ * Writing the strip bottom-up would have put frame 0 at V=0 too. Rejected for
+ * three reasons: the builder writes this strip TWICE (the vanilla copy and
+ * CE's drawn circles), so it is two edits and a chance to fix only one; it
+ * would leave a PNG whose row order contradicts the long comment above it
+ * that says the file is in the JSON's own order; and it would bake a
+ * compensation for a RENDERER flag into an asset, so the next strip texture
+ * anyone adds -- indexed by this same code -- would be born broken again.
+ * The flip belongs where the flip is, which is here.
+ *
+ * DO NOT ALSO REVERSE THE BUILDER. Two reversals is the original bug.
+ */
+const frameV = (spec, frame) => (spec.frames - 1 - frame) / spec.frames
+
+/*
  * What a pooled mesh is, beyond its texture. One of these per system; the
  * per-frame loop reads nothing else about how a particle behaves.
  *
@@ -273,7 +302,7 @@ export function installParticles(noa, deps = {}) {
     const pool = []
     for (let i = 0; i < spec.pool; i++) {
       pool.push({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 0, life: 1, size: 0.1,
-        spin: 0, spinRate: 0, u: 0, v: 0, r: 1, g: 1, b: 1, a: 1 })
+        spin: 0, spinRate: 0, u: 0, v: 0, frame: 0, r: 1, g: 1, b: 1, a: 1 })
     }
 
     sys = { mesh, mat, positions, uvs, colors, pool, spec, live: 0, drawn: 0 }
@@ -306,8 +335,10 @@ export function installParticles(noa, deps = {}) {
      */
     p.r = p.g = p.b = p.a = 1
     // `frames` picks its cell from age every frame, so there is nothing to
-    // choose here; `crops` picks once and keeps it.
-    if (spec.frames) { p.u = 0; p.v = 0 } else {
+    // choose here; `crops` picks once and keeps it. Still seeded with frame
+    // 0's V rather than 0, because a caller can read a mote's state in the
+    // same frame it emits it -- before the loop below has written a V at all.
+    if (spec.frames) { p.u = 0; p.frame = 0; p.v = frameV(spec, 0) } else {
       const crop = 1 / spec.crops
       p.u = Math.floor(Math.random() * spec.crops) * crop
       p.v = Math.floor(Math.random() * spec.crops) * crop
@@ -491,8 +522,14 @@ export function installParticles(noa, deps = {}) {
          * cell past the end of the strip and samples the wrap-around.
          *
          * Full width, so u stays 0 -- the strip is one cell wide.
+         *
+         * frameV, not `frame * crop`, and THAT WAS THE BUG -- the strip ran
+         * backwards for as long as it existed. See the note beside frameV.
          */
-        if (spec.frames) p.v = Math.min(spec.frames - 1, (t * spec.frames) | 0) * crop
+        if (spec.frames) {
+          p.frame = Math.min(spec.frames - 1, (t * spec.frames) | 0)
+          p.v = frameV(spec, p.frame)
+        }
 
         const q = i * 8
         uvs[q] = p.u; uvs[q + 1] = p.v
@@ -825,8 +862,22 @@ export function installParticles(noa, deps = {}) {
       const out = []
       for (let i = 0; i < sys.live; i++) {
         const p = sys.pool[i]
+        /*
+         * `frame` AND `row`, and they are SEPARATELY SOURCED on purpose.
+         *
+         * `frame` is the age index the JS picked. `row` is the band of the
+         * PNG the sampler will actually read, counted from the top of the
+         * image -- derived from p.v and the invertY flip, i.e. from the
+         * number that reaches the GPU. Reporting only the first is exactly
+         * how the strip ran backwards for its whole life with a green spec:
+         * the JS index was always right and the image row was always the
+         * mirror of it. A spec that asserts `row === frame` is testing
+         * frameV; one that asserts `frame` alone is testing nothing.
+         */
         out.push({ x: p.x, y: p.y, z: p.z, color: [p.r, p.g, p.b], alpha: p.a,
-          frame: sys.spec.frames ? Math.round(p.v * sys.spec.frames) : null,
+          frame: sys.spec.frames ? p.frame : null,
+          row: sys.spec.frames ? sys.spec.frames - 1 - Math.round(p.v * sys.spec.frames) : null,
+          v: p.v,
           age: p.age, life: p.life, size: p.size })
       }
       return out

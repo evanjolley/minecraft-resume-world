@@ -328,6 +328,14 @@ test.describe('the effect swirl', () => {
     expect(frames.size, `every mote is on sprite frame ${[...frames]}`).toBeGreaterThan(1)
     for (const f of frames) expect(f).toBeGreaterThanOrEqual(0)
     for (const f of frames) expect(f).toBeLessThan(8)
+    /*
+     * AND THIS IS AS FAR AS AN INDEX CAN SEE. `frame` was right on every mote
+     * for the whole time the strip ran BACKWARDS on screen -- the index is
+     * chosen in JavaScript and the row is chosen by a V coordinate and an
+     * invertY flag, and those two disagreed. 101-sprite-strip.spec.js is the
+     * one that reads the texel; nothing here can, and adding an assertion here
+     * that looks like it does would be worse than the gap.
+     */
 
     // No fade. SpellParticle holds full alpha for its whole life; the old
     // version ramped alpha down over the second half and that was wrong.

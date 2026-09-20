@@ -292,10 +292,18 @@ async function emitEffectIcons(jar, tmp) {
  * opposite of the "grow and fade" a blob implies.
  *
  * So the strip is written in the JSON'S OWN ORDER, 8 frames stacked into one
- * 8x64 column, and particles.js indexes it straight off age with no
- * reversal at its end. Putting the reversal here keeps it next to the file
- * that states it; doing it in the renderer would be a magic `7 - i` with
- * nothing beside it to explain the 7.
+ * 8x64 column: age frame 0 is the FIRST 8 rows of the PNG, and the file reads
+ * top-to-bottom as the animation plays.
+ *
+ * THAT IS ALL THIS FUNCTION PROMISES, and the sentence that used to be here
+ * -- "particles.js indexes it straight off age with no reversal at its end"
+ * -- was wrong and cost a shipped bug. particles.js samples with invertY, so
+ * V=0 is the BOTTOM row of this image; turning an age frame into a V takes a
+ * flip, and that flip lives in particles.js's frameV, next to the invertY
+ * that causes it. DO NOT ALSO REVERSE THE ORDER HERE to compensate -- two
+ * reversals is the original bug, where every mote expanded instead of
+ * collapsing. Same trap for deriveSpellStrip below, which writes the CE
+ * version of this same strip in this same order.
  *
  * ONE TEXTURE, not eight. particles.js keys a pooled system by texture name,
  * so eight files would be eight meshes and eight draw calls for one effect,
