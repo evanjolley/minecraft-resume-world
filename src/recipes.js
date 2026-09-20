@@ -22,7 +22,9 @@ import { ARMOR_SLOTS, ITEM_BY_KEY } from './items.js'
  * from ore, charcoal, terracotta, smooth stone), anything that needs dye
  * (coloured wool, concrete, stained glass), anything needing slabs or other
  * non-cube blocks as an INGREDIENT (barrel, chiseled variants), netherite
- * gear, which is smithing rather than crafting, and the chest and the shield,
+ * GEAR, which is smithing rather than crafting -- the netherite INGOT is a
+ * plain shapeless recipe and is here, see the note on it -- and the chest and
+ * the shield,
  * neither of which has an item sprite to draw (see items.js). Each is a separate system,
  * and a recipe whose ingredient can never exist is worse than no recipe.
  */
@@ -184,7 +186,17 @@ const BLOCK_RECIPES = [
   shaped('redstone_lamp', 1, [' R ', 'RGR', ' R '], { R: 'redstone', G: 'glowstone' }),
   shaped('tnt', 1, ['GSG', 'SGS', 'GSG'], { G: 'gunpowder', S: 'sand' }),
   shaped('respawn_anchor', 1, ['OOO', 'GGG', 'OOO'], { O: 'crying_obsidian', G: 'glowstone' }),
-  shaped('lodestone', 1, ['SSS', 'SNS', 'SSS'], { S: 'chiseled_stone_bricks', N: 'netherite_ingot' }),
+  /*
+   * IRON in the middle, not netherite, and this world is new enough that it
+   * matters. The lodestone took a netherite ingot from 1.16 until 1.21.4 and
+   * 25w02a changed it -- "Changed crafting recipe to require an iron ingot
+   * instead of a netherite ingot, making them renewable". This world is built
+   * against 1.21.8 everywhere else, and 1.21.8's own recipe JSON is
+   * `"key": { "#": "minecraft:iron_ingot", "S": "minecraft:chiseled_stone_bricks" }`.
+   * The old centre is the single most-cited version of this recipe and is the
+   * one anybody would write from memory, which is why the note is here.
+   */
+  shaped('lodestone', 1, ['SSS', 'SNS', 'SSS'], { S: 'chiseled_stone_bricks', N: 'iron_ingot' }),
 
   // Torch and the pumpkin lamp. `#coals` is why charcoal works too.
   shaped('torch', 4, ['C', 'S'], { C: '#coals', S: 'stick' }),
@@ -249,6 +261,35 @@ const BLOCK_RECIPES = [
   ...packed9('emerald_block', 'emerald'),
   ...packed9('redstone_block', 'redstone'),
   ...packed9('lapis_block', 'lapis_lazuli'),
+  /*
+   * THE INGOT, WITHOUT WHICH THE TWO RECIPES AROUND IT ARE FURNITURE.
+   *
+   * `smelt('netherite_scrap', 'ancient_debris')` has been in the smelting
+   * table since it was written and NOTHING CONSUMED THE SCRAP. The only
+   * producer of netherite_ingot was unpacking a netherite_block, which takes
+   * nine netherite_ingots to make -- so the ingot, the block and the lodestone
+   * below were all unreachable, and the file's own header rule ("a recipe
+   * whose ingredient can never exist is worse than no recipe") was broken
+   * twice over by the recipes it was written to justify leaving out.
+   *
+   * AND THE HEADER'S EXEMPTION DOES NOT COVER IT. "netherite gear, which is
+   * smithing rather than crafting" is true of the gear and only of the gear:
+   * SmithingTransformRecipeBuilder is used for the nine diamond-to-netherite
+   * tool and armor upgrades and for nothing else. The INGOT is an ordinary
+   * shapeless crafting recipe, verified against the 1.21.8 decompile rather
+   * than remembered -- VanillaRecipeProvider.java:
+   *
+   *     this.shapeless(RecipeCategory.MISC, Items.NETHERITE_INGOT)
+   *         .requires(Items.NETHERITE_SCRAP, 4)
+   *         .requires(Items.GOLD_INGOT, 4)
+   *         .group("netherite_ingot")
+   *
+   * Eight ingredients in a nine-slot grid, in any arrangement.
+   */
+  shapeless('netherite_ingot', 1, [
+    'netherite_scrap', 'netherite_scrap', 'netherite_scrap', 'netherite_scrap',
+    'gold_ingot', 'gold_ingot', 'gold_ingot', 'gold_ingot',
+  ]),
   ...packed9('netherite_block', 'netherite_ingot'),
   ...packed9('raw_iron_block', 'raw_iron'),
   ...packed9('raw_gold_block', 'raw_gold'),
