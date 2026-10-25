@@ -14,27 +14,18 @@
  * to be able to hold a character with NO entity (a player who has connected
  * but not spawned, an NPC rendered as a plain mesh), which a component cannot.
  *
- * WHAT CHANGES WHEN A SERVER TAKES OVER
- * -------------------------------------
- * Today `setName` writes straight through and persists to localStorage. In
- * the multiplayer end state the server owns the roster and this becomes a
- * cache of what it last told us:
- *
- *   - `setName` stops being authoritative. It sends a rename REQUEST and the
- *     local entry does not move until the server echoes it back -- because
- *     the server is the thing that can say "that name is taken" or "that name
- *     is not allowed" (see docs/FUTURE.md 1b: nicknames are a moderation
- *     surface, and the filter cannot live in the client that is being
- *     filtered).
- *   - `add`/`remove` stop being called by main.js and start being called by
- *     the socket's onmessage, once per player in the room.
- *   - localStorage stops being the store and becomes the HINT: the name you
- *     used last time, offered to the server as your preferred nickname, which
- *     it may refuse.
- *
- * Every one of those is a change to THIS file and to the transport. Nothing
- * that reads a name has to know the difference, which is the point.
+ * SINGLE PLAYER, AND WHAT THAT SETTLED
+ * ------------------------------------
+ * Multiplayer presence is cancelled (docs/SPRINT-1.md item 6), so the roster
+ * never becomes a cache of a server's room: it is you and the NPCs, forever.
+ * `setName` stays local and synchronous. What the server does own is the
+ * name an ACCOUNT stores, which src/account.js sends to /api/profile after a
+ * local rename; the Worker re-runs the same nickname.js filter there. A
+ * refusal from the server reverts the local name, which in practice only
+ * happens to someone who edited the client to get past the local check.
  */
+
+import { checkNickname, MAX_NAME_LENGTH } from './nickname.js'
 
 /** What a visitor is called before the conversation gets their real name. */
 export const GUEST_NAME = 'Guest'
@@ -47,26 +38,21 @@ export const GUEST_NAME = 'Guest'
 const STORAGE_KEY = 'world:v1:player-name'
 
 /*
- * Minecraft's own limits, because this is meant to be a Minecraft name.
- * Vanilla usernames are 3-16 characters of [A-Za-z0-9_]; nothing here is
- * checking a Mojang account, so the CHARACTER SET is enforced (it is what
- * keeps a nametag from being a paragraph of RTL override marks) and the
- * minimum length is relaxed to 1, since plenty of people are called "Al".
- */
-export const MAX_NAME_LENGTH = 16
-const LEGAL_NAME = /^[A-Za-z0-9_]{1,16}$/
-
-/**
- * Is this something we are willing to write above someone's head?
+ * The rule itself lives in nickname.js, shared with the Worker: vanilla's
+ * 1-16 characters of [A-Za-z0-9_] (minimum relaxed to 1, since plenty of
+ * people are called "Al"), plus the impersonation and wordlist checks. This
+ * file only asks it. Re-exported under the old names so the callers
+ * (aiEvan.js's set_player_name tool among them) did not have to move.
  *
- * NOT a moderation filter. This is a syntax check, and the difference is
- * worth being explicit about: a wordlist check has to live on the server (see
- * docs/FUTURE.md 1b), because a client-side one is a list of banned words
- * shipped to the person trying to get around it. This only rules out the
- * shapes that break rendering or impersonate the formatting.
+ * The wordlist being in the client is fine now and nickname.js says why:
+ * single player means a name is only ever shown to its owner, and the copy
+ * that reaches the server is checked again there.
  */
+export { MAX_NAME_LENGTH }
+
+/** Is this something we are willing to write above someone's head? */
 export function isLegalName(name) {
-  return typeof name === 'string' && LEGAL_NAME.test(name)
+  return typeof name === 'string' && name === name.trim() && checkNickname(name).ok
 }
 
 /**
@@ -152,7 +138,15 @@ export function createRoster({ storage = globalThis.localStorage } = {}) {
      */
     setName(id, name) {
       const entry = entries.get(id)
-      if (!entry || !isLegalName(name) || entry.name === name) return false
+      /*
+       * The nickname filter is for VISITORS. An NPC's name is written by this
+       * codebase, and the one NPC there is is called Evan, which is the first
+       * name the impersonation rule exists to refuse. NPCs get the shape check.
+       */
+      const legal = entry?.kind === 'npc'
+        ? typeof name === 'string' && /^[A-Za-z0-9_]{1,16}$/.test(name)
+        : isLegalName(name)
+      if (!entry || !legal || entry.name === name) return false
       entry.name = name
       if (entry.persist) {
         // Wrapped: localStorage throws outright in Safari private mode, and
