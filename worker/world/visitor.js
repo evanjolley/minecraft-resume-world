@@ -20,7 +20,7 @@ import { VisitorStore } from './store.js'
 /* Only these may be called from outside. Everything else on the store is
  * internal. */
 export const VISITOR_METHODS = ['getProfile', 'setNickname', 'addCredential', 'getCredential',
-  'setSignCount', 'credentialCount', 'getSave', 'putSave']
+  'setSignCount', 'credentialCount', 'getSave', 'putSave', 'forget']
 
 export class Visitor {
   constructor(ctx, env) {

@@ -534,6 +534,9 @@ export function clearSignText(x, y, z) {
   disposeSign(key)
 }
 
+/** Every sign's text, as [`x,y,z`, { lines, colour }]. For src/persistence.js. */
+export const signTextEntries = () => [...texts.entries()]
+
 /** For the spec, which has to assert on a non-empty sample before anything. */
 export function signTextStats() {
   return {

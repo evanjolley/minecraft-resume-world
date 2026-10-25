@@ -4,7 +4,7 @@ import { registerBlocks, BLOCK_TYPES, BLOCK_SUPPORT } from './blocks.js'
 import {
   installAttachment, shapeBoxesFor, targetShapeBoxesFor,
 } from './blockMeshes.js'
-import { installSignText, setSignText, clearSignText, signTextStats } from './signText.js'
+import { installSignText, setSignText, clearSignText, signTextStats, signTextAt } from './signText.js'
 import {
   installPaintingArt, hangPainting, registerPainting, clearPainting, paintingAt, paintingStats,
   resetPaintings, paintingTextureBytes,
@@ -1184,7 +1184,7 @@ window.game = {
    * per-sign cost is a vertex buffer and not a texture -- it reports ONE
    * atlas however many signs are in the world, which is the claim.
    */
-  signs: { setSignText, clearSignText, signTextStats },
+  signs: { setSignText, clearSignText, signTextStats, signTextAt },
   /*
    * Paintings, for the console and for the suite. `registerPainting` rather
    * than `hangPainting` is what is exposed here: hangPainting takes a

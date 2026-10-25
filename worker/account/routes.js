@@ -2,6 +2,7 @@ import { handleSession, handleLogout, json } from './session.js'
 import { registerOptions, registerVerify, loginOptions, loginVerify } from './passkey.js'
 import { handleProfile } from './profile.js'
 import { handleWorld } from '../world/sync.js'
+import { handleForget } from './forget.js'
 
 /*
  * Every accounts and world route, behind one function so worker/index.js
@@ -15,6 +16,7 @@ import { handleWorld } from '../world/sync.js'
 const ROUTES = {
   '/api/session': { POST: handleSession },
   '/api/session/logout': { POST: handleLogout },
+  '/api/account/forget': { POST: handleForget },
   '/api/profile': { GET: handleProfile, PUT: handleProfile },
   '/api/world': { GET: handleWorld, PUT: handleWorld },
   '/api/auth/passkey/register/options': { POST: registerOptions },

@@ -204,6 +204,32 @@ export function createAccount({ enabled = apiEnabled(), storage = globalThis.loc
       }
     },
 
+    /**
+     * "Forget me" on the server: the saved world, passkeys, nickname and AI
+     * Evan's memory of this visitor, then a fresh guest session. Local copies
+     * are the caller's to clear (profileScreen.js forgetEverything).
+     * @returns {Promise<{ok: boolean, server: boolean}>} `server` false when
+     *   there was no server to ask, which is fine: then nothing was stored there.
+     */
+    async forget() {
+      let server = false
+      if (enabled) {
+        try {
+          const res = await call('/api/account/forget')
+          if (res.ok) { adopt(res.data); server = true }
+          else if (res.status !== 503 && res.status !== 401) return { ok: false, server }
+        } catch { /* offline: nothing on the server to reach */ }
+      }
+      // With a server, adopt() already swapped in the new guest's token.
+      if (!server) {
+        write(TOKEN_KEY, null)
+        write(ACCOUNT_KEY, null)
+        state.account = false; state.visitor = null; state.nickname = null
+        emit()
+      }
+      return { ok: true, server }
+    },
+
     /** Sign out: the server hands back a brand new guest. */
     async logout() {
       try {

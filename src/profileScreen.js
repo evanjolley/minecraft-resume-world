@@ -39,7 +39,20 @@ export function installProfile({ roster, localId, account, persist, chat, menuBu
     <p id="profile-error" class="profile-error" role="alert"></p>
     <p id="profile-status" class="profile-status"></p>
     <div class="button-row" id="profile-auth"></div>
-    <button id="profile-done" class="mc-button">Done</button>`
+    <div class="button-row profile-bottom">
+      <button id="profile-forget" class="mc-button">Forget Me</button>
+      <button id="profile-done" class="mc-button">Done</button>
+    </div>
+    <div id="profile-confirm" class="hidden" role="alertdialog" aria-labelledby="profile-confirm-title">
+      <h1 id="profile-confirm-title">Forget everything?</h1>
+      <p class="profile-status">This deletes your saved world, your name, your passkey sign-in and
+        everything AI Evan remembers about you, in this browser and on the server.
+        It cannot be undone.</p>
+      <div class="button-row profile-bottom">
+        <button id="profile-forget-yes" class="mc-button">Forget Everything</button>
+        <button id="profile-forget-no" class="mc-button">Cancel</button>
+      </div>
+    </div>`
   pause.appendChild(panel)
 
   const style = document.createElement('style')
@@ -62,7 +75,11 @@ export function installProfile({ roster, localId, account, persist, chat, menuBu
       text-shadow: 2px 2px 0 #3f3f3f; line-height: 1.4; }
     #profile #profile-auth { width: 400px; }
     #profile #profile-auth:empty { display: none; }
-    #profile #profile-done { width: 200px; margin-top: 8px; }`
+    #profile .profile-bottom { width: 400px; margin-top: 8px; }
+    #profile-confirm { position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px; background: rgba(0,0,0,0.92); }
+    #profile-confirm.hidden { display: none; }
+    #profile-confirm h1 { color: #ff5555; }`
   document.head.appendChild(style)
 
   const $ = (id) => document.getElementById(id)
@@ -170,6 +187,46 @@ export function installProfile({ roster, localId, account, persist, chat, menuBu
     location.reload()
   }
 
+  /*
+   * FORGET ME. Drawn in-game as a second panel over this one, never a
+   * browser confirm(): a native dialog would steal pointer lock, look like
+   * the page broke, and is suppressed outright in some embedded browsers.
+   *
+   * Order matters. The save is paused FIRST so the 4-second autosave and the
+   * pagehide flush cannot write the world straight back after it is wiped.
+   * The server is asked next, while the session that names this visitor
+   * still exists; then the local copies go, then the page reloads as a
+   * stranger.
+   */
+  const confirm = $('profile-confirm')
+  const LOCAL_KEYS = ['world:v1:visitor-id', 'world:v1:session', 'world:v1:account',
+    'world.operator', 'world:v1:player-name']
+
+  async function forgetEverything() {
+    busy(true)
+    persist?.pause()
+    const res = await account.forget()
+    if (!res.ok) {
+      busy(false)
+      persist?.resume()
+      confirm.classList.add('hidden')
+      error.textContent = 'Could not reach the server, so nothing was deleted. Try again?'
+      return
+    }
+    await clearLocal()
+    roster.forget()
+    for (const k of LOCAL_KEYS) { try { localStorage.removeItem(k) } catch { /* private mode */ } }
+    location.reload()
+  }
+
+  $('profile-forget').addEventListener('click', () => {
+    error.textContent = ''
+    confirm.classList.remove('hidden')
+    $('profile-forget-no').focus()
+  })
+  $('profile-forget-no').addEventListener('click', () => confirm.classList.add('hidden'))
+  $('profile-forget-yes').addEventListener('click', forgetEverything)
+
   async function save() {
     error.textContent = ''
     const res = await rename(input.value)
@@ -196,6 +253,7 @@ export function installProfile({ roster, localId, account, persist, chat, menuBu
     input.select()
   }
   const close = () => {
+    confirm.classList.add('hidden')
     panel.classList.add('hidden')
     pause.classList.remove('profile-open')
     menuButton.textContent = label()

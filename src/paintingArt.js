@@ -405,6 +405,9 @@ export function paintingAt(x, y, z) {
   return anchor ? { anchor, ...hung.get(anchor) } : null
 }
 
+/** Every hung painting by anchor, as [`x,y,z`, { name, facing, ... }]. For src/persistence.js. */
+export const paintingEntries = () => [...hung.entries()]
+
 /** How many paintings are hung, and how many textures they share between them. */
 export const paintingStats = () => ({
   hung: hung.size,

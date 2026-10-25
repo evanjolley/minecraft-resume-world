@@ -1,5 +1,7 @@
 import { item, itemId } from './items.js'
 import { bounds } from './island.js'
+import { signTextEntries, signTextAt, setSignText, clearSignText } from './signText.js'
+import { paintingEntries, registerPainting, clearPainting } from './paintingArt.js'
 
 /*
  * A WORLD THAT STAYS CHANGED.
@@ -39,9 +41,9 @@ import { bounds } from './island.js'
  * is part of the chunk the first time it is meshed: no setBlock storm at
  * boot, no item drops, no fluid ticks, no second mesh.
  *
- * NOT YET SAVED: furnace contents, sign text, paintings' art and AI Evan's
- * position. All live in side tables keyed by coordinate; each is a field in
- * the save once it matters.
+ * TILE DATA (sign text, which painting hangs where, furnace contents) is
+ * saved per world as `tiles`; see "Tile data" below. NOT saved: AI Evan's
+ * position, which resets to the door on every visit on purpose.
  *
  * UNDER AUTOMATION it is OFF unless the page opts in with
  * localStorage['world:persist'] = '1'. The suite shares one booted world
@@ -133,7 +135,8 @@ export function mergeSaves(preferred, other) {
     const byPos = new Map()
     for (const e of b?.edits ?? []) byPos.set(`${e[0]},${e[1]},${e[2]}`, e)
     for (const e of a?.edits ?? []) byPos.set(`${e[0]},${e[1]},${e[2]}`, e)
-    worlds[dim] = { gen: a?.gen ?? b?.gen ?? '', edits: [...byPos.values()].slice(0, MAX_EDITS_PER_WORLD) }
+    const tiles = a?.tiles ?? b?.tiles
+    worlds[dim] = { gen: a?.gen ?? b?.gen ?? '', edits: [...byPos.values()].slice(0, MAX_EDITS_PER_WORLD), ...(tiles ? { tiles } : {}) }
   }
   const newer = (preferred.updatedAt ?? 0) >= (other.updatedAt ?? 0) ? preferred : other
   return { v: SAVE_VERSION, updatedAt: Math.max(preferred.updatedAt ?? 0, other.updatedAt ?? 0),
@@ -323,9 +326,13 @@ export function installPersistence(noa, { ids, getVoxelID, currentDimension, loa
       const i = e.x - x0, j = e.y - y0, k = e.z - z0
       if (i < 0 || j < 0 || k < 0 || i >= data.shape[0] || j >= data.shape[1] || k >= data.shape[2]) continue
       if (data.get(i, j, k) !== e.was) {
-        // The landscape moved under this edit. It describes nothing now.
+        // The landscape moved under this edit. It describes nothing now, and
+        // neither does any sign text, painting or furnace restored onto it.
         list.delete(pos)
         set.delete(pos)
+        if (signTextAt(e.x, e.y, e.z) && !baselineSigns.has(pos)) clearSignText(e.x, e.y, e.z)
+        if (paintingEntries().some(([k]) => k === pos)) clearPainting(e.x, e.y, e.z)
+        furnaces?.forget([e.x, e.y, e.z])
         dropped++
         dirty = true
         changedSinceSync = true
@@ -341,6 +348,112 @@ export function installPersistence(noa, { ids, getVoxelID, currentDimension, loa
 
   let collectState = () => lastSnapshot
 
+  /* ------------------------------------------------------------------ *
+   * Tile data: sign text, paintings, furnace contents
+   * ------------------------------------------------------------------ *
+   *
+   * A voxel is an integer, so what a block HOLDS lives in side tables keyed
+   * by coordinate (signText.js, paintingArt.js, furnace.js). The overlay
+   * restores the blocks without going through setBlock, so those tables have
+   * to be restored separately or a saved sign comes back blank and a placed
+   * painting comes back with no picture.
+   *
+   * The same diff discipline as blocks. The builds write their own signs and
+   * paintings every time the world is generated, so only what the VISITOR
+   * changed is saved:
+   *
+   *   - anything at a coordinate the visitor edited (a sign they placed, a
+   *     painting they hung, a furnace they built), and
+   *   - a build's sign whose text they rewrote, found by comparing with the
+   *     baseline the builds produced at boot, and
+   *   - a TOMBSTONE for a build's sign or painting the visitor removed, so it
+   *     does not float back as text over an empty block.
+   *
+   * Restored only where it still makes sense: an entry whose block edit was
+   * dropped because the landscape moved (see the header) is dropped with it.
+   */
+  let furnaces = null
+  let baselineSigns = new Map()
+  let baselinePaintings = new Set()
+  const savedTiles = new Map(Object.entries(loaded?.save?.worlds ?? {})
+    .filter(([, w]) => w.tiles).map(([d, w]) => [d, w.tiles]))
+  const posKey = (x, y, z) => `${x},${y},${z}`
+  const parsePos = (k) => k.split(',').map(Number)
+  const edited = (dim, k) => edits.get(dim)?.has(k) ?? false
+  const stackOut = (s) => {
+    if (!s) return null
+    const key = item(s.id)?.key
+    return key ? { key, count: s.count } : null
+  }
+  const stackIn = (s) => {
+    if (!s) return null
+    const id = itemId(s.key)
+    return id === undefined || id === null ? null : { id, count: s.count }
+  }
+
+  function captureBaseline() {
+    baselineSigns = new Map(signTextEntries().map(([k, e]) => [k, JSON.stringify(e)]))
+    baselinePaintings = new Set(paintingEntries().map(([k]) => k))
+  }
+
+  function collectTiles(dim) {
+    const signs = []
+    const live = new Set()
+    for (const [k, e] of signTextEntries()) {
+      live.add(k)
+      if (edited(dim, k) || baselineSigns.get(k) !== JSON.stringify(e)) {
+        signs.push([...parsePos(k), e.lines.map((l) => String(l).slice(0, 64)), e.colour ?? null])
+      }
+    }
+    const paintings = []
+    const hungNow = new Set()
+    for (const [k, e] of paintingEntries()) {
+      hungNow.add(k)
+      if (edited(dim, k) && !baselinePaintings.has(k)) paintings.push([...parsePos(k), e.facing, e.name])
+    }
+    const cleared = [
+      ...[...baselineSigns.keys()].filter((k) => !live.has(k)).map((k) => ['sign', ...parsePos(k)]),
+      ...[...baselinePaintings].filter((k) => !hungNow.has(k)).map((k) => ['painting', ...parsePos(k)]),
+    ]
+    const ovens = []
+    for (const { pos, f } of furnaces?.all() ?? []) {
+      if (!f.slots.some(Boolean) && f.burn <= 0) continue
+      ovens.push([...parsePos(pos), f.kind, f.slots.map(stackOut), f.burn, f.burnTotal, f.cook, f.cookTotal])
+    }
+    return { signs, paintings, furnaces: ovens, cleared }
+  }
+
+  function restoreTiles(dim) {
+    const t = savedTiles.get(dim)
+    if (!t) return 0
+    let n = 0
+    for (const [kind, x, y, z] of t.cleared ?? []) {
+      if (kind === 'sign') clearSignText(x, y, z)
+      else if (kind === 'painting') clearPainting(x, y, z)
+    }
+    for (const [x, y, z, lines, colour] of t.signs ?? []) {
+      const k = posKey(x, y, z)
+      if (!edited(dim, k) && !signTextAt(x, y, z)) continue
+      setSignText(x, y, z, lines, colour ? { colour } : {})
+      n++
+    }
+    for (const [x, y, z, facing, name] of t.paintings ?? []) {
+      if (!edited(dim, posKey(x, y, z))) continue
+      try { registerPainting(x, y, z, facing, name); n++ } catch { /* that art no longer exists */ }
+    }
+    for (const [x, y, z, kind, slots, burn, burnTotal, cook, cookTotal] of t.furnaces ?? []) {
+      if (!furnaces) break
+      const k = posKey(x, y, z)
+      if (!edited(dim, k) && !String(keyOf.get(getVoxelID(x, y, z, ids)) ?? '').includes('furnace')) continue
+      const f = furnaces.at([x, y, z], kind)
+      f.slots = (slots ?? []).slice(0, 3).map(stackIn)
+      while (f.slots.length < 3) f.slots.push(null)
+      Object.assign(f, { burn: burn ?? 0, burnTotal: burnTotal ?? 0, cook: cook ?? 0, cookTotal: cookTotal ?? f.cookTotal })
+      n++
+    }
+    return n
+  }
+
   function buildSave() {
     const worlds = {}
     for (const [dim, list] of edits) {
@@ -352,6 +465,13 @@ export function installPersistence(noa, { ids, getVoxelID, currentDimension, loa
       worlds[dim] = { gen: gens.get(dim) ?? (dim === currentDimension() ? generationId() : savedGens.get(dim) ?? ''), edits: out }
     }
     if (!worlds.overworld) worlds.overworld = { gen: currentDimension() === 'overworld' ? generationId() : '', edits: [] }
+    const here = currentDimension()
+    if (!worlds[here]) worlds[here] = { gen: generationId(), edits: [] }
+    /* Tile data: live for the world you are in, as loaded for the others. */
+    for (const dim of Object.keys(worlds)) {
+      const tiles = dim === here ? collectTiles(dim) : savedTiles.get(dim)
+      if (tiles) worlds[dim].tiles = tiles
+    }
     lastSnapshot = collectState() ?? lastSnapshot
     return { v: SAVE_VERSION, updatedAt: Date.now(), state: lastSnapshot, worlds }
   }
@@ -402,6 +522,10 @@ export function installPersistence(noa, { ids, getVoxelID, currentDimension, loa
    * @returns {{ restored: boolean }}
    */
   function attach({ inventory, sky, authority, dimensions, teleport, spawn, playerEntity, camera }) {
+    furnaces = inventory.furnaces ?? null
+    // What the builds wrote, before the visitor or the save touches anything.
+    captureBaseline()
+    if (enabled) restoreTiles(currentDimension())
     collectState = () => {
       const pos = noa.ents.getPosition(playerEntity())
       const stack = (s) => {
@@ -449,6 +573,7 @@ export function installPersistence(noa, { ids, getVoxelID, currentDimension, loa
       }
       if (st.dimension && st.dimension !== 'overworld' && dimensions?.enter) {
         dimensions.enter(st.dimension).then((r) => {
+          if (r?.ok) restoreTiles(st.dimension)
           // generationId() now answers for the dimension just entered.
           if (r?.ok && st.position && savedGen === generationId()) teleport(...st.position)
         })
@@ -481,6 +606,8 @@ export function installPersistence(noa, { ids, getVoxelID, currentDimension, loa
     get positionTrusted() { return positionTrusted },
     get dropped() { return dropped },
     editCount(dim = currentDimension()) { return edits.get(dim)?.size ?? 0 },
+    /** The tile data a save would carry for the world you are in. */
+    tiles: () => collectTiles(currentDimension()),
     /** Stop recording AND saving: sign-out wipes the save, and a pagehide
      *  flush after that must not write it straight back. */
     pause() { recording = false },
