@@ -26,6 +26,15 @@ exactly what vanilla's models/item/potion.json describes and what Minecraft
 does at render time, so the result is CC-BY-SA-4.0 like every other derivative
 below.
 
+`entity/` holds the default player skin (steve.png) and, since 2026-10-25,
+the passive mobs' skins: cow.png, pig.png, sheep.png, sheep_fur.png and
+chicken.png, from the pack's assets/minecraft/textures/entity (cow/, pig/,
+sheep/ and the top level), copied unmodified. The same day `item/` gained the
+food the mobs drop -- beef, porkchop, mutton and chicken, raw and cooked, and
+egg -- copied unmodified, and moon_phases.png arrived at the top level from
+assets/minecraft/textures/environment, copied unmodified. The build derives
+alpha from its luminance, the same derivative sun.png and moon.png already are.
+
 Modification: crack.png is a derivative of the pack's crack_anylength.png.
 Its RGB channels have been flattened to black while preserving the original
 alpha, so it can be used as a pure alpha mask for a black crack overlay.

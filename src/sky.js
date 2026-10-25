@@ -6,6 +6,11 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { MC } from './physics.js'
 import { setEntityLight, setSunLight } from './entityLight.js'
 import { setTerrainLight, MC_FACE_SHADE } from './blockLight.js'
+import {
+  celestialAngle, sunDirection, skyColor, fogColor, sunriseColor, starBrightness,
+  skyDarken, cloudColor, moonPhase,
+} from './celestial.js'
+import { installSkyDome } from './skyDome.js'
 
 /*
  * FACE SHADING, and why the light points straight down.
@@ -126,54 +131,18 @@ const TICKS_PER_DAY = 24000
 // Minecraft starts a new world at ~1000, just after sunrise.
 const START_TIME = 1000
 
-// Sky colours, sampled from Minecraft.
-const SKY_DAY = [0.47, 0.655, 1.0]
-const SKY_SUNSET = [0.97, 0.52, 0.24]
-const SKY_NIGHT = [0.02, 0.025, 0.07]
-
 const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v
-const mix = (a, b, t) => [
-  a[0] + (b[0] - a[0]) * t,
-  a[1] + (b[1] - a[1]) * t,
-  a[2] + (b[2] - a[2]) * t,
-]
-
-/* Rec. 601 luminance -- 0.3/0.59/0.11 is the weighting Minecraft's own weather
- * tinting uses, not a modern Rec. 709 grey. */
-const luma = (c) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11
+/*
+ * The weather tint (rain and thunder greying the sky and clouds toward their
+ * own luminance) moved to src/celestial.js with the rest of vanilla's sky
+ * arithmetic.
+ */
 
 /*
- * Minecraft's weather tinting, rain then thunder: the colour is dragged toward
- * a grey of its OWN luminance -- 60% as bright under rain, 20% under thunder.
- *
- * Worth copying rather than fading to a fixed storm grey, which was the
- * obvious version: deriving the grey from the colour it replaces means an
- * overcast sunset stays orange while it goes flat, where a fixed grey would
- * flatten sunset and noon into the same frame.
- *
- * `weight` is not a knob. getSkyColor blends by level * 0.75 and
- * getCloudColor by level * 0.95, which is why a storm turns the clouds grey
- * harder than it turns the sky grey, and the gap between the two is most of
- * what makes an overcast sky read as overcast.
+ * The sky's colors used to be three hand-picked swatches blended by sun
+ * elevation, with the whole sky turning orange at sunset. They are vanilla's
+ * functions now, in src/celestial.js, drawn as a gradient by src/skyDome.js.
  */
-function weatherTint(c, rain, thunder, weight) {
-  let out = c
-  if (rain > 0) { const g = luma(out) * 0.6; out = mix(out, [g, g, g], rain * weight) }
-  if (thunder > 0) { const g = luma(out) * 0.2; out = mix(out, [g, g, g], thunder * weight) }
-  return out
-}
-
-/*
- * Sky colour from the sun's elevation rather than from the clock directly.
- * Driving it off elevation means sunrise and sunset get the same treatment
- * for free, instead of needing two hand-written time windows that inevitably
- * disagree at the edges.
- */
-function skyColorFor(elevation) {
-  if (elevation > 0.20) return SKY_DAY
-  if (elevation > -0.05) return mix(SKY_SUNSET, SKY_DAY, clamp01((elevation + 0.05) / 0.25))
-  return mix(SKY_NIGHT, SKY_SUNSET, clamp01((elevation + 0.25) / 0.20))
-}
 
 /* ------------------------------------------------------------------ *
  * Clouds
@@ -508,14 +477,46 @@ export function installSky(noa) {
     return { mesh, mat }
   }
 
-  const sun = celestial('sun', '/textures/sun.png', 60)
-  const moon = celestial('moon', '/textures/moon.png', 40)
+  /*
+   * Vanilla's quads: the sun is 30 units either side of center at distance
+   * 100, the moon 20. Scaled to SKY_DIST so the angle on screen is vanilla's.
+   * They were 60 and 40 at 260, about 40% of vanilla's size.
+   */
   const SKY_DIST = 260
+  const sun = celestial('sun', '/textures/sun.png', 0.6 * SKY_DIST)
+  const moon = celestial('moon', '/textures/moon_phases.png', 0.4 * SKY_DIST)
+  /*
+   * Moon phases: moon_phases.png is vanilla's 4 x 2 sheet, phase 0 (full) at
+   * the top left. One cell is shown by scaling and offsetting the UVs.
+   */
+  const moonTex = moon.mat.emissiveTexture
+  moonTex.uScale = 0.25
+  moonTex.vScale = 0.5
+  let shownPhase = -1
+  const showPhase = (phase) => {
+    if (phase === shownPhase) return
+    shownPhase = phase
+    moonTex.uOffset = (phase % 4) * 0.25
+    // invertY is false, so v runs down the image: row 0 is the top half.
+    moonTex.vOffset = Math.floor(phase / 4) * 0.5
+  }
+  showPhase(0)
+
+  const dome = installSkyDome(noa)
 
   const local = [0, 0, 0]
   const global = [0, 0, 0]
   let drift = 0
   let time = START_TIME
+  /*
+   * Whole days elapsed. `time` wraps at 24000, which the clock specs pin, so
+   * the day count vanilla keeps in dayTime lives here: the moon's phase and
+   * `/time query day` read it.
+   */
+  let day = 0
+  // Vanilla's gameTime: ticks since the world started, which no command and
+  // no gamerule stops. `/time query gametime` reads it.
+  let gameTime = 0
 
   /*
    * THE CLOCK'S OFF SWITCH.
@@ -618,6 +619,7 @@ export function installSky(noa) {
     sun.mesh.setEnabled(false)
     moon.mesh.setEnabled(false)
     clouds.mesh.setEnabled(false)
+    dome.setEnabled(false)
 
     const [r, g, b] = skyless.clearColor
     scene_.clearColor.set(r, g, b, 1)
@@ -645,31 +647,28 @@ export function installSky(noa) {
     const secs = dt / 1000
     const p = noa.ents.getPositionData(player).position
 
-    if (running) time = (time + secs * MC.TICKS_PER_SECOND) % TICKS_PER_DAY
+    gameTime += secs * MC.TICKS_PER_SECOND
+    if (running) {
+      time += secs * MC.TICKS_PER_SECOND
+      if (time >= TICKS_PER_DAY) { day += Math.floor(time / TICKS_PER_DAY); time %= TICKS_PER_DAY }
+    }
 
     if (skyless) { tickSkyless(); return }
 
     /*
-     * t=0 sunrise in the east, 6000 overhead, 12000 west, 18000 below.
+     * The sun's direction from vanilla's celestial angle (src/celestial.js),
+     * which is not linear in the clock: noon is 6000 and overhead, but the sun
+     * crosses the horizon at about 12785 and 23215, not 12000 and 0.
      *
-     * `sunX` is NEGATIVE cosine, and that minus sign is the whole of "the sun
-     * rises in the east". East is -X in this engine -- Babylon's scene is
-     * left-handed, see the compass note in debugScreen.js -- so dawn puts the
-     * sun at -1 and dusk at +1.
-     *
-     * It was a plain cosine until the terrain asset stopped being mirrored in
-     * X, and it was RIGHT then: the world was a mirror image of the save, so
-     * Minecraft's east was +X and the sun rose over the correct side of the
-     * ground. Flipping the terrain fixed the ground and left the sky rising in
-     * the west. The sun is the one thing in this world a player can navigate
-     * by, so it is worth more than the minus sign it costs.
+     * East is -X in this engine (Babylon's scene is left-handed, see the
+     * compass note in debugScreen.js), so the sun rises at -X and sets at +X.
      */
-    const angle = (time / TICKS_PER_DAY) * Math.PI * 2
-    const elevation = Math.sin(angle)
-    const sunX = -Math.cos(angle)
+    const angle = celestialAngle(time)
+    const [sunX, elevation] = sunDirection(angle)
 
     place(sun.mesh, sunX, elevation, 0, p[0], p[1], p[2])
     place(moon.mesh, -sunX, -elevation, 0, p[0], p[1], p[2])
+    showPhase(moonPhase(day * TICKS_PER_DAY + time))
     // Hide whichever one is below the horizon so it can't shine through the
     // island from underneath.
     sun.mesh.setEnabled(elevation > -0.15)
@@ -683,29 +682,30 @@ export function installSky(noa) {
     sun.mat.alpha = celestialAlpha
     moon.mat.alpha = celestialAlpha
 
-    let sky = weatherTint(skyColorFor(elevation), rainLevel, thunderLevel, 0.75)
     /*
-     * The lightning flash. Vanilla lerps the sky toward (0.8, 0.8, 1.0) by at
-     * most 0.45 for the two ticks skyFlashTime lasts, and that is all it does
-     * to the SKY -- the rest of what you see is the bolt entity itself lighting
-     * the world. There is no bolt here, so the flash also drives the light
-     * level below; a 0.45 tint on its own is nearly invisible.
+     * The zenith color is also what clearColor holds. The dome covers the
+     * whole background, so clearColor is only ever seen through a gap in it,
+     * and "the sky color" is the most useful thing for it to report.
      */
-    if (flash > 0) sky = mix(sky, [0.8, 0.8, 1.0], flash * 0.45)
+    const sky = skyColor(angle, rainLevel, thunderLevel, flash)
+    dome.setEnabled(true)
+    dome.update({
+      sky,
+      fog: fogColor(angle, rainLevel, thunderLevel),
+      sunrise: rainLevel < 1 ? sunriseColor(angle) : null,
+      sunX,
+      angle,
+      stars: starBrightness(angle, rainLevel),
+    })
     scene_.clearColor.set(sky[0], sky[1], sky[2], 1)
 
-    // Daylight drives the directional light and the ambient term together.
-    // Night bottoms out at 0.18 rather than 0 because pitch black is
-    // unreadable, and Minecraft's night isn't fully dark either.
-    const daylight = clamp01(elevation * 2 + 0.35)
     /*
-     * Minecraft's Level.updateSkyBrightness: rain costs five sixteenths of the
-     * sky light and thunder five sixteenths again, multiplied, so a full
-     * thunderstorm at noon is 0.69 * 0.69 = under half the daylight. That is
-     * why a storm reads as dusk without the clock having moved.
+     * Level.getSkyDarken: 0.2 at night, 1 at noon, and rain and thunder each
+     * take five sixteenths of the daylight part, so a storm reads as dusk
+     * without the clock moving. It used to be a hand-fit curve with a 0.18
+     * floor that also scaled the floor down in a storm.
      */
-    const storm = (1 - rainLevel * 5 / 16) * (1 - thunderLevel * 5 / 16)
-    const level = Math.max((0.18 + daylight * 0.82) * storm, flash)
+    const level = Math.max(skyDarken(angle, rainLevel, thunderLevel), flash)
     if (light) {
       light.intensity = level
       /*
@@ -741,10 +741,7 @@ export function installSky(noa) {
      * They are emissive, so without this they would glow at midnight like
      * strip lights.
      */
-    const c = weatherTint([1, 1, 1], rainLevel, thunderLevel, 0.95)
-    const cr = c[0] * (daylight * 0.9 + 0.1)
-    const cg = c[1] * (daylight * 0.9 + 0.1)
-    const cb = c[2] * (daylight * 0.85 + 0.15)
+    const [cr, cg, cb] = cloudColor(angle, rainLevel, thunderLevel)
     clouds.mat.emissiveColor.set(
       Math.min(1, cr + flash * 0.6),
       Math.min(1, cg + flash * 0.6),
@@ -791,7 +788,23 @@ export function installSky(noa) {
 
   return {
     getTime: () => time,
-    setTime: (t) => { time = ((t % TICKS_PER_DAY) + TICKS_PER_DAY) % TICKS_PER_DAY },
+    /*
+     * Any tick count. The time of day wraps to 0..23999 as it always has, and
+     * a count past the first day also sets the day number, so `/time set 30000`
+     * means day 1 at 6000 the way vanilla's dayTime does.
+     */
+    setTime: (t) => {
+      day = Math.max(0, Math.floor(t / TICKS_PER_DAY))
+      time = ((t % TICKS_PER_DAY) + TICKS_PER_DAY) % TICKS_PER_DAY
+    },
+    /** Whole days elapsed, vanilla's dayTime / 24000. */
+    get day() { return day },
+    get gameTime() { return Math.floor(gameTime) },
+    /** vanilla's dayTime: days and time of day as one count. */
+    get dayTime() { return day * TICKS_PER_DAY + Math.floor(time) },
+    get celestialAngle() { return celestialAngle(time) },
+    get moonPhase() { return moonPhase(day * TICKS_PER_DAY + time) },
+    dome,
     TICKS_PER_DAY,
 
     /**

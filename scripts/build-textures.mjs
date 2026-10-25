@@ -460,6 +460,9 @@ function looksComplete() {
   // and the swirl 404ing its sprite, which is exactly the shape of bug the
   // two lines above already exist to catch.
   if (!existsSync(join(dir, 'particle', 'spell.png'))) return false
+  // And again for the moon's phases and the mobs' skins.
+  if (!existsSync(join(dir, 'moon_phases.png'))) return false
+  if (!existsSync(join(dir, 'entity', 'chicken.png'))) return false
   if (source === 'vanilla' && !existsSync(join(dir, 'mob_effect'))) return false
   return readdirSync(dir).filter(f => f.endsWith('.png')).length >= MATERIALS.length
 }
@@ -830,6 +833,37 @@ function composite(base, over) {
 }
 
 const toPng = (raw, w, h) => sharp(raw, { raw: { width: w, height: h, channels: 4 } }).png()
+
+/*
+ * The passive mobs' skins (src/mobs.js). ALWAYS from Pixel Perfection CE, for
+ * both sources, on purpose: the models in mobs.js are the classic 64x32 UV
+ * layouts, and Minecraft 1.21.5 moved cows, pigs and chickens to new 64x64
+ * variant sheets with different UVs. A vanilla build would hand the classic
+ * models a sheet they cannot read. textures-src/ce/NOTICE.txt covers them.
+ */
+const MOB_TEXTURES = ['cow', 'pig', 'sheep', 'sheep_fur', 'chicken']
+async function emitMobTextures() {
+  mkdirSync(join(OUT, 'entity'), { recursive: true })
+  for (const n of MOB_TEXTURES) {
+    await sharp(join(CE_SRC, 'entity', `${n}.png`)).ensureAlpha().png()
+      .toFile(join(OUT, 'entity', `${n}.png`))
+  }
+}
+
+/*
+ * The moon's eight phases, vanilla's 4 x 2 moon_phases sheet, with alpha
+ * derived from luminance the same way sun.png and moon.png get it (see the
+ * note at alphaFromLuminance in fromVanilla). src/sky.js shows one cell.
+ */
+async function cutOutBlack(src, out) {
+  const { data, info } = await sharp(src).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  for (let i = 0; i < data.length; i += 4) {
+    const lum = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114)
+    data[i + 3] = Math.min(255, Math.round(lum * 1.25))
+  }
+  await toPng(data, info.width, info.height).toFile(out)
+}
+const emitMoonPhases = (src) => cutOutBlack(src, join(OUT, 'moon_phases.png'))
 
 /**
  * Run tasks with a bounded number in flight.
@@ -1265,6 +1299,19 @@ async function fromCE() {
    * not, so /textures/NOTICE.txt 404'd for anyone who followed the credit.
    */
   copyFileSync(join(CE_SRC, 'NOTICE.txt'), join(OUT, 'NOTICE.txt'))
+  // Overwrites the verbatim copy the loop above made: the sheet ships on
+  // black, and the sky wants it cut out.
+  await emitMoonPhases(join(CE_SRC, 'moon_phases.png'))
+  /*
+   * The CE sun and moon are NOT pre-derived, whatever the comment above the
+   * copy loop says: both are opaque, a disc on solid black with alpha 255
+   * everywhere. Copied verbatim they drew as a square in the sky, which every
+   * CE build (the deploy build among them) has shipped. Cut out here the way
+   * the vanilla build always did.
+   */
+  await cutOutBlack(join(CE_SRC, 'sun.png'), join(OUT, 'sun.png'))
+  await cutOutBlack(join(CE_SRC, 'moon.png'), join(OUT, 'moon.png'))
+  await emitMobTextures()
 
   await deriveParticleFromTorch(join(CE_SRC, 'block', 'torch.png'), 'flame')
   await deriveSpellStrip()
@@ -1409,6 +1456,8 @@ async function fromVanilla() {
   const moonCell = await sharp(t('moon_phases'))
     .extract({ left: 0, top: 0, width: cell, height: cell }).png().toBuffer()
   await alphaFromLuminance(moonCell, join(OUT, 'moon.png'))
+  await emitMoonPhases(t('moon_phases'))
+  await emitMobTextures()
 
   await emitParticle(t('flame'), 'flame')
   await emitSpellStrip(tmp)
