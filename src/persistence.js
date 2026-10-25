@@ -157,9 +157,11 @@ export function mergeSaves(preferred, other) {
 export async function loadSave(account, { timeoutMs = 2500 } = {}) {
   if (!persistenceEnabled()) return null
   let record = await readLocal()
-  // A save written by a different visitor (a shared computer, someone
-  // signed out) is not this visitor's world.
-  if (record && account.state.visitor && record.owner && record.owner !== account.state.visitor) {
+  // A save written by a different visitor is not a signed-in visitor's
+  // world. Guests keep whatever is local even if their session id was
+  // re-minted (an expired token), since sign-in and sign-out already clear
+  // the local save on purpose and nothing else should.
+  if (record && account.state.account && record.owner && record.owner !== account.state.visitor) {
     record = null
   }
   if (account.enabled && account.state.account) {
