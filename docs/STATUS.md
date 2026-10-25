@@ -19,7 +19,8 @@ The brief is `docs/SPRINT-1.md`.
 - Run the full suite once on a quiet machine
 
 ### Evan's items
-- Fill in the brain dump, a private claude.ai artifact named "AI Evan Brain Dump" with one big sheet for dictation and the interview prompts beside it. It replaces `npm run interview`. When Evan says "pull the brain dump", read its `dump/main` document and turn it into `corpus/extra/` files
+- Find the September quiz corpus (`corpus/profile.md` and `corpus/answers.json`). It is not on this Mac and not in this claude.ai account's artifacts. It was made under Evan's personal account. `npm run prompt` cannot build AI Evan's brain without `profile.md`
+- The brain dump (private artifact "AI Evan Brain Dump", two rounds on 2026-10-25) is pulled into the gitignored corpus. Facts are in `corpus/extra/brain-dump-2026-10-25.md`, voice in `corpus/knowledge/voice.md`, boundaries in `corpus/interview/boundaries-to-merge.md` (merge into `profile.md` once it is back). Resume chunks it contradicted are corrected. Opinions and a few voice answers are still thin
 - Describe what the No Logo and Patronus offices look like inside
 - Name the "other interests" the climb should touch
 - Pick the live domain, then set `PASSKEY_RP_ID` and `PASSKEY_ORIGIN` to turn sign-in on
@@ -36,4 +37,4 @@ The brief is `docs/SPRINT-1.md`.
 - `public/terrain` (the mountains and Nether assets) is not in the repo, so those worlds and 7 specs fail on a fresh clone
 - Spec 12's fingerprint test fails on the free sound set, same as before the sprint
 
-Next session start. "Read docs/STATUS.md and CLAUDE.md in ~/Personal/minecraft-resume-world. Pull the brain dump into the corpus, then let us go through the open items"
+Next session start. "Read docs/STATUS.md and CLAUDE.md in ~/Personal/minecraft-resume-world. Check whether the old quiz corpus is back on this Mac, merge the brain dump boundaries into profile.md, then let us go through the open items"
