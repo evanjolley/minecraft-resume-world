@@ -36,6 +36,7 @@ import { installSky, LIGHT_VECTOR } from './sky.js'
 import { installUnderwater } from './underwater.js'
 import { installTerrainAnimation } from './terrainAnimation.js'
 import { installBlockLight } from './blockLight.js'
+import { installChunkBudget } from './chunkBudget.js'
 import { createArmorReduction } from './armor.js'
 import { createEffects } from './effects.js'
 import { installEffectSwirl } from './effectSwirl.js'
@@ -229,6 +230,9 @@ noa.world.on('worldDataNeeded', (id, data, x, y, z) => {
   }
   noa.world.setChunkData(id, data)
 })
+
+// noa meshes one chunk per tick whatever its budget says; see chunkBudget.js.
+const chunkBudget = installChunkBudget(noa)
 
 /*
  * The player is drawn by perspective.js as a real Minecraft model wearing a
@@ -1081,7 +1085,7 @@ window.game = {
   // `fluids` is exposed for the same reason `move` is: the test suite asserts
   // measured swim speeds and breath durations, and both need to know which
   // fluid the player is actually registering as in.
-  fluids,
+  fluids, chunkBudget,
   inventory, survival, move, sky, menu, chat, inputLock, perspective,
   skinMaterial, sounds, particles, drops, weather, underwater,
   /*
