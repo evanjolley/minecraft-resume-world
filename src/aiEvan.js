@@ -1,4 +1,5 @@
 import { isLegalName, MAX_NAME_LENGTH } from './identity.js'
+import { CLIENT_TOOL_DEFS, CHAPTER_IDS } from './evanToolDefs.js'
 
 /*
  * AI EVAN: the tools he can call, and the fake brain that calls them.
@@ -37,21 +38,7 @@ export function createEvanTools(world) {
      * 30-character name should produce "that's a bit long, got a shorter
      * one?" and not a retry of the same call.
      */
-    [{
-      name: 'set_player_name',
-      description:
-        'Set the display name of the visitor you are talking to. Use this as '
-        + 'soon as they tell you their name. Pass just the name itself, not the '
-        + `sentence they said it in. Names are 1-${MAX_NAME_LENGTH} characters, `
-        + 'letters, digits and underscores only.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', description: 'The visitor\'s name, on its own.' },
-        },
-        required: ['name'],
-      },
-    }, ({ name }) => {
+    [CLIENT_TOOL_DEFS.set_player_name, ({ name }) => {
       if (typeof name !== 'string' || !name.trim()) throw new Error('name is required')
       const trimmed = name.trim()
       if (!isLegalName(trimmed)) {
@@ -80,15 +67,7 @@ export function createEvanTools(world) {
      * docs/FUTURE.md section 2: knowing where someone is standing is the
      * prerequisite for telling them where to go.
      */
-    [{
-      name: 'get_player_state',
-      description:
-        'Look at where the visitor is right now: their position in the world, '
-        + 'which way they are facing, how far they are from you, and which block '
-        + 'they are looking at. Use it when they ask about where they are or '
-        + 'what they can see.',
-      input_schema: { type: 'object', properties: {} },
-    }, () => world.playerState()],
+    [CLIENT_TOOL_DEFS.get_player_state, () => world.playerState()],
 
     /*
      * TOOL 3: THE FIRST ONE THAT MOVES A BODY.
@@ -116,23 +95,7 @@ export function createEvanTools(world) {
      * model that could specify an altitude would be able to ask him to stand
      * in the air, and the honest answer to that request does not exist.
      */
-    [{
-      name: 'walk_to',
-      description:
-        'Walk to a spot in the world and stop there. Give the x and z of the '
-        + 'place on the ground -- the height is worked out for you. This takes a '
-        + 'few seconds and does not return until you have arrived. It fails if '
-        + 'something taller than one block is in the way, in which case try a '
-        + 'closer or clearer spot rather than the same one again.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          x: { type: 'number', description: 'Target x, in world coordinates.' },
-          z: { type: 'number', description: 'Target z, in world coordinates.' },
-        },
-        required: ['x', 'z'],
-      },
-    }, async ({ x, z }) => {
+    [CLIENT_TOOL_DEFS.walk_to, async ({ x, z }) => {
       if (!Number.isFinite(x) || !Number.isFinite(z)) {
         throw new Error('walk_to needs a numeric x and z')
       }
@@ -143,6 +106,23 @@ export function createEvanTools(world) {
       const arrived = await world.walkTo({ x, z })
       return { ok: true, ...arrived }
     }],
+
+    /*
+     * TOOL 4: THE TOUR. walk_to with a table of plots, which is what the
+     * comment above said it would be once the builds existed -- plus a route,
+     * because the plots are 50 to 100 blocks apart down a winding path and a
+     * straight line between them runs through a river and a school.
+     *
+     * The leading lives in src/tour.js (A* over the voxels, waiting for the
+     * visitor). This is the thin binding. Registered only when the world
+     * supplies `leadTo`, so a caller without plots gets the old three tools.
+     */
+    ...(world.leadTo ? [[CLIENT_TOOL_DEFS.walk_to_plot, async ({ chapter }) => {
+      if (!CHAPTER_IDS.includes(chapter)) {
+        throw new Error(`no chapter called ${JSON.stringify(chapter)} -- pick one of ${CHAPTER_IDS.join(', ')}`)
+      }
+      return world.leadTo(chapter)
+    }]] : []),
   ]
 }
 
@@ -191,6 +171,10 @@ export const LINES = {
     `You're at ${s.position.map(Math.round).join(', ')}, ${Math.round(s.distanceToEvan)} `
     + `blocks from me, looking at ${s.lookingAt ?? 'thin air'}.`,
   onMyWay: 'On my way.',
+  tourStart: 'Follow me.',
+  arrivedAt: (label) => `Here we are: ${label}. Want the next one?`,
+  lostYou: 'Lost you back there. Say "tour" when you want to carry on.',
+  toured: 'That is every chapter. Thanks for walking it with me.',
   arrived: 'Here I am.',
   cantWalk: (why) => `I can't get there -- ${why}`,
 }
@@ -282,6 +266,14 @@ const ASKS_LOCATION =
  */
 const ASKS_COME =
   /\b(come\s+(?:here|over|to\s+me)|walk\s+(?:to|over)\s+(?:to\s+)?me|follow\s+me|over\s+here)\b/i
+/*
+ * ASKS FOR THE TOUR. "tour", "show me around", "next" once a tour is going.
+ * The stub walks the chapters in order, working out where it is up to from
+ * the transcript alone (the walk_to_plot results it has already seen), for
+ * the same pure-function reason as everything else here.
+ */
+const ASKS_TOUR =
+  /\b(tour|show\s+me\s+around|next\s+(?:one|stop|chapter)|keep\s+going|lead\s+the\s+way)\b|^\s*next\b/i
 const ASKS_BOOKING = /\b(book|meet|meeting|schedule|call|calendar|chat|talk to|hire|time with)\b/i
 const ASKS_WORK = /\b(work|job|resume|cv|career|do you do|built|experience|portfolio)\b/i
 
@@ -359,7 +351,8 @@ export async function stubBackend(request) {
  * a half per line -- and so the latency can be tested as its own thing,
  * rather than every assertion in the file becoming a timing assertion.
  */
-export function replyTo({ messages }) {
+export function replyTo(request) {
+  const { messages } = request
   const last = messages[messages.length - 1]
 
   /*
@@ -373,13 +366,14 @@ export function replyTo({ messages }) {
       const which = toolCallNamed(messages, result.tool_use_id)
       if (result.is_error) {
         if (which === 'set_player_name') say.push(LINES.rejected(result.content))
-        else if (which === 'walk_to') say.push(LINES.cantWalk(result.content))
+        else if (which === 'walk_to' || which === 'walk_to_plot') say.push(LINES.cantWalk(result.content))
         else say.push(LINES.fallback)
         continue
       }
       const data = JSON.parse(result.content)
       if (which === 'set_player_name') say.push(LINES.welcome(data.name))
       else if (which === 'walk_to') say.push(LINES.arrived)
+      else if (which === 'walk_to_plot') say.push(data.arrived ? LINES.arrivedAt(data.label) : LINES.lostYou)
       else if (which === 'get_player_state') {
         /*
          * The chain. The same read tool answers two different questions, and
@@ -419,6 +413,15 @@ export function replyTo({ messages }) {
     }
   }
 
+  if (ASKS_TOUR.test(said) && offersTour(request)) {
+    const next = CHAPTER_IDS.find((c) => !chaptersReached(messages).has(c))
+    if (!next) return { content: [{ type: 'text', text: LINES.toured }], stop_reason: 'end_turn' }
+    return {
+      content: [{ type: 'text', text: LINES.tourStart }, toolUse('walk_to_plot', { chapter: next })],
+      stop_reason: 'tool_use',
+    }
+  }
+
   // Both of these start with the same read. See ASKS_COME.
   if (ASKS_COME.test(said) || ASKS_LOCATION.test(said)) {
     return { content: [toolUse('get_player_state', {})], stop_reason: 'tool_use' }
@@ -427,6 +430,26 @@ export function replyTo({ messages }) {
     : ASKS_WORK.test(said) ? LINES.work
       : LINES.fallback
   return { content: [{ type: 'text', text }], stop_reason: 'end_turn' }
+}
+
+/** Does this caller have the tour tool? Read off the request, like a model would. */
+const offersTour = (request) => (request.tools ?? []).some((t) => t.name === 'walk_to_plot')
+
+/** Chapters a walk_to_plot has already arrived at, this conversation. */
+function chaptersReached(messages) {
+  const out = new Set()
+  for (const msg of messages) {
+    if (msg.role !== 'user' || !Array.isArray(msg.content)) continue
+    for (const b of msg.content) {
+      if (b.type !== 'tool_result' || b.is_error) continue
+      if (toolCallNamed(messages, b.tool_use_id) !== 'walk_to_plot') continue
+      try {
+        const d = JSON.parse(b.content)
+        if (d.arrived) out.add(d.chapter)
+      } catch { /* not ours */ }
+    }
+  }
+  return out
 }
 
 /** The last thing the PLAYER typed, skipping the tool_result messages the
@@ -545,3 +568,87 @@ export function workerBackend({ url = '/api/agent', fetch: f = globalThis.fetch 
 }
 
 const offline = (text) => ({ content: [{ type: 'text', text }], stop_reason: 'end_turn' })
+
+/* ------------------------------------------------------------------ *
+ * The real brain, with memory
+ * ------------------------------------------------------------------ */
+
+/*
+ * THE VISITOR ID. Opaque, random, 144 bits, kept in localStorage so AI Evan
+ * can recognise a returning visitor -- which is the whole of the memory
+ * feature, and the reason this is NOT the per-tab SESSION_ID above.
+ *
+ * A placeholder for whatever the identity layer issues. Pass your own
+ * `visitorId` getter to evanBackend() and this is never called. The server
+ * keys memory on the string and nothing else, so a guest id, an account id
+ * or a server-signed token all work, as long as it is 22-64 characters of
+ * [A-Za-z0-9_-] and unguessable: whoever holds it can talk to that memory.
+ */
+const VISITOR_KEY = 'world:v1:visitor-id'
+
+export function localVisitorId(storage = globalThis.localStorage) {
+  try {
+    const have = storage?.getItem(VISITOR_KEY)
+    if (have && /^[A-Za-z0-9_-]{22,64}$/.test(have)) return have
+  } catch { /* private mode: fall through to a fresh id */ }
+  const b = new Uint8Array(18)
+  crypto.getRandomValues(b)
+  const id = btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  try { storage?.setItem(VISITOR_KEY, id) } catch { /* not fatal: memory lasts one load */ }
+  return id
+}
+
+/**
+ * A backend for /api/evan, where THE SERVER HOLDS THE TRANSCRIPT.
+ *
+ * Same contract as every backend (agent.js): takes { messages, tools },
+ * returns a /v1/messages reply. The difference is what it sends: only the
+ * LAST message -- what the visitor just typed, or the results of the tools
+ * the browser just ran -- plus the NAMES of the tools it has. The server
+ * supplies the history from the visitor's memory and the tool wording from
+ * src/evanToolDefs.js, so nothing the browser holds can be forged into the
+ * prompt.
+ *
+ * agent.js keeps its own copy of `messages` regardless, and that is fine: it
+ * is a local echo, and npc.js resetting it when you walk away no longer
+ * loses anything, because the server's copy is the real one.
+ *
+ * @param {object} [opts]
+ * @param {() => string} [opts.visitorId]
+ * @param {string} [opts.url]
+ * @param {function} [opts.fetch]
+ */
+export function evanBackend({ visitorId = () => localVisitorId(), url = '/api/evan', fetch: f = globalThis.fetch } = {}) {
+  return async ({ messages, tools }) => {
+    const last = messages[messages.length - 1]
+    const body = { visitorId: visitorId(), tools: (tools ?? []).map((t) => t.name) }
+    if (typeof last?.content === 'string') body.message = last.content
+    else body.toolResults = (last?.content ?? []).filter((b) => b.type === 'tool_result')
+    let res
+    try {
+      res = await f(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    } catch {
+      return offline('I lost my connection there. Say that again?')
+    }
+    /* 503 carries a sentence ("no brain wired up"), so it is read, not replaced. */
+    if (!res.ok && res.status >= 500 && res.status !== 503) return offline('Something broke on my end. One more time?')
+    try {
+      return await res.json()
+    } catch {
+      return offline('That came back garbled. Try again?')
+    }
+  }
+}
+
+/** Ask the server to forget this visitor. For a "forget me" button or command. */
+export async function forgetVisitor({ visitorId = () => localVisitorId(), url = '/api/evan', fetch: f = globalThis.fetch } = {}) {
+  const res = await f(url, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ visitorId: visitorId(), forget: true }),
+  })
+  return res.ok
+}

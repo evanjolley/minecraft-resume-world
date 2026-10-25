@@ -514,9 +514,12 @@ export function installNPC(noa, {
 
   /**
    * @param {[number, number]} target  x and z. The GROUND picks the y.
+   * @param {{ radius?: number }} [opts]  how close counts as arrived. The
+   *   tour (src/tour.js) passes a looser radius for the checkpoints along a
+   *   route, so he walks through them instead of stopping at each one.
    * @returns {Promise<{x:number,z:number,blocks:number}>}
    */
-  const walkTo = ([x, z]) => new Promise((resolve, reject) => {
+  const walkTo = ([x, z], { radius = ARRIVE_RADIUS } = {}) => new Promise((resolve, reject) => {
     if (!Number.isFinite(x) || !Number.isFinite(z)) {
       reject(new Error('walk target needs a finite x and z'))
       return
@@ -527,7 +530,7 @@ export function installNPC(noa, {
     endWalk(new Error('interrupted by a new destination'))
     const here = at()
     walk = {
-      x, z, resolve, reject,
+      x, z, resolve, reject, radius: Math.max(ARRIVE_RADIUS, Number(radius) || ARRIVE_RADIUS),
       elapsed: 0,
       budget: walkBudgetSeconds(Math.hypot(x - here[0], z - here[2])),
       best: Math.hypot(x - here[0], z - here[2]),
@@ -559,7 +562,7 @@ export function installNPC(noa, {
     const dz = walk.z - here[2]
     const distance = Math.hypot(dx, dz)
 
-    if (distance <= ARRIVE_RADIUS) {
+    if (distance <= walk.radius) {
       endWalk(null, { x: here[0], z: here[2], blocks: distance })
       return
     }
@@ -835,7 +838,12 @@ export function installNPC(noa, {
        * is a character that pauses before it reacts.
        */
       if (script.greet) say(script.greet)
-    } else if (talking && near > LEAVE_RADIUS) {
+    } else if (talking && near > LEAVE_RADIUS && !walk && !session?.busy) {
+      /* Not while he is walking, and not while a turn is still running --
+       * which covers a tour, where he walks ahead and then stands waiting
+       * for you at a checkpoint. The gap is HIS doing then, and ending the
+       * conversation would reset the very exchange that sent him. This only
+       * ends it once the turn is over and you have actually walked off. */
       talking = false
       session?.reset()
     }

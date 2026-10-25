@@ -21,7 +21,11 @@ name = "world"
 # without it fails at bundle time, which is the correct failure. The
 # alternative, a committed placeholder prompt, would deploy an Evan who
 # confidently knows nothing about Evan.
-main = "./worker/index.js"
+#
+# The entry is worker/main.js, not index.js: workerd refuses a main module
+# whose named exports are not entrypoints, and index.js exports constants for
+# its spec. See the header of worker/main.js.
+main = "./worker/main.js"
 
 # Pinned deliberately. Cloudflare gates runtime behaviour changes behind this
 # date, so a deploy a year from now behaves like a deploy today. Bumping it is
@@ -53,7 +57,7 @@ binding = "ASSETS"
 # would answer /api/agent with a 404 before any code runs. Scoped to the one
 # path: everything else still skips the Worker entirely, which is why serving
 # the site costs nothing.
-run_worker_first = ["/api/agent"]
+run_worker_first = ["/api/agent", "/api/evan"]
 
 # not_found_handling is left at its default ("none": a real 404) rather than
 # "single-page-application". SPA handling would answer /textures/atlas9.png
@@ -82,6 +86,28 @@ name = "AGENT_LIMIT"
 type = "ratelimit"
 namespace_id = "1001"
 simple = { limit = 15, period = 60 }
+
+# --------------------------------------------------------------------------
+# AI Evan's memory of each visitor. One SQLite-backed Durable Object per
+# visitor id, named by idFromName(visitorId). See worker/agent/visitorMemory.js
+# for the class and docs/decisions.md for why a DO and not D1 or KV.
+#
+# new_sqlite_classes, NOT new_classes: the storage backend is fixed at class
+# creation (the same warning the Room block below carries). The tag is the
+# first migration this Worker has; if another branch adds a Durable Object
+# too, the two migrations must be ordered (v1, v2), not both called v1.
+[[durable_objects.bindings]]
+name = "VISITOR_MEMORY"
+class_name = "VisitorMemory"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VisitorMemory"]
+
+# Local development only, never set in production: `AGENT_MOCK_MODEL=1` in
+# .dev.vars makes /api/evan answer from worker/agent/mock.js instead of
+# Anthropic, so `wrangler dev` exercises memory without a key. A real
+# ANTHROPIC_API_KEY always overrides it.
 
 # --------------------------------------------------------------------------
 # Multiplayer, later. Commented out because none of it exists yet.

@@ -215,6 +215,9 @@ question really needs more.`
  */
 const GATE_LINE = 'Not something I get into here. Ask me about the work instead?'
 
+/* Characters of interview voice notes allowed into the resident prompt. */
+const VOICE_NOTES_MAX = 2400
+
 /*
  * Compensation, as a deterministic pattern rather than a term from corpus/.
  *
@@ -501,7 +504,7 @@ function assertNoVerbatim(output, answers) {
  * Build
  * ------------------------------------------------------------------ */
 
-export function buildPrompt({ profile, answers = {} }) {
+export function buildPrompt({ profile, answers = {}, voiceNotes = '' }) {
   const S = sections(profile)
   const record = S.get('the record')
   const character = S.get('who he is')
@@ -581,7 +584,11 @@ export function buildPrompt({ profile, answers = {} }) {
   const residentParts = [
     FRAME,
     'WHO HE IS\n\n' + labelledParagraphs(character).map((p) => topicSentence(p.text)).join('\n'),
-    'HOW YOU SOUND\n\n' + plain(voice),
+    'HOW YOU SOUND\n\n' + plain(voice)
+      /* corpus/knowledge/voice.md, from the interview's voice section. Capped
+       * hard: it is resident, every token of it is paid on every turn, and
+       * the corpus doc measures persona length as a tax on accuracy. */
+      + (voiceNotes ? `\n\n${plain(voiceNotes).slice(0, VOICE_NOTES_MAX)}` : ''),
     'HOW YOU BEHAVE\n\n'
       + keep.map((s) => `${s.title.toUpperCase()}\n${plain(s.body)}`).join('\n\n'),
     RULES,
@@ -688,6 +695,16 @@ function takeSource(body) {
   return [m[1].trim(), body.replace(m[0], '').trim()]
 }
 
+const KIND_RE = /^\s*Kind:\s*(\w+)\s*$/im
+const CHAPTER_RE = /^\s*Chapter:\s*(ch\d)\s*$/im
+
+/** Pull one metadata line out of a body, returning [value|null, rest]. */
+function takeLine(body, re) {
+  const m = re.exec(body)
+  if (!m) return [null, body]
+  return [m[1].trim(), body.replace(m[0], '').trim()]
+}
+
 /** `## Title` split that PRESERVES the title's case, unlike sections(), whose
  *  keys are lowercased so profile.md can be looked up by name. An index line
  *  reading "- millard north high school" is not what the model should see. */
@@ -710,7 +727,13 @@ function extraFiles() {
     const [fileSource] = takeSource(preamble)
 
     return splitOnHeadings(md).map(({ title, body }) => {
-      const [own, rest] = takeSource(body)
+      const [own, afterSource] = takeSource(body)
+      /* Optional Kind: and Chapter: lines, which the interview writes
+       * (scripts/interview/engine.mjs). Metadata like Source, so lifted out
+       * of the text: the Worker's retrieval reads `chapter` to find what to
+       * say at each plot, and `kind` to tell a story from a fact. */
+      const [kind, afterKind] = takeLine(afterSource, KIND_RE)
+      const [chapter, rest] = takeLine(afterKind, CHAPTER_RE)
       const source = own ?? fileSource
       if (!source) {
         die(`corpus/extra/${f}: the chunk "${title}" has no Source: line, and the `
@@ -723,6 +746,8 @@ function extraFiles() {
         label: title,
         source: plain(source),
         text: plain(rest),
+        ...(kind ? { kind: kind.toLowerCase() } : {}),
+        ...(chapter && /^ch[1-6]$/i.test(chapter) ? { chapter: chapter.toLowerCase() } : {}),
       }
     })
   }).flat()
@@ -890,7 +915,25 @@ function main() {
     console.warn('build-prompt: corpus/answers.json missing, verbatim check skipped')
   }
 
-  const built = buildPrompt({ profile, answers })
+  /*
+   * The interview's answers join the verbatim check. They are typed fast on
+   * purpose and the distill step rewrites them; this is what proves it did.
+   */
+  const sessionPath = join(CORPUS, 'interview', 'session.json')
+  if (existsSync(sessionPath)) {
+    const session = JSON.parse(readFileSync(sessionPath, 'utf8'))
+    for (const [id, sec] of Object.entries(session.sections ?? {})) {
+      (sec.turns ?? []).forEach((t, i) => {
+        if (t.a) answers[`interview-${id}-${i}`] = { text: t.a, private: false }
+      })
+    }
+  }
+  const voicePath = join(CORPUS, 'knowledge', 'voice.md')
+  const voiceNotes = existsSync(voicePath)
+    ? readFileSync(voicePath, 'utf8').split('\n').filter((l) => l.startsWith('- ')).join('\n')
+    : ''
+
+  const built = buildPrompt({ profile, answers, voiceNotes })
   const est = Math.round(built.system.length / 3.8)
 
   console.log(`resident prompt   ${built.system.length} chars, ~${est} tokens`)
