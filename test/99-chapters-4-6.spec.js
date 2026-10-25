@@ -96,24 +96,28 @@ test.describe('chapters 4-6 stamp and stay in bounds', () => {
 })
 
 test.describe('the words read the right way round, from where you read them', () => {
-  test('NO LOGO on the loft, read from the avenue (facing +x)', async ({ page }) => {
-    const rows = await readWall(page, 'ch4', { x: 14, yTop: 25, z0: 8, z1: 34, key: 'sea_lantern', towardPlusZ: false })
+  test('ANGELIKA over the cinema door, read from Houston Street (facing -z)', async ({ page }) => {
+    /* An xy face read from +z: the reader's right is -x, so the reading
+     * order runs from high x to low x. */
+    const rows = await inPage(page, (mod) => {
+      const w = mod.previewPatch()
+      const at = mod.reader(w, 'ch4')
+      const out = []
+      for (let y = 9; y >= 5; y--) {
+        let row = ''
+        for (let x = 52; x >= 22; x--) row += at(x, y, 36) === 'sea_lantern' ? '#' : '.'
+        out.push(row)
+      }
+      return out
+    })
     expect(rows.join('').replace(/\./g, '').length, 'nothing there to read').toBeGreaterThan(40)
-    const text = decodeRows(rows, 7)
-    expect(same(text, 'NO LOGO'), `the loft says ${JSON.stringify(text)}`).toBe(true)
+    expect(decodeRows(rows, 8)).toBe('ANGELIKA')
   })
 
   test('DELI on the corner, read from the avenue (facing +x)', async ({ page }) => {
     const rows = await readWall(page, 'ch4', { x: 13, yTop: 9, z0: 46, z1: 60, key: 'yellow_concrete', towardPlusZ: false })
     expect(rows.join('').replace(/\./g, '').length).toBeGreaterThan(20)
     expect(decodeRows(rows, 4)).toBe('DELI')
-  })
-
-  test('PATRONUS on the office, read from the plaza (facing -x)', async ({ page }) => {
-    const rows = await readWall(page, 'ch5', { x: 66, yTop: 25, z0: 5, z1: 35, key: 'sea_lantern', towardPlusZ: true })
-    expect(rows.join('').replace(/\./g, '').length).toBeGreaterThan(40)
-    const text = decodeRows(rows, 8)
-    expect(same(text, 'PATRONUS'), `the office says ${JSON.stringify(text)}`).toBe(true)
   })
 
   test('2026 under Alamo Square, read standing in the cellar facing the Ladies', async ({ page }) => {
@@ -203,40 +207,45 @@ test.describe('what chapters 4 to 6 look like', () => {
 
   test('New York, by day', async ({ page }) => {
     await frame(page, 'ny-arrival', 'ch4', [-4, 1, 6], { heading: E + 0.35, pitch: -0.2 })
+    await frame(page, 'ny-cable-from-path', 'ch4', [-22, 3, 22], { heading: E, pitch: -0.32 })
+    await frame(page, 'ny-cable-from-corner', 'ch4', [5, 2, 45], { heading: 2.3, pitch: -0.4 })
+    await frame(page, 'ny-cable-houston', 'ch4', [34, 2, 47], { heading: N, pitch: -0.42 })
+    await frame(page, 'ny-cable-round-window', 'ch4', [2, 30, 21], { heading: E, pitch: 0 })
     await frame(page, 'ny-avenue-south', 'ch4', [2, 2, 8], { heading: S + 0.15, pitch: -0.12 })
-    await frame(page, 'ny-loft-front', 'ch4', [-10, 3, 21], { heading: E, pitch: -0.25 })
-    await frame(page, 'ny-cross-street', 'ch4', [5, 2, 40], { heading: E, pitch: -0.18 })
     await frame(page, 'ny-esb', 'ch4', [30, 2, 60], { heading: E + 0.1, pitch: -0.6 })
     await frame(page, 'ny-above', 'ch4', [-20, 60, 38], { heading: E, pitch: 0.7 })
   })
 
   test('New York, inside', async ({ page }) => {
-    await frame(page, 'ny-loft-1-samples', 'ch4', [16, 1, 21], { heading: E, pitch: 0.1 })
-    await frame(page, 'ny-loft-2-fifty', 'ch4', [24, 6, 20], { heading: N, pitch: 0.05 })
-    await frame(page, 'ny-loft-3-growth', 'ch4', [32, 11, 20], { heading: W, pitch: 0.1 })
-    await frame(page, 'ny-loft-4-shenzhen', 'ch4', [24, 16, 18], { heading: S, pitch: 0.05 })
-    await frame(page, 'ny-roof', 'ch4', [30, 21, 32], { heading: N - 0.4, pitch: -0.25 })
+    await frame(page, 'ny-cable-lobby', 'ch4', [16, 1, 21], { heading: E, pitch: 0.05 })
+    await frame(page, 'ny-cable-angelika', 'ch4', [45, 1, 32], { heading: N, pitch: 0.05 })
+    await frame(page, 'ny-cable-3-samples', 'ch4', [25, 10, 15], { heading: S, pitch: 0.1 })
+    await frame(page, 'ny-cable-4-fifty', 'ch4', [25, 14, 27], { heading: N, pitch: 0.4 })
+    await frame(page, 'ny-cable-5-growth', 'ch4', [44, 18, 20], { heading: N, pitch: 0.05 })
+    await frame(page, 'ny-cable-6-shenzhen', 'ch4', [27, 22, 24], { heading: S, pitch: 0.05 })
+    await frame(page, 'ny-cable-roof', 'ch4', [20, 39, 30], { heading: N, pitch: 0.35 })
     await frame(page, 'ny-subway', 'ch4', [12, -3, 58], { heading: N + 0.3, pitch: 0.05 })
     await frame(page, 'ny-deli', 'ch4', [16, 0, 53], { heading: E, pitch: 0.1 })
     await frame(page, 'ny-esb-lobby', 'ch4', [49, 0, 61], { heading: E, pitch: -0.05 })
-    await frame(page, 'ny-brownstone-parlor', 'ch4', [55, 3, 31], { heading: N, pitch: 0.15 })
+    await frame(page, 'ny-brownstone-parlor', 'ch4', [64, 3, 31], { heading: N, pitch: 0.15 })
   })
 
   test('San Francisco, by day', async ({ page }) => {
-    await frame(page, 'sf-arrival', 'ch5', [78, 1, 6], { heading: W - 0.3, pitch: -0.2 })
-    await frame(page, 'sf-hq-front', 'ch5', [82, 3, 20], { heading: W, pitch: -0.2 })
+    await frame(page, 'sf-arrival', 'ch5', [80, 1, 6], { heading: W - 0.3, pitch: -0.3 })
+    await frame(page, 'sf-one-post-from-path', 'ch5', [95, 4, 20], { heading: W, pitch: -0.45 })
+    await frame(page, 'sf-one-post-from-street', 'ch5', [70, 2, 44], { heading: W + 0.75, pitch: -0.65 })
+    await frame(page, 'sf-one-post-plaza', 'ch5', [72, 2, 27], { heading: N + 0.4, pitch: 0.15 })
     await frame(page, 'sf-ladies-from-park', 'ch5', [70, 3, 58], { heading: W, pitch: -0.12 })
     await frame(page, 'sf-golden-gate', 'ch5', [30, 6, 72], { heading: N - 0.5, pitch: -0.3 })
     await frame(page, 'sf-cable-car', 'ch5', [70, 2, 39], { heading: W, pitch: 0.05 })
-    await frame(page, 'sf-above', 'ch5', [95, 60, 38], { heading: W, pitch: 0.7 })
+    await frame(page, 'sf-above', 'ch5', [95, 70, 38], { heading: W, pitch: 0.7 })
   })
 
   test('San Francisco, inside', async ({ page }) => {
-    await frame(page, 'sf-lobby', 'ch5', [64, 1, 20], { heading: W, pitch: 0.05 })
-    await frame(page, 'sf-world-model', 'ch5', [63, 8, 30], { heading: N + 0.6, pitch: 0.55 })
-    await frame(page, 'sf-racks', 'ch5', [51, 10, 28], { heading: N, pitch: 0.05 })
-    await frame(page, 'sf-growth', 'ch5', [60, 15, 18], { heading: W, pitch: 0.05 })
-    await frame(page, 'sf-roof', 'ch5', [62, 20, 20], { heading: W, pitch: -0.1 })
+    await frame(page, 'sf-one-post-lobby', 'ch5', [60, 1, 20], { heading: W, pitch: 0.05 })
+    await frame(page, 'sf-14th-floor', 'ch5', [46, 21, 15], { heading: E + 0.45, pitch: 0.3 })
+    await frame(page, 'sf-14th-world-model', 'ch5', [54, 23, 31], { heading: N, pitch: 0.6 })
+    await frame(page, 'sf-14th-reception', 'ch5', [45, 20, 11], { heading: E, pitch: 0.05 })
     await frame(page, 'sf-lady-parlor', 'ch5', [61, 3, 59], { heading: W, pitch: 0.1 })
     await frame(page, 'sf-bridge-deck', 'ch5', [11, 9, 8], { heading: S, pitch: -0.1 })
   })
@@ -254,10 +263,10 @@ test.describe('what chapters 4 to 6 look like', () => {
     await grantOp(page)
     await chatCommand(page, '/time set midnight')
     await waitTicks(page, 5)
-    await frame(page, 'night-ny', 'ch4', [-10, 3, 21], { heading: E + 0.3, pitch: -0.25, settle: 2500 })
-    await frame(page, 'night-ny-loft-2', 'ch4', [24, 6, 20], { heading: N, pitch: 0.05 })
-    await frame(page, 'night-sf', 'ch5', [84, 3, 30], { heading: W - 0.2, pitch: -0.2, settle: 2500 })
-    await frame(page, 'night-sf-lobby', 'ch5', [64, 1, 20], { heading: W, pitch: 0.05 })
+    await frame(page, 'night-ny', 'ch4', [5, 2, 45], { heading: 2.3, pitch: -0.4, settle: 2500 })
+    await frame(page, 'night-ny-cable-4', 'ch4', [25, 14, 27], { heading: N, pitch: 0.4 })
+    await frame(page, 'night-sf', 'ch5', [95, 4, 20], { heading: W, pitch: -0.45, settle: 2500 })
+    await frame(page, 'night-sf-14th', 'ch5', [46, 21, 15], { heading: E + 0.45, pitch: 0.3 })
     await frame(page, 'night-climb', 'ch6', [-24, 4, 40], { heading: E, pitch: -0.4, settle: 2500 })
     await chatCommand(page, '/time set day')
   })
