@@ -15,7 +15,9 @@
  * NOTHING IN src/ KNOWS ABOUT IT. `enterPreview` adds a row to island.js's
  * WORLDS and a row to dimensions.js's DIMENSIONS from inside the page (both
  * are exported objects, read by name at the moment of a world change), then
- * enters it through the same `dimensions.enter` a chat command uses.
+ * enters it through the same `dimensions.enter` a chat command uses. Both
+ * modules are reached through previewStamp.js so they are the game's own
+ * instances; see the note there.
  *
  * TWO HALVES, because a build file cannot be imported by node (see the
  * header of previewLayout.js). This file is imported by NODE for
@@ -43,9 +45,10 @@ export { previewWorldXYZ }
 export async function enterPreview(page, spawn = ['ch4', -6, 6]) {
   const [sx, , sz] = previewWorldXYZ(spawn[0], spawn[1], 0, spawn[2])
   const res = await page.evaluate(async ([name, size, ox, oz, sx, sz]) => {
-    const island = await import('/src/island.js')
-    const dims = await import('/src/dimensions.js')
+    /* island and dims through previewStamp.js, never by their own URL:
+     * see the note above its re-exports. */
     const preview = await import('/test/helpers/previewStamp.js')
+    const { island, dimensions: dims } = preview
     island.WORLDS[name] = {
       size, originX: ox, originZ: oz, surfaceY: 136, drop: 2, spawnX: sx, spawnZ: sz,
     }
