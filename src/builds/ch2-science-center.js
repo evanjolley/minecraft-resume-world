@@ -486,7 +486,7 @@ function hall(s, z0, z1, name) {
     setSignText(...s.toWorld(sx, 3, z0 + 1), ['Applied Math', 'in Computer', 'Science', '(B.A.)'])
   } else {
     s.set(sx, 3, z0 + 1, 'oak_wall_sign_south')
-    setSignText(...s.toWorld(sx, 3, z0 + 1), ['Science Center', 'Lecture Hall'])
+    setSignText(...s.toWorld(sx, 3, z0 + 1), ['Lecture Hall', 'Evan took', 'classes in this', 'building'])
   }
 
   // Doors from the passage: at the stage end at ground level.
@@ -800,11 +800,17 @@ function signs(s) {
   }
   // A plinth by the Yard gate, read as you come through it.
   const px = 44, pz = 29
-  s.box([px, 0, pz], [px + 2, 1, pz], P.post)
+  s.box([px, 0, pz], [px + 4, 1, pz], P.post)
   s.set(px + 1, 2, pz, P.lamp)
-  sign(px, 1, pz - 1, 'north', ['Chapter 2', 'Harvard'])
+  s.set(px + 3, 2, pz, P.lamp)
+  sign(px, 1, pz - 1, 'north', ['Chapter 2', 'Harvard', 'B.A., Dec 2024'])
   sign(px + 1, 1, pz - 1, 'north', ['Science Center', 'J. L. Sert', '1970-72'])
   sign(px + 2, 1, pz - 1, 'north', ['9 storeys +', 'an observatory', 'on the roof'])
+  /* The rename, in Evan's own framing (his answer, 2026-10-25): the
+   * building is the Science Center here because that is what it was while
+   * he was there. Zimmer Hall is the footnote, never the title. */
+  sign(px + 3, 1, pz - 1, 'north', ['It was the', 'Science Center', 'while I was', 'there.'])
+  sign(px + 4, 1, pz - 1, 'north', ['Since renamed', 'Zimmer Hall. I', 'know it by its', 'old name.'])
 
   // By the passage mouth.
   s.pillar(PASS[0] - 1 + 0, FRONT - 1, 0, 1, P.post)

@@ -9,7 +9,8 @@
  *     to YouTube." "Scaled from 0 to 10,000 followers in 13 days and reached
  *     100,000 followers in 72 days." The section heading says 280k
  *     followers. -- public/EvanJolley_Resume.pdf
- *   - The live count pulled from the API was 282,162. The channel is
+ *   - The count is given as 280k everywhere, on Evan's instruction
+ *     (2026-10-25), though the corpus records a live 282,162. The channel is
  *     largely in Mandarin, for a Chinese audience: conversations with his
  *     grandfather about the Army and motorcycle clubs, Midwest life, and a
  *     video about being a small-town kid who got to Harvard.
@@ -47,7 +48,7 @@
  *           every set is. Back there, thirteen lights set in the floor:
  *           thirteen days to the first ten thousand.
  *   ON TOP  the top of the today tower, which is the only place the whole
- *           chart and the TV are in one view, and the exact count.
+ *           chart and the TV are in one view.
  *   ON TOP  the TV's own roof, between the antennae: a play button laid
  *           flat, in pink, which only the top of the tower can see.
  * ------------------------------------------------------------------------
@@ -447,7 +448,7 @@ function signs(s) {
   sign(dayX(13), 0, z, 'south', ['Day 13', '10,000', 'followers'])
   sign(dayX(72), 1, AXIS_Z + 2, 'south', ['Day 72', '100,000', 'followers'])
   sign(12, 1, AXIS_Z + 2, 'south', ['Now', '280k followers', 'Climb it.'])
-  sign(12, 29, AXIS_Z + 1, 'south', ['282,162', 'at last count'])
+  sign(12, 29, AXIS_Z + 1, 'south', ['280k', 'followers'])
   s.pillar(DAY0 - 3, AXIS_Z - 2, 0, 1, P.post)
   sign(DAY0 - 3, 1, AXIS_Z - 1, 'south', ['Pink: the', 'numbers the', 'resume gives.', 'White: the walk'])
 
