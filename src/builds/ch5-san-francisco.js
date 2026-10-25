@@ -12,8 +12,8 @@
  *   agent training and simulation. Our mission is to simulate all of the
  *   world's intelligence."
  *
- * WHERE: One Post Street, on the 14th floor (the owner). So the company's
- * floor is the 14th of a rebuild of that tower -- see ONE POST STREET below
+ * WHERE: One Post Street (the owner). The company has one
+ * floor partway up a rebuild of that tower -- see ONE POST STREET below
  * for its sources and for what had to be stylized to fit the build height.
  * WHAT IS NOT KNOWN, and therefore not drawn: the office's layout, the
  * company's colours or logo, anyone who works there. The floor holds what
@@ -57,7 +57,7 @@ import { wallSign, switchback, tree } from './kit.js'
 
 /*
  * SIGNS, BY THE OWNER'S RULE: only names a real place would put up --
- * Patronus AI, at its own reception on the 14th floor. The role, the date and the
+ * Patronus AI, at its own reception on the office floor. The role, the date and the
  * mission are AI Evan's to say, not the walls'.
  */
 export const SIZE = { w: 74, d: 76 }
@@ -120,7 +120,7 @@ function ground(s) {
 }
 
 /* ====================================================================== *
- * ONE POST STREET, where Patronus AI is, on the 14th floor
+ * ONE POST STREET, where Patronus AI is, on the office floor
  * ====================================================================== */
 
 /*
@@ -146,19 +146,19 @@ function ground(s) {
  *     every three blocks, two storeys to a band -- you read the rhythm, you
  *     cannot count storeys, and from the street you cannot on the real one
  *     either;
- *   - the 14TH FLOOR is the one storey drawn at walking height: four blocks
- *     of lit glass at y 20..23, with thirteen storeys under it at a block
- *     and a half each and twenty-four over it. It is the only lit band in
+ *   - the OFFICE FLOOR is the one storey drawn at walking height: four blocks
+ *     of lit glass at y 20..23, with storeys under it at a block
+ *     and a half each and more over it. It is the only lit band in
  *     the shaft, so from the path the visitor can see which floor is
  *     Patronus's before they go in;
  *   - the plan is stretched to about 20 by 26 so that floor holds the world
  *     model, the desks and the racks, where the real floor is about 12,000
  *     square feet.
- *   Below the 14th floor the tower is solid except its stair core; above it,
+ *   Below the office floor the tower is solid except its stair core; above it,
  *   solid. Nobody can be in an unlit room that was never furnished.
  */
 const OPS = { x0: 43, x1: 62, z0: 7, z1: 32 }
-const FL14 = 20                           // standing height of the 14th floor
+const FL_OFFICE = 20                           // standing height of the office floor
 const OPS_TOP = 59                        // the roof slab
 const STAIR = { a: 45, b: 46, z0: 10 }    // the core, from the lobby up
 
@@ -166,7 +166,7 @@ const G = {
   granite: 'polished_deepslate',          // the dark granite piers
   lintel: 'deepslate_tiles',              // set back, a shade apart
   window: 'gray_concrete',                // dark, opaque from outside
-  glass: 'gray_stained_glass',            // the 14th floor's lit band
+  glass: 'gray_stained_glass',            // the office floor's lit band
   plaza: 'polished_granite',
   step: 'polished_granite',
 }
@@ -185,7 +185,7 @@ function onePost(s) {
   for (const [x, z] of [[x0 - 1, z0 - 1], [x1 + 1, z0 - 1], [x0 - 1, z1 + 1], [x1 + 1, z1 + 1]]) s.box([x, 0, z], [x, OPS_TOP, z], G.granite)
   // The set-back lintels: a band every three blocks in the window planes.
   for (let y = 7; y <= OPS_TOP; y += 3) {
-    if (y >= FL14 - 1 && y <= FL14 + 4) continue
+    if (y >= FL_OFFICE - 1 && y <= FL_OFFICE + 4) continue
     for (let x = x0; x <= x1; x++) { s.set(x, y, z0, G.lintel); s.set(x, y, z1, G.lintel) }
     for (let z = z0; z <= z1; z++) { s.set(x0, y, z, G.lintel); s.set(x1, y, z, G.lintel) }
   }
@@ -196,7 +196,7 @@ function onePost(s) {
   for (const [x, z] of [[x0 + 4, z0 + 5], [x1 - 4, z1 - 5]]) s.set(x, OPS_TOP + 4, z, 'redstone_block')
 
   lobbyFloor(s)
-  fourteenth(s)
+  officeFloor(s)
   core(s)                                 // after: it cuts its hole in that floor
   plaza(s)
 }
@@ -217,29 +217,29 @@ function lobbyFloor(s) {
   for (const z of [10, 28]) s.box([x1 - 3, 0, z], [x1 - 2, 0, z + 1], G.lintel)
 }
 
-/* THE CORE: a lit stair shaft from the lobby to the 14th floor -- five runs
- * of four, which is where the 14th floor's height comes from. */
+/* THE CORE: a lit stair shaft from the lobby to the office floor -- five runs
+ * of four, which is where the office floor's height comes from. */
 function core(s) {
   const { a, b, z0 } = STAIR
-  s.box([a - 1, 0, z0 - 1], [b + 1, FL14 - 1, z0 + 4], G.lintel)
-  s.clear([a, 0, z0], [b, FL14 - 1, z0 + 3])
+  s.box([a - 1, 0, z0 - 1], [b + 1, FL_OFFICE - 1, z0 + 4], G.lintel)
+  s.clear([a, 0, z0], [b, FL_OFFICE - 1, z0 + 3])
   switchback(s, STAIR, 5, 4, G.plaza, { light: P.ceiling })
   // Light in the shaft walls at every landing.
-  for (let y = 2; y < FL14; y += 4) { s.set(a - 1, y, z0 + 2, P.ceiling); s.set(b + 1, y, z0 + 1, P.ceiling) }
+  for (let y = 2; y < FL_OFFICE; y += 4) { s.set(a - 1, y, z0 + 2, P.ceiling); s.set(b + 1, y, z0 + 1, P.ceiling) }
   // The way in, from the lobby, on the shaft's +x side at its foot.
   s.clear([b + 1, 0, z0], [b + 1, 2, z0])
-  // And its top opens onto the 14th floor.
-  s.clear([a - 1, FL14, z0 - 1], [b + 1, FL14 + 2, z0 + 4])
+  // And its top opens onto the office floor.
+  s.clear([a - 1, FL_OFFICE, z0 - 1], [b + 1, FL_OFFICE + 2, z0 + 4])
 }
 
 /*
- * THE 14TH FLOOR: Patronus AI. Its name at the top of the stair, which is
+ * THE OFFICE FLOOR: Patronus AI. Its name at the top of the stair, which is
  * where a tenant puts it; the world model in the middle of the floor; desks
  * along the glass; racks at the back. The facts live in what the room is.
  */
-function fourteenth(s) {
+function officeFloor(s) {
   const { x0, x1, z0, z1 } = OPS
-  const y = FL14
+  const y = FL_OFFICE
   s.clear([x0, y, z0], [x1, y + 3, z1])
   s.rect([x0, z0], [x1, z1], y - 1, P.floor)
   s.rect([x0, z0], [x1, z1], y + 4, P.slab)

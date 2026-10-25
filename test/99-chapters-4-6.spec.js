@@ -243,9 +243,9 @@ test.describe('what chapters 4 to 6 look like', () => {
 
   test('San Francisco, inside', async ({ page }) => {
     await frame(page, 'sf-one-post-lobby', 'ch5', [60, 1, 20], { heading: W, pitch: 0.05 })
-    await frame(page, 'sf-14th-floor', 'ch5', [46, 21, 15], { heading: E + 0.45, pitch: 0.3 })
-    await frame(page, 'sf-14th-world-model', 'ch5', [54, 23, 31], { heading: N, pitch: 0.6 })
-    await frame(page, 'sf-14th-reception', 'ch5', [45, 20, 11], { heading: E, pitch: 0.05 })
+    await frame(page, 'sf-office-floor', 'ch5', [46, 21, 15], { heading: E + 0.45, pitch: 0.3 })
+    await frame(page, 'sf-office-world-model', 'ch5', [54, 23, 31], { heading: N, pitch: 0.6 })
+    await frame(page, 'sf-office-reception', 'ch5', [45, 20, 11], { heading: E, pitch: 0.05 })
     await frame(page, 'sf-lady-parlor', 'ch5', [61, 3, 59], { heading: W, pitch: 0.1 })
     await frame(page, 'sf-bridge-deck', 'ch5', [11, 9, 8], { heading: S, pitch: -0.1 })
   })
@@ -266,7 +266,7 @@ test.describe('what chapters 4 to 6 look like', () => {
     await frame(page, 'night-ny', 'ch4', [5, 2, 45], { heading: 2.3, pitch: -0.4, settle: 2500 })
     await frame(page, 'night-ny-cable-4', 'ch4', [25, 14, 27], { heading: N, pitch: 0.4 })
     await frame(page, 'night-sf', 'ch5', [95, 4, 20], { heading: W, pitch: -0.45, settle: 2500 })
-    await frame(page, 'night-sf-14th', 'ch5', [46, 21, 15], { heading: E + 0.45, pitch: 0.3 })
+    await frame(page, 'night-sf-office', 'ch5', [46, 21, 15], { heading: E + 0.45, pitch: 0.3 })
     await frame(page, 'night-climb', 'ch6', [-24, 4, 40], { heading: E, pitch: -0.4, settle: 2500 })
     await chatCommand(page, '/time set day')
   })
