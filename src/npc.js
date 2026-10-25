@@ -450,6 +450,16 @@ export function installNPC(noa, {
 
   let talking = false
 
+  /*
+   * GONE: he has left the game (worker/agent/conduct.js). The entity is not
+   * deleted, only made absent: hidden, shadowless, frozen, deaf. Deleting it
+   * would turn every getter below (position, grounded, the tour guide's
+   * `npc.position`) into a read of a dead entity id, and main.js and the
+   * specs hold those getters for the life of the page. An absent body that
+   * answers questions is the smaller change and the one a spec can undo.
+   */
+  let gone = false
+
   /**
    * Say something TO this character. Wired to chat's transport in main.js, so
    * anything you type while in range reaches him.
@@ -458,7 +468,7 @@ export function installNPC(noa, {
    * your message as an ordinary chat line instead.
    */
   const hear = (text) => {
-    if (!talking || !session) return false
+    if (gone || !talking || !session) return false
     session.send(text, handle)
     return true
   }
@@ -520,6 +530,10 @@ export function installNPC(noa, {
    * @returns {Promise<{x:number,z:number,blocks:number}>}
    */
   const walkTo = ([x, z], { radius = ARRIVE_RADIUS } = {}) => new Promise((resolve, reject) => {
+    if (gone) {
+      reject(new Error('he has left the game'))
+      return
+    }
     if (!Number.isFinite(x) || !Number.isFinite(z)) {
       reject(new Error('walk target needs a finite x and z'))
       return
@@ -682,6 +696,7 @@ export function installNPC(noa, {
   const stride = { swing: 0, amount: 0 }
 
   noa.on('tick', (dt) => {
+    if (gone) return
     const secs = dt / 1000
 
     /*
@@ -923,6 +938,7 @@ export function installNPC(noa, {
    * globalToLocal call this used to make is gone with it.
    */
   noa.on('beforeRender', () => {
+    if (gone) return
     const rpos = noa.ents.getPositionData(entity)._renderPosition
     model.root.position.set(rpos[0], rpos[1], rpos[2])
     nametag.update(rpos)
@@ -931,6 +947,41 @@ export function installNPC(noa, {
   return {
     id, entry, model, nametag, hear, entity, walkTo,
     get talking() { return talking },
+    /** True once he has left the game. See `leave`. */
+    get gone() { return gone },
+    /**
+     * Leave the game, the way a Minecraft player does: the body disappears
+     * where it stood, mid-walk or not, and he stops listening. The yellow
+     * "left the game" line is the caller's to write (main.js), because chat
+     * owns the line format and the roster owns the name, same as join.
+     * Returns false if he had already gone, so the line is written once.
+     */
+    leave() {
+      if (gone) return false
+      gone = true
+      endWalk(new Error('he left the game'))
+      talking = false
+      session?.reset()
+      body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
+      body.gravityMultiplier = 0
+      model.root.setEnabled(false)
+      nametag.setEnabled(false)
+      if (noa.ents.hasComponent(entity, noa.ents.names.shadow)) {
+        noa.ents.removeComponent(entity, noa.ents.names.shadow)
+      }
+      return true
+    },
+    /** Undo `leave`, for a spec that has to hand the next spec the world it
+     *  found. Not reachable from play: nothing in the game brings him back. */
+    _rejoin() {
+      if (!gone) return
+      gone = false
+      model.root.setEnabled(true)
+      nametag.setEnabled(true)
+      if (!noa.ents.hasComponent(entity, noa.ents.names.shadow)) {
+        noa.ents.addComponent(entity, noa.ents.names.shadow, { size: MC.PLAYER_WIDTH })
+      }
+    },
     get distance() { return distanceTo() },
     get session() { return session },
     /** Live feet position, world coordinates. A getter and not the `position`

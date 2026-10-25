@@ -3,12 +3,14 @@
  * and the memory to him.
  *
  * Server tools run inside the Worker and never reach the browser: two read
- * Evan's knowledge, two write the visitor's memory. Client tools (the body,
+ * Evan's knowledge, two write the visitor's memory, and one (flag_visitor,
+ * conduct.js) reports a visitor turn as abuse to the server's state machine. Client tools (the body,
  * the world) are defined in src/evanToolDefs.js and run in the browser.
  */
 import { CLIENT_TOOL_DEFS, CLIENT_TOOL_NAMES } from '../../src/evanToolDefs.js'
 import { CHAPTERS } from '../../src/builds/plots.js'
 import { searchKnowledge, renderHits, chapterNotes } from './knowledge.js'
+import { CONDUCT_TOOL } from './conduct.js'
 
 export const SERVER_TOOLS = [
   {
@@ -61,6 +63,8 @@ export const SERVER_TOOLS = [
       + 'when they explicitly ask you to forget them.',
     input_schema: { type: 'object', properties: {} },
   },
+  /* Last, so adding it left the bytes of every tool before it unchanged. */
+  CONDUCT_TOOL,
 ]
 
 export const SERVER_TOOL_NAMES = new Set(SERVER_TOOLS.map((t) => t.name))
@@ -90,6 +94,11 @@ export function runServerTool(call, { chunks, memory, now }) {
       return memory.remember({ kind: input.kind, text: input.text, now })
     case 'forget_visitor':
       return { forget: true }
+    case CONDUCT_TOOL.name:
+      /* Never reached in practice: turn.js intercepts the flag before any
+       * tool runs. Answered anyway so a refactor that lets one through gets
+       * a sentence, not "No such tool". */
+      return 'Noted.'
     default:
       return `No such tool: ${call.name}`
   }

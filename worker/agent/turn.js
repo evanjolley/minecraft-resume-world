@@ -19,6 +19,7 @@
  * transcript exactly as it was and the visitor can simply say it again.
  */
 import { SERVER_TOOL_NAMES, runServerTool, toolsFor } from './tools.js'
+import { CONDUCT_TOOL, STANDING, WARNING_LINE, LEFT_NOTE } from './conduct.js'
 
 export const TURN_CAPS = {
   /* Model calls inside one request while resolving server tools. */
@@ -35,10 +36,11 @@ export const TURN_CAPS = {
  * @param {Array} a.chunks       Evan's knowledge
  * @param {object} a.gate        createGate(...) from worker/allowlist.js
  * @param {number} a.now
+ * @param {boolean} [a.account]  signed in with a passkey on this request
  */
-export async function runTurn({ memory, delta, clientTools, upstream, staticSystem, chunks, gate, now }) {
-  const begun = await memory.begin({ now, delta })
-  if (!begun.ok) return { status: begun.status, reply: say(begun.refuse) }
+export async function runTurn({ memory, delta, clientTools, upstream, staticSystem, chunks, gate, now, account = false }) {
+  const begun = await memory.begin({ now, delta, account })
+  if (!begun.ok) return { status: begun.status, reply: begun.left ? gone() : say(begun.refuse) }
 
   const tools = toolsFor(clientTools)
   const work = [...begun.history, ...begun.incoming]
@@ -56,6 +58,30 @@ export async function runTurn({ memory, delta, clientTools, upstream, staticSyst
       }
       addUsage(usage, reply.usage)
       const content = reply.content ?? []
+
+      /*
+       * THE CONDUCT FLAG, before the gate and before any tool runs. If the
+       * model flagged this turn, nothing else it asked for happens: no
+       * lookup, no walk, no forget_visitor (which would otherwise be a way to
+       * wipe the record of the warning in the same breath). What the flag
+       * DOES is the server's call, from the standing begin() read under the
+       * lease. A first flag can only warn, and only a flag after a warning
+       * can make him leave. See conduct.js for why the model gets no say in
+       * that.
+       */
+      const flag = content.find((b) => b.type === 'tool_use' && b.name === CONDUCT_TOOL.name)
+      if (flag) {
+        const kind = flag.input?.kind
+        if (begun.standing === STANDING.warned) {
+          appended.push({ role: 'assistant', content: [{ type: 'text', text: LEFT_NOTE }] })
+          await memory.commit({ now, visitId: begun.visitId, incoming: begun.incoming, appended, usage, observed: begun.observed, conduct: { state: STANDING.left, kind }, account })
+          return { status: 200, reply: gone() }
+        }
+        const warning = { type: 'text', text: WARNING_LINE }
+        appended.push({ role: 'assistant', content: [warning] })
+        await memory.commit({ now, visitId: begun.visitId, incoming: begun.incoming, appended, usage, observed: begun.observed, conduct: { state: STANDING.warned, kind }, account })
+        return { status: 200, reply: { content: [...said, warning], stop_reason: 'end_turn', evan: STANDING.warned } }
+      }
 
       /*
        * THE GATE, before anything is stored or returned. A blocked turn is
@@ -149,3 +175,11 @@ function addUsage(acc, u) {
 }
 
 const say = (text) => ({ content: [{ type: 'text', text }], stop_reason: 'end_turn' })
+
+/*
+ * He has left. No text: a Minecraft player who leaves says nothing, the
+ * server just announces it, and the browser writes that line itself
+ * (chat.announceLeave) when it sees `evan: 'left'`. An empty content array is
+ * still a valid backend reply for agent.js, which simply has nothing to say.
+ */
+const gone = () => ({ content: [], stop_reason: 'end_turn', evan: STANDING.left })

@@ -82,6 +82,15 @@ export async function mockUpstream({ memoryBlock, messages }) {
 
   const said = lastVisitorText(messages)
   const name = /(?:my name is|i'm|i am|call me)\s+([A-Za-z0-9_]{1,16})\b/i.exec(said)
+  /*
+   * The mock's stand-in for the model's judgment about conduct (conduct.js).
+   * A regex is exactly what production must NOT use to decide this, and it is
+   * fine here: the mock exists to drive the server's state machine from a
+   * page, and the thing under test is what the SERVER does with a flag.
+   */
+  if (/\bignore (?:all |your |previous |prior )*(?:instructions|rules)\b|\bdeveloper mode\b/i.test(said)) {
+    return turn([use('flag_visitor', { kind: 'override' })])
+  }
   if (/forget me/i.test(said)) return turn([use('forget_visitor', {})])
   if (/remember me|what do you (?:know|remember)/i.test(said)) {
     const n = /name="([^"]+)"/.exec(memoryBlock ?? '')

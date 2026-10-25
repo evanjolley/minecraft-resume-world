@@ -13,6 +13,7 @@ Three pieces, each in its own place in the code.
 | The interview | `scripts/interview.mjs`, `scripts/interview/` | Evan's laptop |
 | The tour | `src/tour.js`, `walk_to_plot` in `src/aiEvan.js` | The visitor's browser |
 | The turn loop | `worker/agent/turn.js`, `route.js` at `POST /api/evan` | The Worker |
+| One warning, then he leaves | `worker/agent/conduct.js`, the `standing` table in `memory.js` | The Worker and the visitor's Durable Object |
 
 ## 1. What the public reverse engineering found
 
@@ -139,7 +140,11 @@ the defaults that section recommends.
   visit, that he remembers what people tell him for 30 days and that "forget
   me" works. (Copy for an in-world notice line is a decision for Evan, below.)
 - **Forget me**, as a tool the model calls and as `POST /api/evan {forget:true}`
-  for a button. Both delete everything at once.
+  for a button. Both delete everything at once, except one row that says
+  whether Evan warned this visitor or left the game on them. It holds no words
+  and nothing the visitor said, and without it "forget me" would undo the
+  warning. A guest's row expires after 30 quiet minutes, and a signed-in
+  visitor's never does. The reasoning is in `worker/agent/conduct.js`.
 - **Redaction** of emails and phone numbers before anything becomes a fact or a
   summary.
 - **No message bodies in logs.** `callChat` logs a status code and an error
