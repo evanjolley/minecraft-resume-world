@@ -12,12 +12,12 @@
  *   agent training and simulation. Our mission is to simulate all of the
  *   world's intelligence."
  *
- * WHAT IS NOT KNOWN, and therefore not drawn: the office's address or what
- * it looks like, the company's colours, its logo, anyone who works there.
- * The building is a generic SoMa glass office with the name on its roof
- * line, and every floor inside is one sentence of the resume made into a
- * room. No person, product name or number appears that the resume does not
- * print.
+ * WHERE: One Post Street, on the 14th floor (the owner). So the company's
+ * floor is the 14th of a rebuild of that tower -- see ONE POST STREET below
+ * for its sources and for what had to be stylized to fit the build height.
+ * WHAT IS NOT KNOWN, and therefore not drawn: the office's layout, the
+ * company's colours or logo, anyone who works there. The floor holds what
+ * the resume says the company does, as things in a room.
  *
  * ------------------------------------------------------------------------
  * THE CITY, in the postcard order a visitor on the path sees it, near to far:
@@ -34,8 +34,8 @@
  *     orange, over a bay of real water, its towers the tallest thing you
  *     see from the path.
  *
- * And PATRONUS AI on the corner nearest the arrival, so it is the first
- * building you meet.
+ * And ONE POST STREET on the corner nearest the arrival, so it is the first
+ * building you meet: dark granite, sixty blocks, one lit floor.
  *
  * ------------------------------------------------------------------------
  * ORIENTATION. ch5 is a LEFT plot: the path is on the HIGH-x side and the
@@ -52,12 +52,12 @@
  */
 import { CHAPTERS, LAND_SIZE } from './plots.js'
 import { SPINE, sampleSpine } from './spine.js'
-import { wordRows, wordWidth } from './lettering.js'
+import { wordRows } from './lettering.js'
 import { wallSign, switchback, tree } from './kit.js'
 
 /*
  * SIGNS, BY THE OWNER'S RULE: only names a real place would put up --
- * Patronus AI in the lobby and on the roof line. The role, the date and the
+ * Patronus AI, at its own reception on the 14th floor. The role, the date and the
  * mission are AI Evan's to say, not the walls'.
  */
 export const SIZE = { w: 74, d: 76 }
@@ -80,15 +80,11 @@ const P = {
   trim: 'white_concrete',
 }
 
-/* THE HQ. Four floors of five, then a roof terrace. */
-const HQ = { x0: 42, x1: 66, z0: 5, z1: 35 }
-const FLOOR_H = 5
-const ROOF = 4 * FLOOR_H - 1                 // y = 19
 const CAL = { z0: 37, z1: 41 }               // the cross street, with the cable car
 
 export function build(s) {
   ground(s)
-  headquarters(s)
+  onePost(s)
   californiaStreet(s)
   paintedLadies(s)
   alamoSquare(s)
@@ -124,193 +120,212 @@ function ground(s) {
 }
 
 /* ====================================================================== *
- * PATRONUS AI
+ * ONE POST STREET, where Patronus AI is, on the 14th floor
  * ====================================================================== */
 
 /*
- * FOUR FLOORS, EACH ONE A SENTENCE.
+ * WHAT IS KNOWN ABOUT IT, and where from:
+ *   - Welton Becket & Associates, completed 1969, long the McKesson
+ *     headquarters; a modernist office tower of 38 storeys (one source says
+ *     37) and 529 feet, on the triangular flatiron site at Post and Market
+ *     where the Crocker flatiron building stood.
+ *   - "Dark granite strokes rising out of the ground and into the sky", with
+ *     dark windows and lintels set slightly back, so the tower reads as all
+ *     vertical lines.
+ *   - At its foot a plaza with trees and granite steps people sit on, and an
+ *     octagonal, two-tiered opening down to the Montgomery Street BART
+ *     station, by SWA Group.
+ *   Sources: Wikipedia, "McKesson Plaza"; SFYIMBY on One Post Street;
+ *   buildingsdb.com. The plan's proportions were not found and are drawn.
  *
- *   1  THE LOBBY        who and what: the name, the role, the date, and the
- *                       mission on the wall behind the desk.
- *   2  THE WORLD MODEL  "training the First Digital World Model" -- so the
- *                       room holds a model of a world, and the world it is a
- *                       model of is THIS one: the whole map, the path and all
- *                       six chapters, read from src/builds/plots.js and
- *                       src/builds/spine.js so it moves when they do. There
- *                       is a gold block in it where you are standing.
- *   3  SIMULATION       "simulation research and infrastructure": rows of
- *                       racks with their status lights, in a cold aisle.
- *   4  GROWTH           the team this role is on: desks and a whiteboard.
- *   ROOF                a terrace that looks at the bridge.
+ * WHAT IS STYLIZED, and why. The build ceiling is 64 blocks over the
+ * ground, so 529 feet comes out at 60 -- about nine feet a block, which is
+ * half a storey too much to draw 38 storeys one block each. So:
+ *   - the granite piers run unbroken from the plinth to the crown, which is
+ *     the building's whole character, and the set-back lintels are drawn
+ *     every three blocks, two storeys to a band -- you read the rhythm, you
+ *     cannot count storeys, and from the street you cannot on the real one
+ *     either;
+ *   - the 14TH FLOOR is the one storey drawn at walking height: four blocks
+ *     of lit glass at y 20..23, with thirteen storeys under it at a block
+ *     and a half each and twenty-four over it. It is the only lit band in
+ *     the shaft, so from the path the visitor can see which floor is
+ *     Patronus's before they go in;
+ *   - the plan is stretched to about 20 by 26 so that floor holds the world
+ *     model, the desks and the racks, where the real floor is about 12,000
+ *     square feet.
+ *   Below the 14th floor the tower is solid except its stair core; above it,
+ *   solid. Nobody can be in an unlit room that was never furnished.
  */
-function headquarters(s) {
-  const { x0, x1, z0, z1 } = HQ
-  s.box([x0, -1, z0], [x1, ROOF, z1], P.mullion)
-  s.clear([x0 + 1, 0, z0 + 1], [x1 - 1, ROOF - 1, z1 - 1])
-  for (let f = 0; f < 4; f++) {
-    s.rect([x0 + 1, z0 + 1], [x1 - 1, z1 - 1], f * FLOOR_H - 1, f === 0 ? 'polished_diorite' : P.floor)
+const OPS = { x0: 43, x1: 62, z0: 7, z1: 32 }
+const FL14 = 20                           // standing height of the 14th floor
+const OPS_TOP = 59                        // the roof slab
+const STAIR = { a: 45, b: 46, z0: 10 }    // the core, from the lobby up
+
+const G = {
+  granite: 'polished_deepslate',          // the dark granite piers
+  lintel: 'deepslate_tiles',              // set back, a shade apart
+  window: 'gray_concrete',                // dark, opaque from outside
+  glass: 'gray_stained_glass',            // the 14th floor's lit band
+  plaza: 'polished_granite',
+  step: 'polished_granite',
+}
+
+function onePost(s) {
+  const { x0, x1, z0, z1 } = OPS
+  // The shaft, solid, from the plinth to the roof.
+  s.box([x0, -1, z0], [x1, OPS_TOP, z1], G.window)
+  // THE GRANITE STROKES: every other column on all four faces, standing one
+  // block proud of the windows, unbroken from the ground to the crown.
+  for (let y = 0; y <= OPS_TOP; y++) {
+    for (let x = x0; x <= x1; x += 2) { s.set(x, y, z0 - 1, G.granite); s.set(x, y, z1 + 1, G.granite) }
+    for (let z = z0; z <= z1; z += 2) { s.set(x0 - 1, y, z, G.granite); s.set(x1 + 1, y, z, G.granite) }
   }
-  s.rect([x0 + 1, z0 + 1], [x1 - 1, z1 - 1], ROOF, P.slab)
-  curtainWall(s)
-  switchback(s, { a: 44, b: 45, z0: 27 }, 4, FLOOR_H, P.slab, { rail: P.dark, light: P.ceiling })
-  for (let f = 0; f < 4; f++) {
-    const y = f * FLOOR_H + FLOOR_H - 1
-    for (let x = x0 + 4; x <= x1 - 2; x += 5) {
-      for (let z = z0 + 3; z <= z1 - 2; z += 5) s.set(x, y, z, P.ceiling)
-    }
+  // Corner piers, so the shaft has hard edges.
+  for (const [x, z] of [[x0 - 1, z0 - 1], [x1 + 1, z0 - 1], [x0 - 1, z1 + 1], [x1 + 1, z1 + 1]]) s.box([x, 0, z], [x, OPS_TOP, z], G.granite)
+  // The set-back lintels: a band every three blocks in the window planes.
+  for (let y = 7; y <= OPS_TOP; y += 3) {
+    if (y >= FL14 - 1 && y <= FL14 + 4) continue
+    for (let x = x0; x <= x1; x++) { s.set(x, y, z0, G.lintel); s.set(x, y, z1, G.lintel) }
+    for (let z = z0; z <= z1; z++) { s.set(x0, y, z, G.lintel); s.set(x1, y, z, G.lintel) }
   }
-  lobby(s)
-  worldModel(s)
-  simulation(s)
-  growth(s)
-  terrace(s)
+  // THE CROWN: the piers stop at a flat parapet; a dark mechanical
+  // penthouse sits back on the roof, and red lights at its corners.
+  s.box([x0 - 1, OPS_TOP + 1, z0 - 1], [x1 + 1, OPS_TOP + 1, z1 + 1], G.granite)
+  s.box([x0 + 4, OPS_TOP + 2, z0 + 5], [x1 - 4, OPS_TOP + 3, z1 - 5], G.lintel)
+  for (const [x, z] of [[x0 + 4, z0 + 5], [x1 - 4, z1 - 5]]) s.set(x, OPS_TOP + 4, z, 'redstone_block')
+
+  lobbyFloor(s)
+  fourteenth(s)
+  core(s)                                 // after: it cuts its hole in that floor
+  plaza(s)
+}
+
+/* THE LOBBY: a tall glass ground storey under the granite, entered from the
+ * plaza on the path side. */
+function lobbyFloor(s) {
+  const { x0, x1, z0, z1 } = OPS
+  s.clear([x0 + 1, 0, z0 + 1], [x1 - 1, 5, z1 - 1])
+  s.rect([x0 + 1, z0 + 1], [x1 - 1, z1 - 1], -1, G.plaza)
+  s.rect([x0 + 1, z0 + 1], [x1 - 1, z1 - 1], 6, G.lintel)
+  // Glass between the piers on the plaza face, and doors in the middle.
+  for (let z = z0 + 1; z <= z1 - 1; z++) if ((z - z0) % 2 === 1) s.box([x1, 0, z], [x1, 5, z], G.glass)
+  s.clear([x1 - 0, 0, 18], [x1 + 1, 2, 21])
+  for (let x = x0 + 3; x <= x1 - 2; x += 4) for (let z = z0 + 3; z <= z1 - 2; z += 5) s.set(x, 6, z, P.ceiling)
+  // A desk, and granite benches.
+  s.box([x1 - 6, 0, 16], [x1 - 6, 0, 23], G.plaza)
+  for (const z of [10, 28]) s.box([x1 - 3, 0, z], [x1 - 2, 0, z + 1], G.lintel)
+}
+
+/* THE CORE: a lit stair shaft from the lobby to the 14th floor -- five runs
+ * of four, which is where the 14th floor's height comes from. */
+function core(s) {
+  const { a, b, z0 } = STAIR
+  s.box([a - 1, 0, z0 - 1], [b + 1, FL14 - 1, z0 + 4], G.lintel)
+  s.clear([a, 0, z0], [b, FL14 - 1, z0 + 3])
+  switchback(s, STAIR, 5, 4, G.plaza, { light: P.ceiling })
+  // Light in the shaft walls at every landing.
+  for (let y = 2; y < FL14; y += 4) { s.set(a - 1, y, z0 + 2, P.ceiling); s.set(b + 1, y, z0 + 1, P.ceiling) }
+  // The way in, from the lobby, on the shaft's +x side at its foot.
+  s.clear([b + 1, 0, z0], [b + 1, 2, z0])
+  // And its top opens onto the 14th floor.
+  s.clear([a - 1, FL14, z0 - 1], [b + 1, FL14 + 2, z0 + 4])
 }
 
 /*
- * THE CURTAIN WALL: glass floor to ceiling on all four faces, white mullions
- * every third block and a white band at every slab -- a SoMa office, which
- * is a building type and not anybody's building.
+ * THE 14TH FLOOR: Patronus AI. Its name at the top of the stair, which is
+ * where a tenant puts it; the world model in the middle of the floor; desks
+ * along the glass; racks at the back. The facts live in what the room is.
  */
-function curtainWall(s) {
-  const { x0, x1, z0, z1 } = HQ
-  for (let f = 0; f < 4; f++) {
-    const y = f * FLOOR_H
-    for (let z = z0 + 1; z < z1; z++) {
-      if ((z - z0) % 3 === 0) continue
-      for (const x of [x0, x1]) s.box([x, y, z], [x, y + 3, z], P.glass)
-    }
-    for (let x = x0 + 1; x < x1; x++) {
-      if ((x - x0) % 3 === 0) continue
-      for (const z of [z0, z1]) s.box([x, y, z], [x, y + 3, z], P.glass)
-    }
+function fourteenth(s) {
+  const { x0, x1, z0, z1 } = OPS
+  const y = FL14
+  s.clear([x0, y, z0], [x1, y + 3, z1])
+  s.rect([x0, z0], [x1, z1], y - 1, P.floor)
+  s.rect([x0, z0], [x1, z1], y + 4, P.slab)
+  // The lit glass band all the way round.
+  for (let dy = 0; dy <= 3; dy++) {
+    for (let x = x0; x <= x1; x++) { s.set(x, y + dy, z0, G.glass); s.set(x, y + dy, z1, G.glass) }
+    for (let z = z0; z <= z1; z++) { s.set(x0, y + dy, z, G.glass); s.set(x1, y + dy, z, G.glass) }
   }
-  // THE DOOR: a glass-walled entrance in the middle of the path face.
-  s.clear([x1, 0, 19], [x1, 2, 21])
-  s.box([x1 + 1, 4, 17], [x1 + 3, 4, 23], P.slab)          // the canopy
-  for (const z of [18, 20, 22]) s.set(x1 + 2, 3, z, P.lamp)
-
-  /*
-   * THE NAME on the parapet: "PATRONUS" is 31 blocks, the front is 31
-   * (z 5..35), which is why the building is exactly that long. Lit letters
-   * on black, the same treatment the No Logo loft has across the river --
-   * two employers, one sign shop. Read from +x, so NOT mirrored.
-   */
-  const word = 'PATRONUS'
-  if (wordWidth(word) !== z1 - z0 + 1) throw new Error(`[ch5] ${word} does not fit the front`)
-  s.box([x1, ROOF + 1, z0], [x1, ROOF + 7, z1], 'black_concrete')
-  s.pattern({
-    at: [x1, ROOF + 2, z0], plane: 'zy',
-    legend: { '#': P.lamp },
-    rows: wordRows(word, FACING_PATH_MIRROR),
-  })
-  s.box([x1, ROOF + 8, z0], [x1 + 1, ROOF + 8, z1], P.trim)
-}
-
-/* FLOOR 1: THE LOBBY. */
-function lobby(s) {
-  const { x0, x1 } = HQ
-  // The reception desk, facing the door.
-  s.box([x1 - 8, 0, 16], [x1 - 8, 0, 24], P.slab)
-  s.box([x1 - 9, 0, 16], [x1 - 9, 1, 16], P.slab)
-  s.box([x1 - 9, 0, 24], [x1 - 9, 1, 24], P.slab)
-  // The wall behind it, in dark stone, with the role and the mission.
-  s.box([x1 - 12, 0, 13], [x1 - 12, 3, 27], P.dark)
-  wallSign(s, x1 - 11, 2, 18, 'west', ['Patronus AI', '', '', ''])
-  for (const z of [15, 25]) s.set(x1 - 11, 3, z, P.lamp)
-  // A lounge by the windows: low seats and planters.
-  for (const z of [8, 12, 28, 32]) {
-    s.box([x1 - 3, 0, z], [x1 - 2, 0, z + 1], 'light_gray_wool')
-    s.set(x1 - 1, 0, z, 'moss_block')
+  for (let x = x0 + 2; x <= x1 - 1; x += 4) for (let z = z0 + 2; z <= z1 - 1; z += 4) s.set(x, y + 4, z, P.ceiling)
+  // The reception wall facing the top of the stair, with the business's
+  // name: a tenant's name where a tenant puts it.
+  s.box([49, y, 9], [49, y + 2, 13], 'black_concrete')
+  wallSign(s, 48, y + 1, 11, 'east', ['Patronus AI', '', '', ''])
+  worldModel(s, y)
+  // Desks along the north glass.
+  for (const x of [52, 56, 60]) {
+    s.box([x - 1, y, 9], [x + 1, y, 9], P.floor)
+    s.set(x, y + 1, 9, 'black_concrete')
+    s.set(x, y, 10, P.dark)
   }
-  // The way up is at the back, past the wall.
+  // Simulation: two rows of racks down the west side, status lights lit.
+  for (const rx of [44, 45]) {
+    s.box([rx, y, 17], [rx, y + 2, z1 - 2], 'black_concrete')
+    for (let z = 17; z <= z1 - 2; z += 2) s.set(rx, y + 1, z, P.lamp)
+  }
 }
 
 /*
- * FLOOR 2: THE WORLD MODEL. A model of the map, at 1 block to 12, on a
- * table in the middle of the floor: grass, the path in gravel, the six
- * chapters as raised blocks in their own colours, and a gold block for
- * "you are here". Derived from the plot table and the spine, never typed, so
- * whatever the landscape pass does to the layout, the model follows it.
+ * THE WORLD MODEL: a model of this whole map on a table, 1 block to 20 --
+ * grass, the path in gravel from the same spine the landscape draws, the six
+ * chapters raised in their own colours, a gold block where you are. Derived
+ * from src/builds/plots.js and spine.js, so it moves when the map does.
  */
-function worldModel(s) {
-  const y = FLOOR_H
-  const scale = 15
-  const n = Math.ceil(LAND_SIZE / scale)                   // 18 across
-  const tx0 = 47, tz0 = 8                                    // the table's corner
+function worldModel(s, y) {
+  const scale = 20
+  const n = Math.ceil(LAND_SIZE / scale)                   // 13 across
+  const tx0 = 48, tz0 = 17
   const tx1 = tx0 + n - 1, tz1 = tz0 + n - 1
-  // The table: a dark frame with the land on it.
   s.box([tx0 - 1, y, tz0 - 1], [tx1 + 1, y, tz1 + 1], P.dark)
   s.rect([tx0, tz0], [tx1, tz1], y, 'moss_block')
   const cell = (px, pz) => [tx0 + Math.floor(px / scale), tz0 + Math.floor(pz / scale)]
-  // The path, from the same spine the landscape draws.
+  const inside = (x, z) => x >= tx0 && x <= tx1 && z >= tz0 && z <= tz1
   for (const p of sampleSpine(SPINE, 2)) {
     const [x, z] = cell(p.x, p.z)
-    if (x >= tx0 && x <= tx1 && z >= tz0 && z <= tz1) s.set(x, y, z, 'gravel')
+    if (inside(x, z)) s.set(x, y, z, 'gravel')
   }
-  // The six chapters, raised, each a colour of its own.
   const colours = ['lapis_block', 'red_nether_bricks', 'pink_concrete', 'yellow_concrete', 'orange_concrete', 'white_concrete']
   CHAPTERS.forEach((c, i) => {
     const [ax, az] = cell(c.x0, c.z0), [bx, bz] = cell(c.x1, c.z1)
-    const h = c.id === 'ch6' ? 2 : 1
-    for (let x = ax; x <= bx; x++) {
-      for (let z = az; z <= bz; z++) {
-        if (x < tx0 || x > tx1 || z < tz0 || z > tz1) continue
-        s.box([x, y + 1, z], [x, y + h, z], colours[i % colours.length])
-      }
+    for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) {
+      if (inside(x, z)) s.set(x, y + 1, z, colours[i % colours.length])
     }
   })
-  // You are here.
   const here = CHAPTERS.find(c => c.id === 'ch5')
   const [hx, hz] = cell((here.x0 + here.x1) / 2, (here.z0 + here.z1) / 2)
-  if (hx >= tx0 && hx <= tx1 && hz >= tz0 && hz <= tz1) s.set(hx, y + 2, hz, 'gold_block')
-  // Light over the table, and the sign.
-  for (let x = tx0 + 2; x <= tx1; x += 5) for (let z = tz0 + 2; z <= tz1; z += 5) s.set(x, y + FLOOR_H - 1, z, P.ceiling)
-  s.box([HQ.x0 + 1, y, 16], [HQ.x0 + 1, y + 3, 20], 'black_concrete')
-  // Screens round the walls, as if the model were being watched.
-  for (const z of [10, 14, 24, 28]) s.box([HQ.x0 + 1, y + 1, z], [HQ.x0 + 1, y + 2, z + 1], 'light_blue_concrete')
+  if (inside(hx, hz)) s.set(hx, y + 2, hz, 'gold_block')
 }
 
-/* FLOOR 3: SIMULATION. Racks in rows, status lights, a cold aisle. */
-function simulation(s) {
-  const y = 2 * FLOOR_H
-  for (let row = 0; row < 4; row++) {
-    const x = 49 + row * 4
-    s.box([x, y, 8], [x, y + 2, 24], 'black_concrete')
-    for (let z = 8; z <= 24; z++) {
-      if ((z + row) % 3 === 0) s.set(x, y + 1, z, P.lamp)
-      if ((z + row) % 4 === 1) s.set(x, y + 2, z, 'light_blue_concrete')
+/*
+ * THE PLAZA on the flatiron tip, between the tower and the path: granite
+ * paving, granite steps to sit on, trees round the edge, and the octagonal
+ * two-tiered opening down toward BART -- two tiers is exactly the depth the
+ * world has (docs/builds/README.md), so the second tier is the bottom.
+ */
+function plaza(s) {
+  s.rect([63, 5], [72, 35], -1, G.plaza)
+  // The flatiron's diagonal: Market Street's edge, in a darker band.
+  for (let x = 63; x <= 72; x++) s.set(x, -1, Math.round(35 - (x - 63) * 0.5), G.lintel)
+  const cx = 68, cz = 20
+  for (let x = cx - 5; x <= cx + 5; x++) {
+    for (let z = cz - 5; z <= cz + 5; z++) {
+      const d = Math.max(Math.abs(x - cx), Math.abs(z - cz), (Math.abs(x - cx) + Math.abs(z - cz)) * 0.72)
+      if (d > 4.6) continue
+      if (d > 3.2) { s.clear([x, -1, z], [x, -1, z]); s.set(x, -2, z, G.step) }
+      else { s.clear([x, -2, z], [x, -1, z]); s.set(x, -3, z, G.plaza) }
     }
   }
-  // Every aisle is its own room as far as light is concerned.
-  for (let row = 0; row < 4; row++) {
-    for (let z = 10; z <= 24; z += 5) s.set(51 + row * 4, y + FLOOR_H - 1, z, P.ceiling)
-  }
-}
-
-/* FLOOR 4: GROWTH. */
-function growth(s) {
-  const y = 3 * FLOOR_H
-  for (const [x, z] of [[52, 9], [52, 14], [58, 9], [58, 14], [52, 22], [58, 22]]) {
-    s.box([x, y, z], [x + 2, y, z + 1], P.floor)
-    s.set(x + 1, y + 1, z, 'black_concrete')
-    s.set(x + 1, y, z + 2, P.dark)
-  }
-  s.box([HQ.x0 + 1, y, 10], [HQ.x0 + 1, y + 2, 22], P.trim)
-}
-
-/* THE ROOF TERRACE, looking west at the bridge. */
-function terrace(s) {
-  const { x0, x1, z0, z1 } = HQ
-  const r = ROOF + 1
-  s.box([x0, r, z0], [x1 - 1, r, z0], P.glass)
-  s.box([x0, r, z1], [x1 - 1, r, z1], P.glass)
-  s.box([x0, r, z0], [x0, r, z1], P.glass)
-  for (const [x, z] of [[50, 10], [56, 10], [50, 30], [56, 30]]) {
-    s.set(x, r, z, 'moss_block')
-    s.set(x, r + 1, z, 'oak_leaves')
-  }
-  for (const z of [16, 20, 24]) s.box([46, r, z], [47, r, z], 'light_gray_wool')
-  for (const [x, z] of [[44, 8], [44, 32], [60, 8], [60, 32]]) { s.pillar(x, z, r, r + 1, P.dark); s.set(x, r + 2, z, P.lamp) }
+  // The portal into the station on the pit's back wall, lit.
+  s.box([cx - 1, -3, cz - 4], [cx + 1, -2, cz - 4], 'air')
+  s.box([cx - 1, -3, cz - 5], [cx + 1, -2, cz - 5], P.dark)
+  s.set(cx, -2, cz - 3, P.lamp)
+  s.set(cx - 2, -3, cz + 2, P.lamp)
+  // Trees round the plaza, and granite seating steps round the opening.
+  for (const z of [8, 31]) tree(s, 69, z)
+  for (const z of [11, 28]) tree(s, 66, z)
+  for (const z of [6, 34]) { s.pillar(66, z, 0, 3, P.dark); s.set(66, 4, z, P.lamp) }
 }
 
 /* ====================================================================== *
@@ -463,7 +478,7 @@ function alamoSquare(s) {
 
 function transamerica(s) {
   const cx = 33, cz = 58
-  const top = 50
+  const top = 59                  // taller than One Post Street, as it is
   for (let y = -1; y <= top; y++) {
     const r = Math.max(0, Math.round(6 - (Math.max(0, y) * 6) / (top - 4)))
     for (let x = cx - r; x <= cx + r; x++) {
@@ -476,7 +491,7 @@ function transamerica(s) {
   }
   // The two wings that carry the lifts and the stairs, on the flanks.
   for (const dz of [-1, 1]) {
-    for (let y = 30; y <= 47; y++) {
+    for (let y = 36; y <= top - 4; y++) {
       const r = Math.max(0, Math.round(6 - (y * 6) / (top - 4)))
       s.box([cx, y, cz + dz * r], [cx, y, cz + dz * (r + 1)], 'white_concrete')
     }

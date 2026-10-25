@@ -19,27 +19,32 @@
  *   strategy for the software that runs operations: factory quoting,
  *   sampling, production tracking, fulfillment.
  *
- * WHAT IS NOT KNOWN, and therefore not drawn: the address of the office, what
- * the building looked like, any client, any product, any face. The loft is a
- * generic SoHo cast-iron loft -- New York's most recognisable kind of
- * startup office -- and it is labelled as No Logo, not as a real building.
- * The Shenzhen office is a video call on a screen, because that is the only
- * way this chapter's New York ever saw it.
+ * WHERE: the Cable Building, 611 Broadway, at Houston Street -- the owner
+ * says No Logo's office was in it, so the company's floors are inside a
+ * rebuild of that building (see THE CABLE BUILDING below for its sources).
+ * WHAT IS NOT KNOWN, and therefore not drawn: which floor, the office's
+ * layout, any client, any product, any face. The Shenzhen office is a video
+ * call on a screen, because that is the only way this chapter's New York
+ * ever saw it.
  *
  * ------------------------------------------------------------------------
  * THE SLICE OF NEW YORK, chosen so that each thing is recognisable from the
  * path in one look, and none of them needs a caption:
  *
- *   - an AVENUE along the path side with yellow cabs, white lane dashes,
- *     zebra crossings, and cobra-head street lamps;
- *   - a CAST-IRON LOFT with a water tower on the roof and a fire escape on
- *     its flank -- No Logo, four floors you can climb;
- *   - three BROWNSTONES with stoops on the side street;
- *   - a CORNER DELI with its sign over the awning;
- *   - a SUBWAY ENTRANCE with green globes, down to a platform and a train;
+ *   - BROADWAY along the path side with yellow cabs, white lane dashes,
+ *     zebra crossings, and cobra-head street lamps, and HOUSTON STREET
+ *     crossing it;
+ *   - THE CABLE BUILDING on the north-west corner, where it stands: a
+ *     limestone arcade, orange brick, a copper cornice, chamfered corners,
+ *     the round window with its two figures, and the Angelika at its foot.
+ *     Nine storeys, the No Logo floors inside, a stair to the roof;
+ *   - a BROWNSTONE with a stoop and a water tower further along Houston;
+ *   - a CORNER DELI with its sign over the awning, across Houston;
+ *   - a SUBWAY ENTRANCE with green globes, down to a platform and a train --
+ *     there is a real one at Broadway and Houston;
  *   - the EMPIRE STATE BUILDING, setbacks, mast and lit crown, at the back of
- *     the plot so it is the skyline behind everything else. At sixty-three
- *     blocks it is the tallest thing on the map's west side.
+ *     the plot so it is the skyline behind everything else. It is not in
+ *     NoHo; it is in every picture of New York, which is why it is here.
  *
  * ------------------------------------------------------------------------
  * ORIENTATION. ch4 is a RIGHT plot: the path is on the low-x side and the
@@ -101,14 +106,9 @@ const XWALK_N = { z0: 35, z1: 37 }     // its sidewalks
 const XWALK_S = { z0: 43, z1: 45 }
 const Z0 = 5                            // everything starts south of the marker
 
-/* THE LOFT. Four floors of five blocks, then the roof. */
-const LOFT = { x0: 14, x1: 37, z0: 8, z1: 34 }
-const FLOOR_H = 5
-const ROOF = 4 * FLOOR_H - 1            // the roof slab, y = 19
-
 export function build(s) {
   streets(s)
-  loft(s)
+  cableBuilding(s)
   brownstones(s)
   loadingDock(s)
   deli(s)
@@ -156,298 +156,425 @@ function streets(s) {
   s.rect([0, 5], [0, 7], -1, P.sidewalk)
 }
 
-/* ====================================================================== *
- * NO LOGO: the cast-iron loft
- * ====================================================================== */
+/*
+ * THE CABLE BUILDING, 611 Broadway, at the north-west corner of Broadway and
+ * Houston Street. No Logo's office was in it (the owner, in as many words).
+ *
+ * WHAT IS KNOWN ABOUT IT, and where from:
+ *   - McKim, Mead & White (Stanford White), 1892-94, Beaux-Arts, built as
+ *     the headquarters of the Broadway Cable Railroad; the cable powerhouse
+ *     was in the basement, which is now the Angelika Film Center.
+ *   - NINE storeys, steel frame, brick, stone and terra cotta facing.
+ *   - A TWO-STOREY LIMESTONE ARCADE at the base, show windows with iron
+ *     spandrels and keystones.
+ *   - LIGHT ORANGE BRICK and terra cotta above it; seven storeys of offices
+ *     round a light court.
+ *   - A COPPER CORNICE with lions' faces; small square attic windows tucked
+ *     under it, which is why the building reads as eight storeys from the
+ *     street.
+ *   - BOTH HOUSTON STREET CORNERS CHAMFERED.
+ *   - A large round window near the top of the Broadway front, two classically
+ *     robed female figures astride it, over a pediment with the building's
+ *     name; and two colossal figures by J. Massey Rhind at the Broadway door.
+ *   Sources: Wikipedia, "Cable Building (New York City)"; newyorkitecture.com
+ *   "Cable Building"; Village Preservation (urbanarchive.org). The bay
+ *   counts below are NOT measured -- no source gave them -- and are drawn
+ *   from the proportions of the frontages: Broadway is the short front and
+ *   Houston the long one, roughly 1 : 1.6 here.
+ *
+ * THE SCALE. Broadway front 27 blocks, Houston 42, nine storeys in 38: the
+ * two-storey arcade is ten blocks, the six office storeys four each, the
+ * attic three, then the cornice. That is one block to roughly four feet on
+ * plan and a little less in height, the same stretch ch1 takes, so the
+ * storeys are walkable.
+ *
+ * INSIDE, the four No Logo floors carry over from the loft this replaces --
+ * the facts are in the rooms, not on the walls -- on storeys 3 to 6; 7, 8 and
+ * the attic are lit, empty offices; the ground floor is the lobby off
+ * Broadway and, through a wall, a cinema for the Angelika. One stair climbs
+ * from the lobby to the roof.
+ */
+const CB = { x0: 14, x1: 55, z0: 8, z1: 34 }
+const BASE_TOP = 9                      // the arcade's slab; storey 3 stands at 10
+const STOREY = 4
+const ROOF = 37                         // the roof slab; storeys 3..9 below it
+const storeyBase = (k) => BASE_TOP + 1 + (k - 3) * STOREY   // k = 3..9
+const CHAMFER = 2
+
+/** Is (x, z) inside the building's plan, after the two Houston chamfers? */
+function inPlan(x, z) {
+  const { x0, x1, z0, z1 } = CB
+  if (x < x0 || x > x1 || z < z0 || z > z1) return false
+  if ((x - x0) + (z1 - z) < CHAMFER) return false
+  if ((x1 - x) + (z1 - z) < CHAMFER) return false
+  return true
+}
+
+const C = {
+  limestone: 'calcite',
+  brick: 'smooth_red_sandstone',        // light orange brick
+  terra: 'smooth_sandstone',            // the cream terra cotta trim
+  copper: 'weathered_cut_copper',
+  lion: 'oxidized_chiseled_copper',
+  key: 'chiseled_stone_bricks',
+  iron: 'polished_blackstone',
+  figure: 'smooth_quartz',
+}
+
+function cableBuilding(s) {
+  const { x0, x1, z0, z1 } = CB
+  // The mass: limestone to the arcade's top, brick above, hollow inside.
+  for (let x = x0; x <= x1; x++) {
+    for (let z = z0; z <= z1; z++) {
+      if (!inPlan(x, z)) continue
+      s.box([x, -1, z], [x, BASE_TOP, z], C.limestone)
+      s.box([x, BASE_TOP + 1, z], [x, ROOF, z], C.brick)
+    }
+  }
+  s.clear([x0 + 1, 0, z0 + 1], [x1 - 1, ROOF - 1, z1 - 1])
+  // The outer wall again round the whole plan, including the diagonal of
+  // each chamfer, which the clear above hollowed.
+  for (let x = x0; x <= x1; x++) {
+    for (let z = z0; z <= z1; z++) {
+      const edge = inPlan(x, z) && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => !inPlan(x + dx, z + dz))
+      if (edge) s.box([x, 0, z], [x, ROOF - 1, z], C.brick)
+      if (edge) s.box([x, 0, z], [x, BASE_TOP, z], C.limestone)
+    }
+  }
+  // Floors: the ground, the arcade's slab, and every storey above.
+  s.rect([x0 + 1, z0 + 1], [x1 - 1, z1 - 1], -1, 'polished_andesite')
+  for (let k = 3; k <= 9; k++) s.rect([x0 + 1, z0 + 1], [x1 - 1, z1 - 1], storeyBase(k) - 1, P.floor)
+  s.rect([x0 + 1, z0 + 1], [x1 - 1, z1 - 1], ROOF, P.dark)
+  for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) if (!inPlan(x, z)) s.box([x, -1, z], [x, ROOF + 2, z], 'air')
+  for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) if (!inPlan(x, z)) s.set(x, -1, z, P.sidewalk)
+
+  broadwayFront(s)
+  houstonFront(s)
+  backAndNorth(s)
+  cornice(s)
+  cableStair(s)
+  lights(s)
+  lobbyAndCinema(s)
+  sampleRoom(s, storeyBase(3))
+  employeeTwo(s, storeyBase(4))
+  growthFloor(s, storeyBase(5))
+  operations(s, storeyBase(6))
+  roof(s)
+}
+
+/**
+ * One front, bay by bay. `along` is the axis the front runs on, `fixed` its
+ * plane, `out` the outward step (-1 or +1 on the other axis), `piers` the
+ * pier positions along it. Everything else -- arcade, windows, attic -- is
+ * derived per bay, so both fronts share one grammar.
+ */
+function front(s, { along, fixed, out, piers, from, to }) {
+  const put = (u, y, k, d = 0) => along === 'z' ? s.set(fixed + out * d, y, u, k) : s.set(u, y, fixed + out * d, k)
+  const ok = (u) => along === 'z' ? inPlan(fixed, u) : inPlan(u, fixed)
+  // Piers: proud by one, limestone on the arcade, brick above, full height.
+  for (const u of piers) {
+    if (!ok(u)) continue
+    for (let y = -1; y <= ROOF - 1; y++) put(u, y, y <= BASE_TOP ? C.limestone : C.brick, 1)
+  }
+  // The band between arcade and shaft, proud, in terra cotta.
+  for (let u = from; u <= to; u++) if (ok(u)) { put(u, BASE_TOP, C.terra, 1); put(u, BASE_TOP + 1, C.terra) }
+  // Bays.
+  for (let i = 0; i < piers.length - 1; i++) {
+    const a = piers[i] + 1, b = piers[i + 1] - 1
+    if (b < a) continue
+    const mid = (a + b) / 2
+    for (let u = a; u <= b; u++) {
+      if (!ok(u)) continue
+      // THE ARCADE: a two-storey show window, rounded at the head, with an
+      // iron spandrel across it between the two storeys and a keystone.
+      for (let y = 0; y <= 7; y++) put(u, y, P.glass)
+      put(u, 4, C.iron)
+      if (u === a || u === b) put(u, 7, C.limestone)
+      put(u, 8, Math.abs(u - mid) < 1 ? C.key : C.limestone)
+      // THE SHAFT: storeys 3..8, a row of tall windows a storey with a cream
+      // spandrel at each floor line; the top storey's heads are arched.
+      for (let k = 3; k <= 8; k++) {
+        const y = storeyBase(k)
+        for (let dy = 0; dy <= 2; dy++) put(u, y + dy, P.glass)
+        put(u, y + 3, C.terra)
+        if (k === 8 && (u === a || u === b)) put(u, y + 2, C.brick)
+      }
+      // THE ATTIC: one small square window a bay, under the cornice.
+      if (Math.abs(u - mid) < 1) put(u, storeyBase(9) + 1, P.glass)
+    }
+  }
+}
+
+/* BROADWAY, the short front, facing -x at x = 14, the door in the middle. */
+const BWAY_PIERS = [8, 13, 18, 23, 28, 32]
+
+function broadwayFront(s) {
+  front(s, { along: 'z', fixed: CB.x0, out: -1, piers: BWAY_PIERS, from: CB.z0, to: CB.z1 })
+  const x = CB.x0
+  // THE DOOR, in the centre bay (19..22): an opening under the arcade glass.
+  s.clear([x, 0, 20], [x, 3, 21])
+  s.box([x - 1, 4, 19], [x - 1, 4, 22], C.terra)            // a hood over it
+  s.set(x - 1, 3, 19, P.lamp); s.set(x - 1, 3, 22, P.lamp)
+  /* RHIND'S TWO FIGURES flanking the door: robed, standing, on plinths. */
+  for (const z of [18, 23]) {
+    s.set(x - 2, 0, z, 'smooth_stone')
+    s.box([x - 2, 1, z], [x - 2, 2, z], C.figure)
+    s.set(x - 2, 3, z, C.limestone)
+  }
+  /* THE BUSINESS NAME, at the door and nowhere else. */
+  wallSign(s, x - 1, 1, 24, 'east', ['No Logo', '', '', ''])
+
+  /*
+   * THE ROUND WINDOW NEAR THE TOP, with its two figures astride it, over a
+   * plain panel where the name is carved -- breaking up through the attic
+   * into the cornice line, as it does on the real front. Symmetric, so no
+   * mirroring question. Drawn on the face plane, the figures one proud.
+   */
+  s.pattern({
+    at: [x, 28, 17], plane: 'zy',
+    legend: { S: C.terra, G: P.glass, C: C.terra, B: C.brick },
+    rows: [
+      'B.SSSS.B',
+      'BSGGGGSB',
+      'SGGGGGGS',
+      'SGGGGGGS',
+      'SGGGGGGS',
+      'BSGGGGSB',
+      'B.SSSS.B',
+      'CCCCCCCC',
+      'CCCCCCCC',
+    ],
+  })
+  for (const [z, dz] of [[17, -1], [24, 1]]) {
+    s.box([x - 1, 31, z], [x - 1, 33, z], C.figure)         // the figure
+    s.set(x - 1, 34, z, C.limestone)                         // her head
+    s.set(x - 1, 31, z + dz, C.figure)                       // the drape
+  }
+  s.box([x - 1, 29, 17], [x - 1, 29, 24], C.terra)          // the pediment ledge
+}
+
+/* HOUSTON, the long front, facing +z at z = 34, the Angelika at its far end. */
+const HOU_PIERS = [16, 21, 26, 31, 36, 41, 46, 51, 54]
+
+function houstonFront(s) {
+  front(s, { along: 'x', fixed: CB.z1, out: 1, piers: HOU_PIERS, from: CB.x0, to: CB.x1 })
+  // The chamfered corners get a window each storey, so the cut reads.
+  for (const [x, z] of [[15, 33], [54, 33]]) {
+    for (let k = 3; k <= 8; k++) s.box([x, storeyBase(k), z], [x, storeyBase(k) + 2, z], P.glass)
+    s.box([x, 0, z], [x, 7, z], P.glass)
+  }
+  /*
+   * THE ANGELIKA, the cinema in the old cable powerhouse: its door near the
+   * Mercer end, and its name on a lit canopy over the sidewalk. The name is
+   * a business's, which is what a sign is for. Read from the street, facing
+   * -z, so it is mirrored (the reader's right is -x).
+   */
+  const z = CB.z1
+  s.clear([43, 0, z], [44, 2, z])
+  const word = 'ANGELIKA'
+  const ww = wordWidth(word)
+  const wx = 52 - ww + 1
+  s.box([wx - 1, 4, z + 1], [52 + 1, 4, z + 2], P.dark)     // the canopy
+  s.box([wx - 1, 5, z + 2], [52 + 1, 10, z + 2], 'red_concrete')
+  s.pattern({
+    at: [wx, 5, z + 2], plane: 'xy',
+    legend: { '#': P.lamp },
+    rows: wordRows(word, ANGELIKA_MIRROR),
+  })
+  for (let x = wx; x <= 52; x += 4) s.set(x, 3, z + 2, P.lamp)
+}
+
+/** The Angelika's name is on an `xy` face read from +z: mirrored. Decoded
+ *  from the reader's side by test/99-chapters-4-6.spec.js. */
+export const ANGELIKA_MIRROR = true
+
+/** Mercer Street (+x) and the north party wall: brick, plain windows, and
+ *  on the north face the larger attic windows the sources mention. */
+function backAndNorth(s) {
+  const { x0, x1, z0, z1 } = CB
+  for (let k = 3; k <= 8; k++) {
+    const y = storeyBase(k)
+    for (let z = z0 + 3; z <= z1 - 4; z += 4) s.box([x1, y, z], [x1, y + 2, z + 1], P.glass)
+    for (let x = x0 + 4; x <= x1 - 3; x += 5) s.box([x, y, z0], [x + 1, y + 2, z0], P.glass)
+  }
+  for (let x = x0 + 4; x <= x1 - 3; x += 5) s.box([x, storeyBase(9), z0], [x + 1, storeyBase(9) + 1, z0], P.glass)
+  // A freight door on Mercer, and the limestone base round the back too.
+  s.clear([x1, 0, 13], [x1, 2, 15])
+}
+
+/** The copper cornice with its lions' faces, on Broadway and Houston, and a
+ *  plainer coping on the other two sides. */
+function cornice(s) {
+  const { x0, x1, z0, z1 } = CB
+  for (let z = z0; z <= z1; z++) {
+    if (!inPlan(x0, z) && !inPlan(x0 + 1, z)) continue
+    s.set(x0 - 1, ROOF, z, z % 3 === 0 ? C.lion : C.copper)
+    s.set(x0 - 2, ROOF + 1, z, C.copper)
+    s.set(x0 - 1, ROOF + 1, z, C.copper)
+  }
+  for (let x = x0; x <= x1; x++) {
+    if (!inPlan(x, z1) && !inPlan(x, z1 - 1)) continue
+    s.set(x, ROOF, z1 + 1, x % 3 === 0 ? C.lion : C.copper)
+    s.set(x, ROOF + 1, z1 + 2, C.copper)
+    s.set(x, ROOF + 1, z1 + 1, C.copper)
+  }
+  // Round the chamfers: the cornice follows the cut.
+  for (const [x, z] of [[14, 33], [15, 34], [55, 33], [54, 34]]) s.set(x, ROOF + 1, z, C.copper)
+  // The roof's own parapet, one course.
+  for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) {
+    if (!inPlan(x, z)) continue
+    const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => !inPlan(x + dx, z + dz))
+    if (edge) s.set(x, ROOF + 1, z, C.copper)
+  }
+}
 
 /*
- * FOUR FLOORS, AND EACH ONE IS A FACT.
- *
- *   1  THE SAMPLE ROOM  what the company does: shelves of samples, a QC
- *                       bench, a freight door at the back.
- *   2  EMPLOYEE #2      two desks by the window, and the wall of fifty
- *                       envelopes: fifty cold emails a day, which is how the
- *                       growth function started.
- *   3  GROWTH           three pods -- creative, paid media, partner
- *                       outreach -- and the screen with the first long-form
- *                       video on it.
- *   4  OPERATIONS       the four screens of the software (quoting, sampling,
- *                       production, fulfillment) and the call with Shenzhen:
- *                       a wall of twenty faces, two of them first.
- *   ROOF                the water tower, and the run rate on a billboard.
- *
- * A switchback stair in the back corner connects them all, so the climb is
- * one continuous walk from the street to the roof.
+ * THE STAIR: a ten-step straight run out of the lobby to storey 3 (the
+ * arcade is two storeys tall), then a switchback of four-block storeys all
+ * the way to the roof.
  */
-function loft(s) {
-  const { x0, x1, z0, z1 } = LOFT
-  // The shell: brick sides and back, floors every five blocks, hollow inside.
-  s.box([x0, -1, z0], [x1, ROOF, z1], P.loftSide)
-  s.clear([x0 + 1, 0, z0 + 1], [x1 - 1, ROOF - 1, z1 - 1])
-  for (let f = 0; f < 4; f++) {
-    const y = f * FLOOR_H - 1
-    s.rect([x0 + 1, z0 + 1], [x1 - 1, z1 - 1], y, f === 0 ? 'polished_andesite' : P.floor)
-  }
-  s.rect([x0 + 1, z0 + 1], [x1 - 1, z1 - 1], ROOF, P.dark)
+const STAIR = { a: 33, b: 34, z0: 20 }
 
-  castIronFront(s)
-  sideWindows(s)
-  stairs(s)
-  for (let f = 0; f < 4; f++) {
-    const y = f * FLOOR_H
-    // The ceiling grid. Light falls one level a block, so a lamp every five.
+function cableStair(s) {
+  for (let i = 0; i < 10; i++) s.set(STAIR.a, i, 10 + i, P.floor)
+  s.clear([STAIR.a, BASE_TOP, 10], [STAIR.a, BASE_TOP, 18])
+  s.box([STAIR.a - 1, storeyBase(3), 10], [STAIR.a - 1, storeyBase(3), 18], P.dark)
+  switchback(s, STAIR, 7, STOREY, P.floor, { rail: P.dark, light: P.ceiling }, storeyBase(3))
+}
+
+/** Lamps in every ceiling, every five blocks, skipping the stair lanes. */
+function lights(s) {
+  const { x0, x1, z0, z1 } = CB
+  const slabs = [BASE_TOP]
+  for (let k = 3; k <= 9; k++) slabs.push(storeyBase(k) + STOREY - 1)
+  for (const y of slabs) {
     for (let x = x0 + 3; x < x1 - 1; x += 5) {
       for (let z = z0 + 3; z < z1 - 1; z += 5) {
-        if (x >= 33) continue                   // the stairwell
-        s.set(x, y + FLOOR_H - 1, z, P.ceiling)
+        if (x >= 32 && x <= 35) continue
+        if (y === ROOF) continue
+        s.set(x, y, z, P.ceiling)
       }
     }
   }
-  sampleRoom(s)
-  employeeTwo(s)
-  growthFloor(s)
-  operations(s)
-  roof(s)
-  fireEscape(s)
 }
 
-/*
- * THE FRONT: a SoHo cast-iron facade, painted white, five bays of tall
- * windows between fluted columns, a cornice at every floor. The whole front
- * is ONE `zy` plane at x = x0 and every bay is derived from COLS.
- */
-const COLS = [8, 13, 18, 23, 28, 34]
-
-function castIronFront(s) {
-  const { x0, z0, z1 } = LOFT
-  s.box([x0, -1, z0], [x0, ROOF, z1], P.castIron)
-  for (let f = 0; f < 4; f++) {
-    const y = f * FLOOR_H
-    // Tall windows in every bay. The ground floor is a shopfront: glass to
-    // the floor. Upper floors: three-tall windows over a one-block sill.
-    for (let b = 0; b < COLS.length - 1; b++) {
-      const za = COLS[b] + 1, zb = COLS[b + 1] - 1
-      if (f === 0) s.box([x0, 0, za], [x0, 3, zb], P.glass)
-      else s.box([x0, y, za], [x0, y + 2, zb], P.glass)
-    }
-    // The cornice band at the floor line, standing proud by one.
-    s.box([x0 - 1, y + FLOOR_H - 1, z0], [x0 - 1, y + FLOOR_H - 1, z1], P.castTrim)
+/* THE GROUND FLOOR: the lobby off Broadway, and the Angelika's cinema. */
+function lobbyAndCinema(s) {
+  // The wall between them, with a door through it.
+  s.box([36, 0, CB.z0 + 1], [36, BASE_TOP - 1, CB.z1 - 1], C.limestone)
+  s.clear([36, 0, 20], [36, 2, 21])
+  // Lobby: a marble floor, a desk, a bench.
+  s.rect([15, 9], [35, 33], -1, 'polished_diorite')
+  s.box([20, 0, 26], [24, 0, 26], 'smooth_quartz')
+  s.box([18, 0, 12], [21, 0, 12], 'spruce_planks')
+  // THE CINEMA: a screen on the north wall, rows of red seats facing it,
+  // dim lights. The real Angelika is underground, in the powerhouse; the
+  // world's floor is three blocks down, so its auditorium is here.
+  s.box([39, 1, CB.z0 + 1], [52, 7, CB.z0 + 1], 'white_concrete')
+  for (let z = 14; z <= 30; z += 2) {
+    s.box([39, 0, z], [52, 0, z], 'red_wool')
   }
-  // The columns, proud of the glass, full height.
-  for (const z of COLS) s.box([x0 - 1, -1, z], [x0 - 1, ROOF, z], P.castTrim)
-
-  /* THE DOOR, in the middle bay: two wide, three tall, with a step of
-   * nothing -- the floor is at y = -1 like the sidewalk, per the README. */
-  s.clear([x0 - 1, 0, 20], [x0, 2, 21])
-  s.set(x0 - 1, 3, 20, P.lamp)
-  s.set(x0 - 1, 3, 21, P.lamp)
-
-  /*
-   * THE PARAPET AND THE NAME. "NO LOGO" is 27 blocks in the block alphabet
-   * and the frontage is 27 blocks (z 8..34), which is why the loft is
-   * exactly this long. Letters in sea lantern on black, so the name is lit
-   * at night with nothing in front of it, standing on the roof line where a
-   * New York building has always put its name.
-   */
-  const word = 'NO LOGO'
-  const ww = wordWidth(word)
-  if (ww !== z1 - z0 + 1) throw new Error(`[ch4] ${word} is ${ww} wide; the loft front is ${z1 - z0 + 1}`)
-  s.box([x0, ROOF + 1, z0], [x0, ROOF + 7, z1], 'black_concrete')
-  s.pattern({
-    at: [x0, ROOF + 2, z0], plane: 'zy',
-    legend: { '#': P.lamp },
-    rows: wordRows(word, FACING_PATH_MIRROR),
-  })
-  s.box([x0 - 1, ROOF + 8, z0], [x0, ROOF + 8, z1], P.castTrim)
+  for (let z = 14; z <= 30; z += 2) s.set(45, 0, z, 'air')   // the aisle
+  s.rect([37, 9], [54, 33], -1, 'red_terracotta')
 }
 
-/** Windows down the flanks, so the brick sides are not blind and the lit
- *  floors show from the side street and the arrival. */
-function sideWindows(s) {
-  const { x0, x1, z0, z1 } = LOFT
-  for (let f = 0; f < 4; f++) {
-    const y = f * FLOOR_H
-    for (let x = x0 + 3; x <= x1 - 3; x += 4) {
-      if (f === 0 && x > 30) continue
-      for (const z of [z0, z1]) s.box([x, y, z], [x + 1, y + 2, z], P.glass)
-    }
-  }
-}
+/* THE NO LOGO FLOORS, storeys 3 to 6. Each takes the storey's standing y. */
 
-/*
- * THE STAIR: a switchback in the back corner, two lanes wide. Each floor's
- * run is five single blocks rising one each, along z, in alternate lanes,
- * through a hole in the slab above. Full blocks, not stair keys: a staircase
- * you cannot climb is worse than a blocky one (docs/builds/README.md).
- */
-const STAIR = { a: 34, b: 35, z0: 26, z1: 30 }
-
-function stairs(s) {
-  switchback(s, STAIR, 4, FLOOR_H, P.floor, { rail: P.dark, light: P.ceiling })
-  // The roof hatch gets a little bulkhead so the stair arrives somewhere.
-  s.box([STAIR.b + 1, ROOF + 1, STAIR.z0], [STAIR.b + 1, ROOF + 3, STAIR.z1], P.loftSide)
-  s.box([STAIR.a, ROOF + 4, STAIR.z0], [STAIR.b + 1, ROOF + 4, STAIR.z1], P.dark)
-}
-
-/** A wall sign facing -x (readable from the front of the room), labelled. */
-function sign(s, x, y, z, lines, facing = 'east') {
-  wallSign(s, x, y, z, facing, lines)
-}
-
-/* FLOOR 1: THE SAMPLE ROOM. What the company does, as a room. */
-function sampleRoom(s) {
-  const { x0, z0, z1 } = LOFT
-  // Shelving down both flanks, three high, stocked with "samples" -- plain
-  // colours, because no client and no product is named.
+function sampleRoom(s, y) {
   const stock = ['red_wool', 'yellow_wool', 'light_blue_wool', 'lime_wool', 'orange_wool',
     'white_wool', 'pink_wool', 'cyan_wool', 'purple_wool', 'brown_wool']
-  for (const z of [z0 + 1, z1 - 1]) {
-    for (let x = x0 + 3; x <= 30; x++) {
-      s.set(x, 0, z, 'spruce_planks')
-      s.set(x, 1, z, stock[(x * 3 + z) % stock.length])
-      s.set(x, 2, z, 'spruce_planks')
-      s.set(x, 3, z, stock[(x * 7 + z) % stock.length])
+  for (const z of [CB.z0 + 1, CB.z1 - 2]) {
+    for (let x = 16; x <= 30; x++) {
+      s.set(x, y, z, 'spruce_planks')
+      s.set(x, y + 1, z, stock[(x * 3 + z) % stock.length])
+      s.set(x, y + 2, z, stock[(x * 7 + z) % stock.length])
     }
   }
-  // The QC bench: a long white table under a light, with a few items on it.
-  s.box([x0 + 8, 0, 18], [x0 + 14, 0, 18], 'smooth_quartz')
-  s.box([x0 + 8, 0, 23], [x0 + 14, 0, 23], 'smooth_quartz')
-  s.set(x0 + 9, 1, 18, 'red_wool')
-  s.set(x0 + 12, 1, 23, 'light_blue_wool')
-  // Inside the door, on the column between two windows: who this is.
-  sign(s, x0 + 1, 1, 18, ['No Logo', '', '', ''], 'west')
-  // The pipeline, on signs at the near end of each bench.
-  // The freight door at the back, onto the loading dock.
-  s.clear([LOFT.x1, 0, 13], [LOFT.x1, 2, 15])
+  // The QC benches, with a few things on them.
+  s.box([20, y, 18], [27, y, 18], 'smooth_quartz')
+  s.box([20, y, 23], [27, y, 23], 'smooth_quartz')
+  s.set(21, y + 1, 18, 'red_wool')
+  s.set(25, y + 1, 23, 'light_blue_wool')
 }
 
-/* FLOOR 2: EMPLOYEE #2. */
-function employeeTwo(s) {
-  const { x0 } = LOFT
-  const y = FLOOR_H
-  // Two desks side by side at the window: #1 and #2. Desk, chair, monitor.
-  for (const z of [24, 28]) {
-    s.box([x0 + 3, y, z], [x0 + 3, y, z + 1], 'birch_planks')   // the desk
-    s.set(x0 + 3, y + 1, z, 'black_concrete')                  // the monitor
-    s.set(x0 + 4, y, z, 'polished_blackstone')                 // the chair
+function employeeTwo(s, y) {
+  // Two desks side by side at the Broadway windows.
+  for (const z of [24, 27]) {
+    s.box([16, y, z], [16, y, z + 1], 'birch_planks')
+    s.set(16, y + 1, z, 'black_concrete')
+    s.set(17, y, z, 'polished_blackstone')
   }
-  // On the south wall, beside the two desks.
-
-  /*
-   * THE FIFTY. Fifty white tiles let into the floorboards as a ten by ten
-   * checkerboard in the middle of the room: the fifty cold emails a day the
-   * growth function started with. A checkerboard rather than a wall because
-   * fifty white blocks side by side photographed as one white wall, and a
-   * number nobody can count is decoration.
-   */
-  const fx0 = x0 + 6, fz0 = 14
+  /* THE FIFTY: a ten by ten checkerboard of white tiles in the floorboards,
+   * fifty of them -- countable, which a wall of white was not. */
   let n = 0
   for (let i = 0; i < 10; i++) {
-    for (let j = 0; j < 10; j++) {
-      if ((i + j) % 2 === 0) { s.set(fx0 + i, y - 1, fz0 + j, 'white_wool'); n++ }
-    }
+    for (let j = 0; j < 10; j++) if ((i + j) % 2 === 0) { s.set(20 + i, y - 1, 12 + j, 'white_wool'); n++ }
   }
   if (n !== 50) throw new Error(`[ch4] the floor holds ${n} envelopes, not 50`)
-  s.set(fx0 + 4, y, LOFT.z0, P.loftSide)
-  // A sofa and a plant, because two desks in an empty loft is a warehouse.
-  s.box([x0 + 12, y, 30], [x0 + 14, y, 31], 'gray_wool')
-  s.set(x0 + 18, y, 31, 'moss_block'); s.set(x0 + 18, y + 1, 31, 'oak_leaves')
-  // A whiteboard on the south wall.
-  s.box([x0 + 9, y, LOFT.z1 - 1], [x0 + 16, y + 2, LOFT.z1 - 1], 'white_concrete')
-  s.box([x0 + 10, y + 1, LOFT.z1 - 1], [x0 + 13, y + 1, LOFT.z1 - 1], 'light_blue_concrete')
+  s.box([40, y, 12], [44, y, 12], 'white_concrete')            // a whiteboard,
+  s.box([40, y + 1, 12], [44, y + 1, 12], 'white_concrete')    // low, three tall
+  s.box([41, y + 1, 12], [43, y + 1, 12], 'light_blue_concrete')
+  s.box([40, y, 28], [42, y, 29], 'gray_wool')                 // a sofa
+  s.set(46, y, 30, 'moss_block'); s.set(46, y + 1, 30, 'oak_leaves')
 }
 
-/* FLOOR 3: GROWTH. Three pods and the screen. */
-function growthFloor(s) {
-  const { x0 } = LOFT
-  const y = 2 * FLOOR_H
+function growthFloor(s, y) {
   // Three pods: creative, paid media, partner outreach.
-  const pods = [12, 19, 26]
-  for (const z of pods) {
-    // A pod: four desks round a block, with monitors.
-    s.box([x0 + 10, y, z - 1], [x0 + 13, y, z + 1], 'birch_planks')
-    s.box([x0 + 11, y + 1, z], [x0 + 12, y + 1, z], 'black_concrete')
-    s.set(x0 + 9, y, z - 1, 'polished_blackstone')
-    s.set(x0 + 14, y, z, 'polished_blackstone')
+  for (const z of [13, 20, 27]) {
+    s.box([20, y, z - 1], [23, y, z + 1], 'birch_planks')
+    s.box([21, y + 1, z], [22, y + 1, z], 'black_concrete')
+    s.set(19, y, z - 1, 'polished_blackstone')
+    s.set(24, y, z, 'polished_blackstone')
   }
-  /*
-   * THE SCREEN: the first long-form video on the channel, 150K views in two
-   * weeks. A big dark screen on the north wall with a red play button on it,
-   * so it reads as a video from across the room.
-   */
-  const sz = LOFT.z0 + 1, sx = x0 + 4
-  s.box([sx, y, sz], [sx + 8, y + 3, sz], 'black_concrete')
+  // The screen with the first long-form video on it: a red play button.
+  s.box([40, y, CB.z0 + 1], [48, y + 2, CB.z0 + 1], 'black_concrete')
   s.pattern({
-    at: [sx + 2, y + 1, sz], plane: 'xy',
+    at: [42, y, CB.z0 + 1], plane: 'xy',
     legend: { R: 'red_concrete', W: 'white_concrete' },
     rows: ['RRRRR', 'RRWRR', 'RRRRR'],
   })
-  // The CRM, on a desk by the stair: three screens and a sign.
-  s.box([30, y, 12], [32, y, 12], 'birch_planks')
-  s.box([30, y + 1, 12], [32, y + 1, 12], 'black_concrete')
+  // The CRM, three screens on a desk.
+  s.box([44, y, 24], [46, y, 24], 'birch_planks')
+  s.box([44, y + 1, 24], [46, y + 1, 24], 'black_concrete')
 }
 
-/* FLOOR 4: OPERATIONS, and the call with Shenzhen. */
-function operations(s) {
-  const { x0 } = LOFT
-  const y = 3 * FLOOR_H
-  /*
-   * THE CALL. A wall of twenty faces, four rows of five, on the south wall:
-   * the full-time Shenzhen office this chapter helped build. The first two
-   * tiles are a different colour -- the two part-time employees it started
-   * from. Each face is a tile with a lit pixel for a camera light.
-   */
-  const wz = LOFT.z1 - 1, wx0 = x0 + 4
-  s.box([wx0 - 2, y, wz], [wx0 + 15, y + 3, wz], 'black_concrete')
+function operations(s, y) {
+  /* THE CALL WITH SHENZHEN: twenty faces, two rows of ten, on the south
+   * wall; the first two a different colour -- the two part-time employees
+   * the office grew from. */
+  const wz = CB.z1 - 1
+  s.box([17, y, wz], [37, y + 2, wz], 'black_concrete')
   let tile = 0
-  for (let r = 0; r < 4; r++) {
-    for (let c = 0; c < 5; c++, tile++) {
-      // One block a face, a black gap between, and alternate rows a shade
-      // apart so the four rows read as rows and not as five columns.
-      const face = tile < 2 ? 'orange_terracotta' : r % 2 ? 'cyan_terracotta' : 'light_blue_terracotta'
-      s.set(wx0 + c * 3, y + 3 - r, wz, face)
+  for (let r = 0; r < 2; r++) {
+    for (let c = 0; c < 10; c++, tile++) {
+      const face = tile < 2 ? 'orange_terracotta' : r ? 'cyan_terracotta' : 'light_blue_terracotta'
+      s.set(18 + c * 2, y + 2 - r, wz, face)
     }
   }
   if (tile !== 20) throw new Error(`[ch4] the call has ${tile} faces, not 20`)
-
-  // The software, four screens on the north wall with what each one runs.
-  // Four screens: quoting, sampling, production tracking, fulfillment.
-  const steps = [0, 1, 2, 3]
-  steps.forEach((i) => {
-    const x = x0 + 4 + i * 4
-    s.box([x, y + 1, LOFT.z0 + 1], [x + 1, y + 2, LOFT.z0 + 1], 'black_concrete')
-    s.set(x, y + 2, LOFT.z0 + 1, 'light_blue_concrete')
-    s.box([x, y, LOFT.z0 + 2], [x + 1, y, LOFT.z0 + 2], 'birch_planks')
-  })
+  // The software: four screens on the north wall -- quoting, sampling,
+  // production tracking, fulfillment.
+  for (let i = 0; i < 4; i++) {
+    const x = 40 + i * 4
+    s.box([x, y + 1, CB.z0 + 1], [x + 1, y + 2, CB.z0 + 1], 'black_concrete')
+    s.set(x, y + 2, CB.z0 + 1, 'light_blue_concrete')
+    s.box([x, y, CB.z0 + 2], [x + 1, y, CB.z0 + 2], 'birch_planks')
+  }
 }
 
 /*
- * THE ROOF. A wooden water tower -- the single most New York object there is
- * -- and a billboard with the run rate on it, facing the avenue.
+ * THE ROOF. The run rate as a thing you can count from above: one gold block
+ * for $100K and eighty (eight by ten) for $8M, lying on the roof deck behind
+ * the cornice where only a climber sees them. No billboard -- the Cable
+ * Building is a landmark, and a landmark's roof line is not a place to add
+ * one.
  */
 function roof(s) {
-  const { x0, x1, z0, z1 } = LOFT
   const r = ROOF + 1
-  // Parapet round the other three sides.
-  s.box([x0, r, z0], [x1, r, z0], P.loftSide)
-  s.box([x0, r, z1], [x1, r, z1], P.loftSide)
-  s.box([x1, r, z0], [x1, r, z1], P.loftSide)
-  waterTower(s.at(26, r, 12, 'ch4/water tower'))
-
-  /*
-   * THE RUN RATE, as a bar you can count. One gold block for $100K and
-   * eighty for $8M, side by side, on a billboard frame on the roof facing
-   * the avenue -- the ratio the resume gives, drawn at the ratio it gives.
-   * Eighty is ten tall and eight wide.
-   */
-  /* ON LEGS, eight up, so the board clears the NO LOGO parapet in front of
-   * it and the gold is seen from the avenue rather than only from the roof. */
-  const bx = 22, b0 = r + 8
-  for (const z of [17, 30]) s.pillar(bx, z, r, b0 - 1, P.dark)
-  s.box([bx, b0, 16], [bx, b0 + 11, 31], P.dark)                      // the board
-  s.set(bx - 1, b0 + 1, 18, 'gold_block')                             // $100K: one
-  s.box([bx - 1, b0 + 1, 21], [bx - 1, b0 + 10, 28], 'gold_block')    // $8M: eighty
-  for (const z of [16, 31]) { s.set(bx - 1, b0 + 11, z, P.lamp); s.set(bx - 1, b0, z, P.lamp) }
+  s.set(20, r, 14, 'gold_block')
+  s.box([24, r, 12], [31, r, 21], 'gold_block')
+  s.set(20, r, 12, P.lamp)
+  s.set(28, r, 25, P.lamp)
 }
 
 /** A New York water tower: a round-ish timber barrel on steel legs, with a
@@ -455,7 +582,6 @@ function roof(s) {
 function waterTower(t) {
   for (const [x, z] of [[0, 0], [5, 0], [0, 5], [5, 5]]) t.pillar(x, z, 0, 3, P.dark)
   t.rect([0, 0], [5, 5], 4, P.dark)
-  // The barrel: a ring, rounded by cutting the corners.
   for (let y = 5; y <= 10; y++) {
     for (let x = 0; x <= 5; x++) {
       for (let z = 0; z <= 5; z++) {
@@ -470,28 +596,13 @@ function waterTower(t) {
   t.set(2, 13, 2, P.dark)
 }
 
-/** The fire escape on the north flank, where the arrival sees it first. */
-function fireEscape(s) {
-  const z = LOFT.z0 - 1
-  for (let f = 1; f < 4; f++) {
-    const y = f * FLOOR_H - 1
-    s.box([18, y, z], [27, y, z], 'polished_blackstone_brick_slab_top')
-    // The rail: posts every other block, at y + 1.
-    for (let x = 18; x <= 27; x += 3) s.set(x, y + 1, z - 0, P.dark)
-    // The ladder-stair between landings, drawn as a diagonal of slabs.
-    if (f < 3) for (let i = 0; i < 4; i++) s.set(f % 2 ? 22 + i : 26 - i, y + 1 + i, z, 'polished_blackstone_brick_slab_top')
-  }
-}
-
 /* ====================================================================== *
- * THE BROWNSTONES on the side street
+ * A BROWNSTONE on Houston, west of the Cable Building
  * ====================================================================== */
 
 function brownstones(s) {
-  for (let i = 0; i < 3; i++) {
-    brownstone(s.at(40 + i * 11, 0, 20, `ch4/brownstone ${i + 1}`), i)
-  }
-  waterTower(s.at(64, 21, 23, 'ch4/brownstone tower'))
+  brownstone(s.at(59, 0, 20, 'ch4/brownstone'), 1)
+  waterTower(s.at(61, 21, 23, 'ch4/brownstone tower'))
 }
 
 /*
@@ -550,8 +661,8 @@ function brownstone(b, i) {
  * ====================================================================== */
 
 function loadingDock(s) {
-  // A box truck backed up to the freight door.
-  const t = s.at(39, 0, 11, 'ch4/truck')
+  // A box truck at the Mercer Street freight door, behind the building.
+  const t = s.at(58, 0, 10, 'ch4/truck')
   t.box([0, 0, 0], [8, 3, 3], 'white_concrete')               // the box
   t.box([0, 2, 0], [8, 2, 0], 'blue_concrete')                // a stripe
   t.box([0, 2, 3], [8, 2, 3], 'blue_concrete')
@@ -560,10 +671,10 @@ function loadingDock(s) {
   for (const x of [1, 7, 10]) { t.set(x, 0, -1, 'black_concrete'); t.set(x, 0, 4, 'black_concrete') }
   t.clear([0, 0, 1], [0, 3, 2])                               // the open back
   // Boxes on pallets by the door.
-  for (const [x, z, h] of [[38, 6, 2], [38, 7, 1], [39, 6, 1], [38, 17, 3], [39, 17, 2], [38, 18, 1]]) {
+  for (const [x, z, h] of [[56, 6, 2], [56, 7, 1], [57, 6, 1], [56, 17, 3], [57, 17, 2], [56, 18, 1]]) {
     s.box([x, 0, z], [x, h - 1, z], 'packed_mud')
   }
-  s.set(38, 3, 14, P.lamp)
+  s.set(56, 3, 14, P.lamp)
 }
 
 /* ====================================================================== *
@@ -825,7 +936,7 @@ function streetFurniture(s) {
     s.set(3, 5, z, P.dark)
     s.set(3, 4, z, P.lamp)
   }
-  for (const x of [21, 33, 48, 59, 70]) {
+  for (const x of [18, 57, 70]) {
     s.pillar(x, 36, 0, 5, P.dark); s.set(x, 5, 37, P.dark); s.set(x, 4, 37, P.lamp)
   }
   for (const x of [28, 44, 60, 71]) {

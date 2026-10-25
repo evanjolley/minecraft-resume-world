@@ -25,29 +25,31 @@ export function wallSign(s, x, y, z, facing, lines) {
 
 /**
  * A switchback stair up through `floors` floors of `floorH` blocks each, in
- * two lanes (x = lanes.a and x = lanes.b) between z0 and z0 + 4.
+ * two lanes (x = lanes.a and x = lanes.b) starting at z0, from standing
+ * height `y0`.
  *
- * Each floor's run is five full blocks rising one apiece, along z, in
+ * Each floor's run is `floorH` full blocks rising one apiece, along z, in
  * alternate lanes -- lane a climbing +z, lane b climbing -z -- through a
  * hole cut in the slab it climbs to. The top step of each run IS a block of
  * that slab, so you step off it onto the floor above, and the next run
  * starts beside you. Full blocks, not stair keys: a staircase you cannot
  * climb is worse than a blocky one (docs/builds/README.md).
  *
- * Only works for floorH = 5, and says so: four blocks of headroom per floor
- * and a five-block run are the same number.
+ * floorH 4 (three blocks of air a floor) or 5 (four); below 4 a player's
+ * head meets the slab on the way up.
  */
-export function switchback(s, { a, b, z0 }, floors, floorH, block, { rail, light } = {}) {
-  if (floorH !== 5) throw new Error(`switchback: built for 5-block floors, got ${floorH}`)
-  const z1 = z0 + 4
+export function switchback(s, { a, b, z0 }, floors, floorH, block, { rail, light } = {}, y0 = 0) {
+  if (floorH < 4) throw new Error(`switchback: a ${floorH}-block floor has no headroom`)
+  const n = floorH
+  const z1 = z0 + n - 1
   for (let f = 0; f < floors; f++) {
-    const base = f * floorH                   // standing height on floor f
-    const slab = base + floorH - 1            // the slab this run climbs through
+    const base = y0 + f * floorH                // standing height on floor f
+    const slab = base + floorH - 1              // the slab this run climbs through
     if (f % 2 === 0) {
-      for (let i = 0; i < 5; i++) s.set(a, base + i, z0 + i, block)
+      for (let i = 0; i < n; i++) s.set(a, base + i, z0 + i, block)
       s.clear([a, slab, z0], [a, slab, z1 - 1])
     } else {
-      for (let i = 0; i < 5; i++) s.set(b, base + i, z1 - i, block)
+      for (let i = 0; i < n; i++) s.set(b, base + i, z1 - i, block)
       s.clear([b, slab, z0 + 1], [b, slab, z1])
     }
     // A rail on the floor beside the hole the run below came up through.
