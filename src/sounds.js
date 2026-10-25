@@ -624,6 +624,9 @@ function noiseBuffer(ctx, seconds = 2) {
   return buf
 }
 
+/* How long after boot the samples download if nobody has clicked yet. */
+const FETCH_AFTER_MS = 4000
+
 export function installSounds(noa, deps = {}) {
   const { interaction, movement, survival, fluids } = deps
 
@@ -644,7 +647,20 @@ export function installSounds(noa, deps = {}) {
    * fetching the samples on the click itself would put a few hundred KB of
    * network between the click and the first sound.
    */
-  const loading = fetch('/sounds/manifest.json')
+  /*
+   * NOT AT BOOT. Every sample used to be fetched the moment this ran, 53
+   * requests and about half a megabyte racing the bundle, the textures and
+   * the chunk meshing for a page that cannot play a note before the first
+   * click anyway (the gesture gate below). The fetch now starts on that first
+   * gesture, or a few seconds after boot if none comes, whichever is first.
+   * Decoding waited on the gesture already; this only moves the download out
+   * of the window where the world is being built.
+   */
+  let startFetch
+  const fetchGate = new Promise((resolve) => { startFetch = resolve })
+  setTimeout(() => startFetch(), FETCH_AFTER_MS)
+
+  const loading = fetchGate.then(() => fetch('/sounds/manifest.json'))
     .then(r => (r.ok ? r.json() : null))
     .then(async (m) => {
       if (!m) return
@@ -803,6 +819,7 @@ export function installSounds(noa, deps = {}) {
    * tabs can suspend it again later.
    */
   const unlock = () => {
+    startFetch()
     if (!ctx && !buildGraph()) return
     if (ctx.state !== 'running') ctx.resume().catch(() => {})
     decodeAll()
