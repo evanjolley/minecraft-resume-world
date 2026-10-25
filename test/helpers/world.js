@@ -16,6 +16,8 @@
  * than at sea level.
  */
 export const SURFACE_Y = 136
+// Standing eye height, MC.EYE_HEIGHT in src/physics.js.
+const MC_EYE = 1.62
 
 /*
  * WHERE resetWorld PUTS THE PLAYER: the world origin, again.
@@ -548,6 +550,13 @@ export async function resetWorld(page) {
     game.effects?.clearAll?.()
 
     /*
+     * Mobs. Natural spawning is off under automation (src/mobs.js), so any
+     * here were summoned by a spec, and a cow left standing at spawn is a
+     * body the next spec's block placement is refused against.
+     */
+    game.mobs?.clear?.()
+
+    /*
      * The fluid engine RUNNING, not merely empty.
      *
      * `flow.reset()` above drops the queue; this drops the off switch. Six
@@ -589,6 +598,15 @@ export async function resetWorld(page) {
     noa.ents.setPosition(noa.playerEntity, spawn)
     const body = noa.ents.getPhysics(noa.playerEntity).body
     body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
+    /*
+     * Awake, and not resting on whatever it last touched. A body that died
+     * was frozen with zero gravity, and the physics engine sleeps a body
+     * with no gravity until something wakes it; placed exactly on the grass
+     * below, it would never move and never report touching ground. The old
+     * 2-block drop woke it by accident.
+     */
+    body.resting[0] = body.resting[1] = body.resting[2] = 0
+    body.applyImpulse([0, 0, 0])
 
     noa.camera.heading = 0
     noa.camera.pitch = 0
@@ -599,7 +617,14 @@ export async function resetWorld(page) {
     // Deterministic noon. Without it the sky colour, the sun position and
     // every screenshot drift with wall-clock time between runs.
     game.sky.setTime(6000)
-  }, SPAWN)
+    /*
+     * ON the grass, not two blocks over it. SPAWN's +2 is where a teleport
+     * lands safely, and from there every reset spent a 2-block fall, about
+     * 0.3 s of game time, waiting in settleOnGround below. Before ~900 tests
+     * that was the largest single cost of resetting. The fall also hid other
+     * state settling, which the eye-height wait below now waits for by name.
+     */
+  }, [SPAWN[0], SURFACE_Y, SPAWN[2]])
 
   /*
    * First person, again.
@@ -620,6 +645,14 @@ export async function resetWorld(page) {
   // Sprint latches until a tick sees `forward` released, so give it one.
   await waitTicks(page, 2)
   await settleOnGround(page)
+  /*
+   * The eye eases back from a sneak over about 0.3 s (physics.js, rate 14/s).
+   * The 2-block fall this reset used to make covered that by accident; now it
+   * is waited for, and only when a previous spec actually crouched.
+   */
+  await page.waitForFunction((eye) => Math.abs(window.noa.ents
+    .getState(window.noa.camera.cameraTarget, 'followsEntity').offset[1] - eye) < 0.001,
+  MC_EYE, { timeout: 5_000, polling: 'raf' })
 }
 
 /** Poll until the body is resting on terrain again after a teleport. */
