@@ -40,7 +40,7 @@ import { installChunkBudget } from './chunkBudget.js'
 import { createArmorReduction } from './armor.js'
 import { createEffects } from './effects.js'
 import { installEffectSwirl } from './effectSwirl.js'
-import { itemName, itemId, dropFor, rollDrops, unmappedDrops } from './items.js'
+import { itemName, itemId, dropFor, rollDrops, unmappedDrops, stackMax } from './items.js'
 import { itemModelStats } from './itemModel.js'
 import { installSounds } from './sounds.js'
 import { installParticles } from './particles.js'
@@ -507,8 +507,25 @@ const authority = createAuthority({
     blockIsSolid: (id) => noa.registry.getBlockSolidity(id),
     getTime: () => sky.getTime(),
     setTime: (t) => sky.setTime(t),
+    getDayTime: () => sky.dayTime,
+    getGameTime: () => sky.gameTime,
     teleport: movePlayer,
-    give: (id, count) => inventory.add(id, count),
+    /*
+     * What does not fit is dropped at your feet, as vanilla's GiveCommand
+     * does, rather than refused. `drops` is declared further down; give only
+     * ever runs from a command, long after it exists.
+     */
+    give: (id, count) => {
+      const left = inventory.add(id, count)
+      if (left > 0) {
+        const p = noa.ents.getPositionData(noa.playerEntity).position
+        for (let n = left, max = stackMax(id); n > 0; n -= max) {
+          drops.spawn(id, Math.min(n, max), [p[0], p[1] + 0.5, p[2]], [0, 0, 0], 0)
+        }
+      }
+      return 0
+    },
+    stackMax: (id) => stackMax(id),
     blockName: (id) => itemName(id),
     kill: () => survival.kill(),
     /*
@@ -676,6 +693,7 @@ const potions = installPotions(noa, {
 })
 installFurnaceDrops(inventory.furnaces, authority, drops.popResource)
 
+
 /*
  * A torch falls off a wall you mine, and lands as a torch.
  *
@@ -831,9 +849,11 @@ interaction.onBlockPlace(({ position }) => signScreen.open(...position))
 
 // The whole command set is one call. /tp <plot> for the resume plots goes in
 // commands.js once the plots exist.
-// `playerName` is gone from this call: commands.js never read it, and the
-// roster is now the answer to that question anyway.
-const commands = installCommands(chat, authority, { noa })
+// `playerName` is back, as a getter on the roster: /tp and /give accept your
+// own name as a target, the way vanilla does.
+const commands = installCommands(chat, authority, {
+  noa, playerName: () => roster.displayNameOf(LOCAL_ID),
+})
 
 /* ------------------------------------------------------------------ *
  * AI Evan

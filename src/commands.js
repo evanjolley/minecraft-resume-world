@@ -40,14 +40,36 @@ const NAMED_TIMES = { day: 1000, noon: 6000, night: 13000, midnight: 18000 }
  * try first, and rejecting it as "invalid time" for want of three lines would
  * be the sort of near-miss that reads as a knockoff.
  */
-function ticksFrom(token) {
-  const m = /^(\d+(?:\.\d+)?)([dst]?)$/.exec(token)
+function ticksFrom(token, min = 1) {
+  const m = /^(\d+(?:\.\d+)?|\.\d+)([dst]?)$/.exec(token ?? '')
   if (!m) return null
   const n = Number(m[1])
   const scale = m[2] === 'd' ? 24000 : m[2] === 's' ? 20 : 1
-  const ticks = Math.floor(n * scale)
-  return ticks >= 1 ? ticks : null
+  // TimeArgument rounds, it does not floor: /time set 0.5d is 12000.
+  const ticks = Math.round(n * scale)
+  return ticks >= min ? ticks : null
 }
+
+/*
+ * One coordinate of vanilla's Vec3Argument. `~` is relative to `base`; a bare
+ * INTEGER on x or z is the block's center (WorldCoordinate's centerCorrect),
+ * so `/tp 10 64 10` lands at 10.5, 64, 10.5, standing in the middle of the
+ * block rather than on its corner. y is never centered, and a number written
+ * with a decimal point is taken exactly as written.
+ */
+function vecCoord(token, base, center) {
+  if (token === undefined) return null
+  if (token.startsWith('~')) {
+    const offset = token.length === 1 ? 0 : Number(token.slice(1))
+    return Number.isFinite(offset) ? base + offset : null
+  }
+  const n = Number(token)
+  if (!Number.isFinite(n)) return null
+  return center && /^-?\d+$/.test(token) ? n + 0.5 : n
+}
+
+/* Java's String.format("%f"), which is how TeleportCommand prints a position. */
+const f6 = (v) => v.toFixed(6)
 
 /**
  * Minecraft's tilde notation: `~` is here, `~5` is five along from here.
@@ -65,7 +87,7 @@ function coord(token, base) {
   return Number.isFinite(n) ? n : null
 }
 
-export function installCommands(chat, authority, { noa, playerName }) {
+export function installCommands(chat, authority, { noa, playerName, mobs = null }) {
   const say = (text) => chat.addMessage({ text, kind: 'system' })
   const fail = (text) => chat.addMessage({ text, kind: 'error' })
 
@@ -96,6 +118,56 @@ export function installCommands(chat, authority, { noa, playerName }) {
   const lookupBlock = (name) => (name ? BLOCK_BY_KEY.get(bare(name)) ?? null : null)
   const lookupItem = (name) => (name ? ITEM_BY_KEY.get(bare(name)) ?? null : null)
 
+  /*
+   * Target selectors and names. Single player, so every selector that can
+   * mean the player means the player, and so does the player's own name.
+   * Anything else matches nothing, which vanilla reports as below.
+   */
+  const SELF = new Set(['@s', '@p', '@a', '@r', '@e', '@n'])
+  const isTarget = (token) => token !== undefined
+    && (SELF.has(token.split('[')[0]) || token.toLowerCase() === String(playerName()).toLowerCase())
+  const NO_ENTITY = 'No entity was found'
+
+  /**
+   * Vanilla's Vec3Argument, all three forms: absolute, `~` relative and `^`
+   * local (left, up, forward from where you are looking, which cannot be
+   * mixed with the other two). Returns null on a malformed position.
+   */
+  const position3 = (args, at = 0) => {
+    const t = args.slice(at, at + 3)
+    if (t.length < 3 || t.some(v => v === undefined)) return null
+    const p = playerPos()
+    const local = t.filter(v => v.startsWith('^')).length
+    if (local === 0) {
+      const out = [vecCoord(t[0], p[0], true), vecCoord(t[1], p[1], false), vecCoord(t[2], p[2], true)]
+      return out.every(v => v !== null) ? out : null
+    }
+    if (local !== 3) return null
+    const n = t.map(v => (v.length === 1 ? 0 : Number(v.slice(1))))
+    if (!n.every(Number.isFinite)) return null
+    /*
+     * LocalCoordinates.getPosition, in Minecraft's axes. Minecraft's yaw is
+     * this camera's heading in degrees (0 faces south, +90 west), and its
+     * pitch is this camera's pitch (positive looks down). Minecraft's +x is
+     * east and this world's +X is west, so x flips on the way back.
+     */
+    const yaw = noa.camera.heading
+    const pitch = noa.camera.pitch
+    const f = Math.cos(yaw + Math.PI / 2), g = Math.sin(yaw + Math.PI / 2)
+    const h = Math.cos(-pitch), i = Math.sin(-pitch)
+    const j = Math.cos(-pitch + Math.PI / 2), k = Math.sin(-pitch + Math.PI / 2)
+    const fwd = [f * h, i, g * h]
+    const up = [f * j, k, g * j]
+    // left = -(forward x up)
+    const left = [
+      -(fwd[1] * up[2] - fwd[2] * up[1]),
+      -(fwd[2] * up[0] - fwd[0] * up[2]),
+      -(fwd[0] * up[1] - fwd[1] * up[0]),
+    ]
+    const mc = [0, 1, 2].map(a => fwd[a] * n[2] + up[a] * n[1] + left[a] * n[0])
+    return [p[0] - mc[0], p[1] + mc[1], p[2] + mc[2]]
+  }
+
   /* ---------------- open to everyone ---------------- */
 
   /*
@@ -117,9 +189,43 @@ export function installCommands(chat, authority, { noa, playerName }) {
    * is multiplayer, a stranger who can kill other visitors is a griefing tool
    * with no upside on a resume site.
    */
-  chat.command('kill', 'Kills yourself', async () => {
+  chat.command('kill', 'Kills yourself, or the mobs an @e selector names (operators)', async ([target]) => {
+    /*
+     * `@e` and `@e[type=cow]` reach the passive mobs (src/mobs.js), and that
+     * form is an operator's, as every selector beyond yourself is in
+     * vanilla. Vanilla's @e includes you too; this one does not, because a
+     * single player typing /kill @e to clear the cows does not mean to die.
+     */
+    if (target?.startsWith('@e')) {
+      if (!authority.isOperator() || !mobs) return chat.parseError(`/kill ${target}`)
+      const m = /type=(?:minecraft:)?([a-z_]+)/.exec(target)
+      const hit = mobs.list.filter(x => x.health > 0 && (!m || x.kind === m[1]))
+      if (hit.length === 0) return fail(NO_ENTITY)
+      for (const x of hit) { x.invulnerable = 0; mobs.hurt(x, Infinity) }
+      return say(hit.length === 1
+        ? `Killed ${mobs.SPECIES[hit[0].kind] ? hit[0].kind[0].toUpperCase() + hit[0].kind.slice(1) : hit[0].kind}`
+        : `Killed ${hit.length} entities`)
+    }
+    if (target !== undefined && !isTarget(target)) return fail(NO_ENTITY)
     report(await authority.requestKill())
   })
+
+  /*
+   * /summon <entity> [x y z]: vanilla's, for the four passive mobs. "Summoned
+   * new Cow" is en_us.json's commands.summon.success.
+   */
+  if (mobs) {
+    chat.command('summon', `Summons a mob: ${Object.keys(mobs.SPECIES).join(', ')} [x y z]`,
+      async (args) => {
+        const kind = bare(args[0])
+        if (!kind || !mobs.SPECIES[kind]) return fail('Unable to summon entity')
+        const p = playerPos()
+        const at = args.length >= 4 ? position3(args, 1) : [p[0], p[1], p[2]]
+        if (!at) return chat.parseError(`/summon ${args.join(' ')}`)
+        mobs.summon(kind, at[0], at[1], at[2])
+        say(`Summoned new ${kind[0].toUpperCase()}${kind.slice(1)}`)
+      }, opOnly)
+  }
 
   /* ---------------- operators ---------------- */
 
@@ -129,28 +235,88 @@ export function installCommands(chat, authority, { noa, playerName }) {
       report(await authority.requestGamemode(mode))
     }, opOnly)
 
-  chat.command('time', 'Sets or advances the time: set <day|noon|night|midnight|N>, add <N>',
+  /*
+   * /time, vanilla's TimeCommand. `set` and `add` take the time argument with
+   * its units (`/time set 0.5d`, `/time add 100s`); `query` answers daytime,
+   * gametime or day. `set` reports the number it was given, `add` reports
+   * the resulting time of day, both as "Set the time to N", as vanilla does.
+   */
+  chat.command('time', 'Sets, adds to or queries the time: set <day|noon|night|midnight|time>, add <time>, query <daytime|gametime|day>',
     async ([verb, arg]) => {
       if (verb === 'set') {
-        const t = arg in NAMED_TIMES ? NAMED_TIMES[arg] : Number(arg)
-        if (!Number.isFinite(t)) return fail(`Invalid time: ${arg ?? ''}`)
-        return report(await authority.requestTime({ set: Math.floor(t) }))
+        const t = arg in NAMED_TIMES ? NAMED_TIMES[arg] : ticksFrom(arg, 0)
+        if (t === null) return fail(`Invalid time: ${arg ?? ''}`)
+        return report(await authority.requestTime({ set: t }))
       }
       if (verb === 'add') {
-        const t = Number(arg)
-        if (!Number.isFinite(t)) return fail(`Invalid time: ${arg ?? ''}`)
-        return report(await authority.requestTime({ add: Math.floor(t) }))
+        const t = ticksFrom(arg, 0)
+        if (t === null) return fail(`Invalid time: ${arg ?? ''}`)
+        return report(await authority.requestTime({ add: t }))
       }
-      chat.parseError(`/time ${verb ?? ''}`.trimEnd())
+      if (verb === 'query' && ['daytime', 'gametime', 'day'].includes(arg)) {
+        return report(await authority.requestTime({ query: arg }))
+      }
+      chat.parseError(`/time ${[verb, arg].filter(Boolean).join(' ')}`.trimEnd())
     }, opOnly)
 
-  chat.command('tp', 'Teleports you to x y z', async (args) => {
-    const at = coords3(args)
-    if (!at) return chat.parseError(`/tp ${args.join(' ')}`.trimEnd())
-    report(await authority.requestTeleport(at[0], at[1], at[2]))
+  /*
+   * /tp, vanilla's forms that make sense with one player in the world:
+   *
+   *   /tp <x> <y> <z> [<yaw> <pitch>]
+   *   /tp <target> <x> <y> <z> [<yaw> <pitch>]     target: @s, @p, your name
+   *   /tp <target>                                  yourself: no-op, vanilla's
+   *
+   * Positions take ~ and ^, and a bare integer x or z means the block's
+   * center. The message prints the landing position the way vanilla does,
+   * with Java's %f.
+   */
+  chat.command('tp', 'Teleports you: /tp [target] <x y z> [yaw pitch]', async (args) => {
+    const typed = `/tp ${args.join(' ')}`.trimEnd()
+    let rest = args
+    if (isTarget(rest[0])) rest = rest.slice(1)
+    else if (rest.length === 1 || (rest[0] && !/^[~^\-.\d]/.test(rest[0]))) {
+      return fail(NO_ENTITY)
+    }
+    if (rest.length === 0) {
+      // Teleporting yourself to yourself.
+      const p = playerPos()
+      return report(await authority.requestTeleport(p[0], p[1], p[2]))
+    }
+    const hats = rest.slice(0, 3).filter(v => v.startsWith('^')).length
+    if (hats > 0 && hats < 3) {
+      return fail('Cannot mix world & local coordinates (everything must either use ^ or not)')
+    }
+    const at = position3(rest)
+    if (!at || (rest.length !== 3 && rest.length !== 5)) return chat.parseError(typed)
+    let rot = null
+    if (rest.length === 5) {
+      const yaw = coord(rest[3], noa.camera.heading * 180 / Math.PI)
+      const pitch = coord(rest[4], noa.camera.pitch * 180 / Math.PI)
+      if (yaw === null || pitch === null) return chat.parseError(typed)
+      rot = [yaw, Math.max(-90, Math.min(90, pitch))]
+    }
+    const res = await authority.requestTeleport(at[0], at[1], at[2])
+    if (res.ok && rot) {
+      noa.camera.heading = rot[0] * Math.PI / 180
+      noa.camera.pitch = rot[1] * Math.PI / 180
+    }
+    report(res)
   }, opOnly)
 
-  chat.command('give', 'Gives you an item: /give <item> [count]', async ([name, rawCount]) => {
+  /*
+   * /give <target> <item> [count], vanilla's form, plus the old
+   * /give <item> [count] that this world shipped with first. Vanilla caps a
+   * single /give at 100 stacks, and what does not fit in the inventory is
+   * dropped at your feet rather than refused.
+   */
+  chat.command('give', 'Gives you an item: /give [target] <item> [count]', async (args) => {
+    let [name, rawCount] = args
+    if (isTarget(args[0]) && args[1] !== undefined && !/^\d+$/.test(args[1])) {
+      [, name, rawCount] = args
+    } else if (args.length >= 2 && !/^\d+$/.test(args[1]) && lookupItem(args[1])) {
+      // A target that is not you: EntityArgument's "No player was found".
+      return fail('No player was found')
+    }
     // Items, not blocks -- /give iron_pickaxe has to work, and a pickaxe has
     // no block. /setblock and /fill keep the block map on purpose.
     const def = lookupItem(name)
@@ -286,7 +452,7 @@ export function installCommands(chat, authority, { noa, playerName }) {
       }
       let duration = null
       if (rawDuration !== undefined) {
-        duration = ticksFrom(rawDuration)
+        duration = ticksFrom(rawDuration, 1)
         if (duration === null) return fail(`Invalid time: ${rawDuration}`)
       }
       report(await authority.requestWeather(wkind, duration))

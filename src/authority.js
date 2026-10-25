@@ -382,23 +382,43 @@ export function createAuthority({ world, storage = globalThis.localStorage } = {
       return allow(`Successfully filled ${count} block${count === 1 ? '' : 's'}`)
     },
 
-    async requestTime({ set = null, add = null }) {
+    /*
+     * Vanilla's TimeCommand. `set` reports the number it was given (so
+     * `/time set 30000` says 30000), `add` reports the resulting time of day,
+     * and `query` reads daytime, gametime or day without changing anything.
+     */
+    async requestTime({ set = null, add = null, query = null }) {
       if (!isOperator()) return NOT_ALLOWED
-      const t = set !== null ? set : world.getTime() + add
-      world.setTime(t)
-      return allow(`Set the time to ${world.getTime()}`)
+      const dayTime = () => world.getDayTime?.() ?? world.getTime()
+      if (query) {
+        const n = query === 'gametime' ? (world.getGameTime?.() ?? 0)
+          : query === 'day' ? Math.floor(dayTime() / 24000)
+            : Math.floor(world.getTime())
+        return allow(`The time is ${n}`)
+      }
+      if (set !== null) {
+        world.setTime(set)
+        return allow(`Set the time to ${set}`)
+      }
+      world.setTime(dayTime() + add)
+      return allow(`Set the time to ${Math.floor(world.getTime())}`)
     },
 
     async requestTeleport(x, y, z) {
       if (!isOperator()) return NOT_ALLOWED
       world.teleport(x, y, z)
-      return allow(`Teleported ${world.playerName} to ${x}, ${y}, ${z}`)
+      // Java's %f, which is how TeleportCommand prints the position.
+      const f = (v) => v.toFixed(6)
+      return allow(`Teleported ${world.playerName} to ${f(x)}, ${f(y)}, ${f(z)}`)
     },
 
     async requestGive(id, count) {
       if (!isOperator()) return NOT_ALLOWED
-      const left = world.give(id, count)
-      if (left > 0) return deny(`No space to give ${count} of ${world.blockName(id)}`)
+      // GiveCommand's cap: 100 stacks of the item in one command.
+      const max = (world.stackMax?.(id) ?? 64) * 100
+      if (count > max) return deny(`Can't give more than ${max} of [${world.blockName(id)}]`)
+      // Whatever does not fit is dropped at the player's feet, not refused.
+      world.give(id, count)
       return allow(`Gave ${count} [${world.blockName(id)}] to ${world.playerName}`)
     },
 
@@ -406,14 +426,14 @@ export function createAuthority({ world, storage = globalThis.localStorage } = {
       const rule = GAMERULES[name]
       if (!rule) return deny(`Unknown game rule: ${name}`)
       if (raw === undefined) {
-        return allow(`Game rule ${name} is currently set to: ${rule.value}`)
+        return allow(`Gamerule ${name} is currently set to: ${rule.value}`)
       }
       if (!isOperator()) return NOT_ALLOWED
       if (raw !== 'true' && raw !== 'false') {
         return deny(`Invalid boolean for game rule ${name}: ${raw}`)
       }
       rule.value = raw === 'true'
-      return allow(`Game rule ${name} is now set to: ${rule.value}`)
+      return allow(`Gamerule ${name} is now set to: ${rule.value}`)
     },
 
     /**
