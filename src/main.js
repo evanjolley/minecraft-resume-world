@@ -192,8 +192,11 @@ const noa = new Engine({
  * about fifteen of them, so the warning is a false positive -- and a
  * misleading one, because it names whichever system happened to be the
  * eleventh rather than anything actually wrong.
+ *
+ * 64, because 'tick' passed 32 listeners (the warning named paintingArt.js
+ * as the 33rd) and every boot printed it.
  */
-noa.setMaxListeners?.(32)
+noa.setMaxListeners?.(64)
 
 const ids = registerBlocks(noa)
 
