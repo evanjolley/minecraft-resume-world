@@ -15,11 +15,11 @@ The brief is `docs/SPRINT-1.md`.
 
 ### Still open
 - **Frame rate.** The bigger forested world drops spawn fps from about 25 to 18 under software rendering. Check on a real GPU before thinning plants (`PLANT_REACH` in `src/builds/flora.js`). Spec 68's 20 fps budget fails on a loaded machine
-- **Review pass.** Look at every chapter from the path (screenshots in `~/.agent-library/minecraft-resume-world/2026-10-25-sprint-1/landscape/`) and give Evan wide shots. Builder B's ch4 and ch5 screenshots were too close up to judge
+- **Review pass.** Wide shots of all six chapters are in `~/.agent-library/minecraft-resume-world/2026-10-25-wide-shots/`. Trees on the path hide the ch2 Science Center and the base of ch5. Thinning them waits on Evan. Towers reaching the clouds (tops at y 199, clouds at 192) is fine by Evan
 - Run the full suite once on a quiet machine
 
 ### Evan's items
-- Run `npm run interview` with `ANTHROPIC_API_KEY` set. The corpus only exists on this Mac, in `corpus/extra/`
+- Fill in the brain dump, a private claude.ai artifact named "AI Evan Brain Dump" with one big sheet for dictation and the interview prompts beside it. It replaces `npm run interview`. When Evan says "pull the brain dump", read its `dump/main` document and turn it into `corpus/extra/` files
 - Describe what the No Logo and Patronus offices look like inside
 - Name the "other interests" the climb should touch
 - Pick the live domain, then set `PASSKEY_RP_ID` and `PASSKEY_ORIGIN` to turn sign-in on
@@ -34,4 +34,4 @@ The brief is `docs/SPRINT-1.md`.
 - `public/terrain` (the mountains and Nether assets) is not in the repo, so those worlds and 7 specs fail on a fresh clone
 - Spec 12's fingerprint test fails on the free sound set, same as before the sprint
 
-Next session start. "Read docs/STATUS.md and CLAUDE.md in ~/Personal/minecraft-resume-world. Sprint 1 is merged. Show me wide shots of every chapter from the path, then let us go through the open items"
+Next session start. "Read docs/STATUS.md and CLAUDE.md in ~/Personal/minecraft-resume-world. Pull the brain dump into the corpus, then let us go through the open items"
