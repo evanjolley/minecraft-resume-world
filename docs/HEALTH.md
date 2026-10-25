@@ -617,3 +617,70 @@ those specs to import it, which is a `test/` change whose verification runs
 into the known-fossil failures in spec 25 (§3). `blockLight.js:207`
 `getTerrainLight` and the three internal-only `fluids.js` exports are
 untouched. None of them are payload; they are all correctness smells.
+
+---
+
+# Runtime, 2026-10-25
+
+Sprint 1's performance pass. Every number is measured, in headless Chromium
+on an M3 Pro through ANGLE's **Metal** backend (`--use-angle=metal`), not
+SwiftShader, so frame times are a GPU's. Production build (`vite build` +
+`vite preview`), 1280x720. Before and after were run interleaved, three
+times each, because other agents were loading the machine.
+
+| | before | after |
+|---|---|---|
+| boot to every chunk in range meshed | 15.2 s | **3.4 s** |
+| requests during boot | 123 (2,280 KB) | **81 (1,868 KB)** |
+| time to `window.game` | 0.51 s | 0.59 s |
+| frame time, standing, p50 / p99 | 16.7 / 16.8 ms | 16.7 / 16.8 ms |
+| JS heap after GC | 94 MB | 93 MB |
+| `npm run smoke`, same load, side by side | 28.0 s | **14.2 s** |
+| `resetWorld`, run before every spec | 371 ms | **88 ms** |
+
+## 1. FIXED: noa meshed one chunk per tick, whatever its budget said
+
+noa 0.33's `World.tick` has an inverted guard: `if (t < t1) t1 = t + 1` caps
+every tick that is still under budget at one millisecond, and a 32^3 chunk
+takes longer than that, so the world arrived at the tick rate, 30 chunks a
+second. The CPU profile of a 15-second boot was 83% idle. Raising
+`maxProcessingPerTick` changes nothing, which is how it hides.
+`src/chunkBudget.js` calls `world.tick` again while time and work remain:
+8 ms a tick while pointer locked, 16 ms while nobody is playing (the title
+menu, a paused game, the test suite). Nothing in node_modules is patched.
+
+The cost, measured: walking into fresh terrain without pointer lock, the
+frame-time p99 goes from 16.8 to 33 to 50 ms, because those ticks now do
+the work that used to wait. Under pointer lock the budget is half that.
+
+## 2. FIXED: the sound samples raced the boot
+
+53 samples fetched the moment `sounds.js` ran, for a page that cannot play
+one before the first click. They now start on that click, or four seconds
+in.
+
+## 3. FIXED: every spec paid for a 2-block fall
+
+`resetWorld` teleported to spawn + 2 and waited for the landing. It places
+the player on the grass now, wakes the body, and waits for the eye to
+return from a sneak, which is what the fall had been covering for.
+
+## 4. Looked at and left alone
+
+- **Per-frame JavaScript** is about 1.5% of a frame once the world is
+  built. Nothing allocates per frame worth chasing; `noa`'s render and
+  Babylon's own bookkeeping dominate what there is.
+- **The bundle**, 790 KB raw / 236 KB gzip for `index`, plus Babylon's
+  split chunks. Every Babylon import is already a deep path, so there is no
+  barrel import to cut.
+- **Re-meshing during load.** Each chunk is meshed about five times as its
+  neighbors arrive (noa marks a chunk dirty whenever a neighbor lands).
+  About a second of the 3.4 s boot is that; waiting for neighbors before
+  the first mesh is noa-internal and was not worth patching.
+- **The suite's known failures** under this checkout, all also failing on
+  the commit before this sprint: `06-mining` and `10-gamemode` expect grass
+  at the spawn column, `12-sounds` wants a vanilla sound build and an
+  imported terrain asset, `34-nether` wants the imported Nether, `65-sky-light`
+  counts vertices in a world that has since grown a landscape, and
+  `68-entity-shading`'s fps floor does not hold under SwiftShader on a loaded
+  machine.
