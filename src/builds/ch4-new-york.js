@@ -59,6 +59,13 @@
 import { wordRows, wordWidth } from './lettering.js'
 import { wallSign, switchback, tree } from './kit.js'
 
+/*
+ * SIGNS, BY THE OWNER'S RULE: a sign carries what a real place would carry
+ * -- a building's or a business's name -- and nothing else. No dates, no
+ * metrics, no resume lines on walls; those belong to AI Evan. The rooms
+ * below tell their facts in architecture (two desks, fifty tiles, twenty
+ * faces, one gold block and eighty) and say them in no words at all.
+ */
 export const SIZE = { w: 74, d: 76 }
 
 /** Words on walls that face -x (read from the path) are mirrored. */
@@ -308,10 +315,8 @@ function sampleRoom(s) {
   s.set(x0 + 9, 1, 18, 'red_wool')
   s.set(x0 + 12, 1, 23, 'light_blue_wool')
   // Inside the door, on the column between two windows: who this is.
-  sign(s, x0 + 1, 1, 18, ['No Logo', 'YC, Floodgate', 'Employee #2', 'Jun 2025-Aug 2026'], 'west')
+  sign(s, x0 + 1, 1, 18, ['No Logo', '', '', ''], 'west')
   // The pipeline, on signs at the near end of each bench.
-  sign(s, x0 + 7, 0, 18, ['Factory', 'sourcing,', 'sampling', ''], 'east')
-  sign(s, x0 + 7, 0, 23, ['Mass production,', 'QC, freight,', 'finished', 'inventory'], 'east')
   // The freight door at the back, onto the loading dock.
   s.clear([LOFT.x1, 0, 13], [LOFT.x1, 2, 15])
 }
@@ -327,20 +332,26 @@ function employeeTwo(s) {
     s.set(x0 + 4, y, z, 'polished_blackstone')                 // the chair
   }
   // On the south wall, beside the two desks.
-  sign(s, x0 + 6, y + 1, LOFT.z1 - 1, ['Two desks.', 'Employee #2', 'joined at a', '$100K run rate'], 'north')
 
   /*
-   * THE WALL OF FIFTY. Fifty white blocks, ten by five, on the north wall:
-   * the fifty cold emails a day the growth function started with. Countable
-   * by anybody who stands in front of it, which is the point of a number.
+   * THE FIFTY. Fifty white tiles let into the floorboards as a ten by ten
+   * checkerboard in the middle of the room: the fifty cold emails a day the
+   * growth function started with. A checkerboard rather than a wall because
+   * fifty white blocks side by side photographed as one white wall, and a
+   * number nobody can count is decoration.
    */
-  const wz = LOFT.z0 + 1, wx0 = x0 + 1
+  const fx0 = x0 + 6, fz0 = 14
   let n = 0
-  for (let r = 0; r < 3; r++) {
-    for (let c = 0; c < 17 && n < 50; c++, n++) s.set(wx0 + c, y + r, wz, 'white_wool')
+  for (let i = 0; i < 10; i++) {
+    for (let j = 0; j < 10; j++) {
+      if ((i + j) % 2 === 0) { s.set(fx0 + i, y - 1, fz0 + j, 'white_wool'); n++ }
+    }
   }
-  if (n !== 50) throw new Error(`[ch4] the wall holds ${n} envelopes, not 50`)
-  sign(s, wx0 + 18, y + 1, wz, ['50 cold emails', 'a day: where', 'growth started', ''], 'south')
+  if (n !== 50) throw new Error(`[ch4] the floor holds ${n} envelopes, not 50`)
+  s.set(fx0 + 4, y, LOFT.z0, P.loftSide)
+  // A sofa and a plant, because two desks in an empty loft is a warehouse.
+  s.box([x0 + 12, y, 30], [x0 + 14, y, 31], 'gray_wool')
+  s.set(x0 + 18, y, 31, 'moss_block'); s.set(x0 + 18, y + 1, 31, 'oak_leaves')
   // A whiteboard on the south wall.
   s.box([x0 + 9, y, LOFT.z1 - 1], [x0 + 16, y + 2, LOFT.z1 - 1], 'white_concrete')
   s.box([x0 + 10, y + 1, LOFT.z1 - 1], [x0 + 13, y + 1, LOFT.z1 - 1], 'light_blue_concrete')
@@ -350,18 +361,14 @@ function employeeTwo(s) {
 function growthFloor(s) {
   const { x0 } = LOFT
   const y = 2 * FLOOR_H
-  const pods = [
-    [12, ['Creative', '', '', '']],
-    [19, ['Paid media', '', '', '']],
-    [26, ['Partner', 'outreach', '10M+ followers', 'signed']],
-  ]
-  for (const [z, lines] of pods) {
+  // Three pods: creative, paid media, partner outreach.
+  const pods = [12, 19, 26]
+  for (const z of pods) {
     // A pod: four desks round a block, with monitors.
     s.box([x0 + 10, y, z - 1], [x0 + 13, y, z + 1], 'birch_planks')
     s.box([x0 + 11, y + 1, z], [x0 + 12, y + 1, z], 'black_concrete')
     s.set(x0 + 9, y, z - 1, 'polished_blackstone')
     s.set(x0 + 14, y, z, 'polished_blackstone')
-    sign(s, x0 + 9, y, z, lines, 'east')
   }
   /*
    * THE SCREEN: the first long-form video on the channel, 150K views in two
@@ -375,11 +382,9 @@ function growthFloor(s) {
     legend: { R: 'red_concrete', W: 'white_concrete' },
     rows: ['RRRRR', 'RRWRR', 'RRRRR'],
   })
-  sign(s, sx + 4, y, sz + 1, ['First long-form', 'video: 150K', 'views in two', 'weeks'], 'south')
   // The CRM, on a desk by the stair: three screens and a sign.
   s.box([30, y, 12], [32, y, 12], 'birch_planks')
   s.box([30, y + 1, 12], [32, y + 1, 12], 'black_concrete')
-  sign(s, 31, y + 1, 13, ['The CRM: finds', 'creators, drafts', 'the first', 'email'], 'south')
 }
 
 /* FLOOR 4: OPERATIONS, and the call with Shenzhen. */
@@ -397,23 +402,22 @@ function operations(s) {
   let tile = 0
   for (let r = 0; r < 4; r++) {
     for (let c = 0; c < 5; c++, tile++) {
-      const x = wx0 + c * 3
-      const yy = y + 3 - r
-      s.set(x, yy, wz, tile < 2 ? 'orange_terracotta' : 'light_blue_terracotta')
-      s.set(x + 1, yy, wz, tile < 2 ? 'orange_terracotta' : 'light_blue_terracotta')
+      // One block a face, a black gap between, and alternate rows a shade
+      // apart so the four rows read as rows and not as five columns.
+      const face = tile < 2 ? 'orange_terracotta' : r % 2 ? 'cyan_terracotta' : 'light_blue_terracotta'
+      s.set(wx0 + c * 3, y + 3 - r, wz, face)
     }
   }
   if (tile !== 20) throw new Error(`[ch4] the call has ${tile} faces, not 20`)
-  sign(s, wx0 - 2, y + 1, wz - 1, ['Shenzhen: 2', 'part-time to a', '20-person', 'full-time office'], 'north')
 
   // The software, four screens on the north wall with what each one runs.
-  const steps = ['Factory quoting', 'Sampling', 'Production', 'Fulfillment']
-  steps.forEach((label, i) => {
+  // Four screens: quoting, sampling, production tracking, fulfillment.
+  const steps = [0, 1, 2, 3]
+  steps.forEach((i) => {
     const x = x0 + 4 + i * 4
     s.box([x, y + 1, LOFT.z0 + 1], [x + 1, y + 2, LOFT.z0 + 1], 'black_concrete')
     s.set(x, y + 2, LOFT.z0 + 1, 'light_blue_concrete')
     s.box([x, y, LOFT.z0 + 2], [x + 1, y, LOFT.z0 + 2], 'birch_planks')
-    sign(s, x, y, LOFT.z0 + 3, [label, '', '', ''], 'south')
   })
 }
 
@@ -444,10 +448,6 @@ function roof(s) {
   s.set(bx - 1, b0 + 1, 18, 'gold_block')                             // $100K: one
   s.box([bx - 1, b0 + 1, 21], [bx - 1, b0 + 10, 28], 'gold_block')    // $8M: eighty
   for (const z of [16, 31]) { s.set(bx - 1, b0 + 11, z, P.lamp); s.set(bx - 1, b0, z, P.lamp) }
-  // The labels are on the roof, at the foot of the legs, for whoever climbs.
-  s.box([bx, r, 18], [bx, r + 1, 22], P.dark)
-  sign(s, bx - 1, r + 1, 18, ['One block:', '$100K run rate', 'when he joined', ''], 'east')
-  sign(s, bx - 1, r + 1, 21, ['Eighty blocks:', '$8M run rate', 'fifteen months', 'later'], 'east')
 }
 
 /** A New York water tower: a round-ish timber barrel on steel legs, with a
@@ -719,8 +719,11 @@ const TIERS = [
   { r: 1, y0: 56, y1: 59 },
 ]
 
-/** Deterministic, so the lit windows are the same on every boot. */
-const lit = (a, b, c) => ((a * 73856093) ^ (b * 19349663) ^ (c * 83492791)) % 100 < 9
+/** Deterministic, so the lit windows are the same on every boot. The `>>> 0`
+ *  is load-bearing: without it the XOR goes negative half the time, a
+ *  negative remainder is always under 7, and the first screenshot showed a
+ *  building with every other window on. */
+const lit = (a, b, c) => (((a * 73856093) ^ (b * 19349663) ^ (c * 83492791)) >>> 0) % 100 < 7
 
 function empireState(s) {
   const { cx, cz } = ESB

@@ -98,6 +98,10 @@ function play(page, p, sprint) {
     const S = noa.inputs.state
     const stop = () => { S.forward = false; S.sprint = false; S.jump = false }
     stop()
+    /* Full health before every jump, and alive: one bad landing earlier in
+     * the run must not leave the player dead on a death screen, which reads
+     * as every later jump "not moving". */
+    window.game.survival.reset()
     noa.ents.setPosition(ent, p.from)
     body.velocity[0] = body.velocity[1] = body.velocity[2] = 0
     window.game.survival.clearFallTracking()

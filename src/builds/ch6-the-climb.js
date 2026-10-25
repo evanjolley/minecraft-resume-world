@@ -362,9 +362,9 @@ function island(s, st) {
     const [x, z] = c.split(',').map(Number)
     const d = rim.get(c)
     /* The underside: two solid courses under the top, then a taper of up to
-     * five more in the middle, so from below each island reads as a floating
+     * three more in the middle (five read as a slab of rock from the path), so from below each island reads as a floating
      * island -- a rock with a lawn on it -- and not as a floor slab. */
-    const below = 2 + Math.min(5, Math.floor((d - 1) / 1.5))
+    const below = 2 + Math.min(3, Math.floor((d - 1) / 2))
     for (let y = top - below; y < top; y++) {
       const depth = top - y
       let k = depth === 1 ? 'dirt' : 'stone'

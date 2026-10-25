@@ -55,6 +55,11 @@ import { SPINE, sampleSpine } from './spine.js'
 import { wordRows, wordWidth } from './lettering.js'
 import { wallSign, switchback, tree } from './kit.js'
 
+/*
+ * SIGNS, BY THE OWNER'S RULE: only names a real place would put up --
+ * Patronus AI in the lobby and on the roof line. The role, the date and the
+ * mission are AI Evan's to say, not the walls'.
+ */
 export const SIZE = { w: 74, d: 76 }
 
 /** Words on walls that face +x (read from the path) are NOT mirrored. */
@@ -210,9 +215,7 @@ function lobby(s) {
   s.box([x1 - 9, 0, 24], [x1 - 9, 1, 24], P.slab)
   // The wall behind it, in dark stone, with the role and the mission.
   s.box([x1 - 12, 0, 13], [x1 - 12, 3, 27], P.dark)
-  wallSign(s, x1 - 11, 2, 18, 'west', ['Patronus AI', 'San Francisco', '', ''])
-  wallSign(s, x1 - 11, 2, 20, 'west', ['Member of', 'Technical Staff,', 'Growth', 'Sept 2026-now'])
-  wallSign(s, x1 - 11, 2, 22, 'west', ['"Our mission is', 'to simulate all', 'of the world\'s', 'intelligence."'])
+  wallSign(s, x1 - 11, 2, 18, 'west', ['Patronus AI', '', '', ''])
   for (const z of [15, 25]) s.set(x1 - 11, 3, z, P.lamp)
   // A lounge by the windows: low seats and planters.
   for (const z of [8, 12, 28, 32]) {
@@ -220,7 +223,6 @@ function lobby(s) {
     s.set(x1 - 1, 0, z, 'moss_block')
   }
   // The way up is at the back, past the wall.
-  wallSign(s, x0 + 1, 1, 24, 'west', ['Stairs up:', 'the world model,', 'simulation,', 'growth, roof'])
 }
 
 /*
@@ -249,7 +251,7 @@ function worldModel(s) {
   const colours = ['lapis_block', 'red_nether_bricks', 'pink_concrete', 'yellow_concrete', 'orange_concrete', 'white_concrete']
   CHAPTERS.forEach((c, i) => {
     const [ax, az] = cell(c.x0, c.z0), [bx, bz] = cell(c.x1, c.z1)
-    const h = c.id === 'ch6' ? 3 : c.id === 'ch4' ? 2 : 1
+    const h = c.id === 'ch6' ? 2 : 1
     for (let x = ax; x <= bx; x++) {
       for (let z = az; z <= bz; z++) {
         if (x < tx0 || x > tx1 || z < tz0 || z > tz1) continue
@@ -263,10 +265,7 @@ function worldModel(s) {
   if (hx >= tx0 && hx <= tx1 && hz >= tz0 && hz <= tz1) s.set(hx, y + 2, hz, 'gold_block')
   // Light over the table, and the sign.
   for (let x = tx0 + 2; x <= tx1; x += 5) for (let z = tz0 + 2; z <= tz1; z += 5) s.set(x, y + FLOOR_H - 1, z, P.ceiling)
-  s.set(56, y + 1, tz1 + 1, P.dark)
-  wallSign(s, 56, y + 1, tz1 + 2, 'south', ['A model of the', 'world you are', 'standing in.', 'Gold: you.'])
   s.box([HQ.x0 + 1, y, 16], [HQ.x0 + 1, y + 3, 20], 'black_concrete')
-  wallSign(s, HQ.x0 + 2, y + 1, 18, 'west', ['Training the', 'First Digital', 'World Model', ''])
   // Screens round the walls, as if the model were being watched.
   for (const z of [10, 14, 24, 28]) s.box([HQ.x0 + 1, y + 1, z], [HQ.x0 + 1, y + 2, z + 1], 'light_blue_concrete')
 }
@@ -286,8 +285,6 @@ function simulation(s) {
   for (let row = 0; row < 4; row++) {
     for (let z = 10; z <= 24; z += 5) s.set(51 + row * 4, y + FLOOR_H - 1, z, P.ceiling)
   }
-  wallSign(s, 47, y + 1, 30, 'north', ['Simulation', 'research and', 'infrastructure', ''])
-  s.set(47, y + 1, 31, P.dark)
 }
 
 /* FLOOR 4: GROWTH. */
@@ -299,7 +296,6 @@ function growth(s) {
     s.set(x + 1, y, z + 2, P.dark)
   }
   s.box([HQ.x0 + 1, y, 10], [HQ.x0 + 1, y + 2, 22], P.trim)
-  wallSign(s, HQ.x0 + 2, y + 1, 16, 'west', ['Growth', 'Member of', 'Technical Staff', 'Sept 2026-now'])
 }
 
 /* THE ROOF TERRACE, looking west at the bridge. */
@@ -377,20 +373,29 @@ function lady(h, { body, accent }, open) {
   h.rect([1, 1], [D - 1, W - 1], H - 1, 'planks')
   for (const y of [2, 7, H - 1]) h.set(5, y, 2, 'glowstone')
   for (const y of [2, 7, H - 1]) h.set(5, y, 4, 'glowstone')
-  // The facade at x = D: the gable rising to a point over the full width.
-  for (let k = 0; k <= 2; k++) {
-    h.box([D, H + 1 + k, k], [D, H + 1 + k, W - k], body)
-    h.box([0, H + 1 + k, k], [D, H + 1 + k, k], 'dark_oak_planks')          // roof slopes
-    h.box([0, H + 1 + k, W - k], [D, H + 1 + k, W - k], 'dark_oak_planks')
-    if (k < 2) h.box([0, H + 1 + k, k + 1], [D - 1, H + 1 + k, W - k - 1], 'air')
+  /*
+   * THE GABLE: a tall triangle rising off the facade to a point, two rows to
+   * a step, with the roof sloping back from it. The first version had a
+   * gable three rows high under a continuous white cornice, and from the
+   * park the row read as a classical colonnade -- the point of a Victorian
+   * is the point.
+   */
+  for (let j = 0; j < 6; j++) {
+    const k = Math.floor(j / 2), y = H + 1 + j
+    h.box([D, y, k], [D, y, W - k], body)
+    h.set(D, y, k, 'white_concrete')                                       // trim up the rakes
+    h.set(D, y, W - k, 'white_concrete')
+    h.box([0, y, k], [D - 1, y, k], 'dark_oak_planks')                     // the roof slopes
+    h.box([0, y, W - k], [D - 1, y, W - k], 'dark_oak_planks')
+    if (W - k - 1 >= k + 1) h.box([0, y, k + 1], [D - 1, y, W - k - 1], 'air')
   }
-  h.box([0, H + 4, 2], [D + 1, H + 4, 3], 'dark_oak_planks')                  // ridge
-  h.set(D, H + 2, 2, 'glass'); h.set(D, H + 2, 3, 'glass')                    // the gable window
-  // Trim: white bands at the floor lines, white edges up the corners.
-  for (const y of [H, 6]) h.box([D, y, 0], [D, y, W], 'white_concrete')
+  h.box([0, H + 6, 2], [D, H + 6, 3], 'dark_oak_planks')                    // ridge
+  h.box([D, H + 2, 2], [D, H + 3, 3], 'glass')                              // the gable window
+  // Trim: a white band at the floor lines and one white corner per house,
+  // so neighbours do not share a double-width white column.
+  h.box([D, 6, 0], [D, 6, W], 'white_concrete')
   h.box([D, 0, 0], [D, H, 0], 'white_concrete')
-  h.box([D, 0, W], [D, H, W], 'white_concrete')
-  h.box([D, H + 1, 0], [D + 1, H + 1, W], 'white_concrete')                   // cornice
+  h.box([D, H, 0], [D + 1, H, W], 'white_concrete')                         // cornice
   // THE BAY WINDOW: two storeys, one block proud, on the right half.
   h.box([D + 1, 2, 2], [D + 1, 10, 4], accent)
   h.box([D + 1, 3, 3], [D + 1, 5, 4], 'glass')
@@ -471,10 +476,9 @@ function transamerica(s) {
   }
   // The two wings that carry the lifts and the stairs, on the flanks.
   for (const dz of [-1, 1]) {
-    const z = cz + dz * 7
-    for (let y = 30; y <= 44; y++) {
+    for (let y = 30; y <= 47; y++) {
       const r = Math.max(0, Math.round(6 - (y * 6) / (top - 4)))
-      s.box([cx - 1, y, cz + dz * r], [cx + 1, y, z], 'white_concrete')
+      s.box([cx, y, cz + dz * r], [cx, y, cz + dz * (r + 1)], 'white_concrete')
     }
   }
   s.pillar(cx, cz, top + 1, top + 3, 'white_concrete')
