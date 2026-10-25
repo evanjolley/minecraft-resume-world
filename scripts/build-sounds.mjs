@@ -390,8 +390,6 @@ const FREE = {
     // several; see NOTICE.txt for whose they are.
     'mob/cow/say1': 'voxelibre/mobs_mc_cow',
     'mob/cow/hurt1': 'voxelibre/mobs_mc_cow_hurt',
-    'mob/pig/say1': 'voxelibre/mobs_pig',
-    'mob/pig/death': 'voxelibre/mobs_pig_angry',
     'mob/sheep/say1': 'voxelibre/mobs_sheep',
     'mob/chicken/say1': 'voxelibre/mobs_mc_chicken_buck.1',
     'mob/chicken/say2': 'voxelibre/mobs_mc_chicken_buck.2',

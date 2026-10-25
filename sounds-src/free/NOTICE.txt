@@ -83,8 +83,8 @@ voxelibre/ again -- the passive mobs, from VoxeLibre's mobs_mc
 
 Unlike the block sounds above, these licences are as VoxeLibre records them
 and were NOT re-checked against each source page; the source URLs are listed
-so that check can be made. They play as Minecraft's mob/cow, mob/pig,
-mob/sheep and mob/chicken sounds (scripts/build-sounds.mjs, FREE).
+so that check can be made. They play as Minecraft's mob/cow,
+mob/sheep and mob/chicken sounds. Pigs are silent in the free set (scripts/build-sounds.mjs, FREE).
 
   Zozzy -- CC0
     https://www.freesound.org/people/Zozzy/sounds/59245/
@@ -104,32 +104,6 @@ mob/sheep and mob/chicken sounds (scripts/build-sounds.mjs, FREE).
 
   Blender Foundation -- CC BY 3.0
     mobs_sheep.ogg
-
-  TenPlus1 -- MIT License, from the mobs_animal mod
-    mobs_pig.ogg
-    mobs_pig_angry.ogg
-    The MIT licence asks that its notice travel with the files:
-
-      Copyright (c) TenPlus1
-
-      Permission is hereby granted, free of charge, to any person obtaining a
-      copy of this software and associated documentation files (the
-      "Software"), to deal in the Software without restriction, including
-      without limitation the rights to use, copy, modify, merge, publish,
-      distribute, sublicense, and/or sell copies of the Software, and to
-      permit persons to whom the Software is furnished to do so, subject to
-      the following conditions:
-
-      The above copyright notice and this permission notice shall be included
-      in all copies or substantial portions of the Software.
-
-      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-      OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-      MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-      IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-      CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-      TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-      SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
   Not taken: mobs_mc_sheep_damage.ogg and mobs_mc_sheep_random.*.ogg, which
   LICENSE-media.md does not name. A sheep says and hurts with mobs_sheep.ogg.
