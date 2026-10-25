@@ -34,13 +34,15 @@
     "smoke": "playwright test -c test/playwright.config.js test/01-world.spec.js test/43-browsers.spec.js --project=chromium",
     "build:deploy": "rm -rf dist && node scripts/build-textures.mjs --source=ce --no-cape && npm run sounds:free && vite build && rm -rf dist/terrain dist/paintings/vanilla && cp deploy/_headers deploy/.assetsignore dist/ && node scripts/check-deploy-assets.mjs",
     "deploy": "npm run prompt && npm run build:deploy && npx --yes wrangler@4 deploy",
-    "deploy:dry-run": "npm run prompt && npm run build:deploy && npx --yes wrangler@4 deploy --dry-run"
+    "deploy:dry-run": "npm run prompt && npm run build:deploy && npx --yes wrangler@4 deploy --dry-run",
+    "interview": "node scripts/interview.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^6.49.0",
     "noa-engine": "^0.33.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
     "@playwright/test": "^1.63.0",
     "prismarine-nbt": "^2.8.0",
     "sharp": "^0.35.4",
