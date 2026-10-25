@@ -479,14 +479,14 @@ function hall(s, z0, z1, name) {
   for (let x = x0 + 2; x <= x1 - 1; x += 4) for (let z = z0 + 2; z <= z1 - 1; z += 4) s.set(x, 9, z, P.light)
   for (let z = z0 + 2; z <= z1 - 1; z += 4) { s.set(x0, 6, z, P.lamp); s.set(x1, 6, z, P.lamp) }
 
-  // The sign on the board, which is where the degree goes.
+  // The hall's name on its board, which is all a real lecture hall says.
   const sx = Math.round((x0 + x1) / 2)
   if (name === 'A') {
     s.set(sx, 3, z0 + 1, 'oak_wall_sign_south')
-    setSignText(...s.toWorld(sx, 3, z0 + 1), ['Applied Math', 'in Computer', 'Science', '(B.A.)'])
+    setSignText(...s.toWorld(sx, 3, z0 + 1), ['Hall A'])
   } else {
     s.set(sx, 3, z0 + 1, 'oak_wall_sign_south')
-    setSignText(...s.toWorld(sx, 3, z0 + 1), ['Lecture Hall', 'Evan took', 'classes in this', 'building'])
+    setSignText(...s.toWorld(sx, 3, z0 + 1), ['Hall B'])
   }
 
   // Doors from the passage: at the stage end at ground level.
@@ -775,22 +775,14 @@ function exhibit(s) {
   s.box([46, 0, 66], [48, 0, 66], 'spruce_planks')
   s.set(47, 1, 66, 'purple_concrete')
 
-  const sign = (x, y, z, dir, lines) => {
-    s.set(x, y, z, `oak_wall_sign_${dir}`)
-    setSignText(...s.toWorld(x, y, z), lines)
-  }
-  /* On the back wall, facing the visitor who has just walked in (north),
-   * and on the front of each desk. */
-  sign(30, 1, 72, 'north', ['Perplexity', 'Growth Intern', 'Aug-Dec 2024', 'Remote'])
-  sign(30, 0, 65, 'north', ['Pitched the', 'student tier', 'to the Head', 'of Growth'])
-  sign(36, 1, 72, 'north', ['Student tier:', '150,000+ users', 'in 3 months'])
-  sign(41, 1, 72, 'north', ['250+ reps at', '140 schools.', 'One tile each', 'on the floor.'])
-  sign(47, 1, 72, 'north', ['Arize AI', 'Content Writer', 'Jun 2023 -', 'Dec 2024'])
-  sign(47, 0, 65, 'north', ['GenAI writing:', '1M+ views on X', 'and the Arize', 'site'])
+  /* NO SIGNS. The facts these years hold -- the two jobs, the student tier,
+   * the 250+ ambassadors -- live in AI Evan's corpus (chapter ch2), not on
+   * the walls; see "No trivia signs" in docs/builds/README.md. The room
+   * keeps its objects: two desks with two screens, and 140 tiles. */
 }
 
 /* ====================================================================== *
- * SIGNS ON THE PLAZA.
+ * SIGNS: names and way-finding only.
  * ====================================================================== */
 
 function signs(s) {
@@ -798,19 +790,14 @@ function signs(s) {
     s.set(x, y, z, `oak_wall_sign_${dir}`)
     setSignText(...s.toWorld(x, y, z), lines)
   }
-  // A plinth by the Yard gate, read as you come through it.
+  /* ONLY WHAT A REAL PLACE WOULD CARRY: the building's name by the Yard
+   * gate, a way-finding sign at the passage, the Yard's name at the gate.
+   * Dates, the degree, the rename and the rest are AI Evan's to tell; see
+   * "No trivia signs" in docs/builds/README.md. */
   const px = 44, pz = 29
-  s.box([px, 0, pz], [px + 4, 1, pz], P.post)
+  s.box([px, 0, pz], [px + 2, 1, pz], P.post)
   s.set(px + 1, 2, pz, P.lamp)
-  s.set(px + 3, 2, pz, P.lamp)
-  sign(px, 1, pz - 1, 'north', ['Chapter 2', 'Harvard', 'B.A., Dec 2024'])
-  sign(px + 1, 1, pz - 1, 'north', ['Science Center', 'J. L. Sert', '1970-72'])
-  sign(px + 2, 1, pz - 1, 'north', ['9 storeys +', 'an observatory', 'on the roof'])
-  /* The rename, in Evan's own framing (his answer, 2026-10-25): the
-   * building is the Science Center here because that is what it was while
-   * he was there. Zimmer Hall is the footnote, never the title. */
-  sign(px + 3, 1, pz - 1, 'north', ['It was the', 'Science Center', 'while I was', 'there.'])
-  sign(px + 4, 1, pz - 1, 'north', ['Since renamed', 'Zimmer Hall. I', 'know it by its', 'old name.'])
+  sign(px + 1, 1, pz - 1, 'north', ['Science Center'])
 
   // By the passage mouth.
   s.pillar(PASS[0] - 1 + 0, FRONT - 1, 0, 1, P.post)
@@ -821,7 +808,7 @@ function signs(s) {
    * toward the path; the post it hangs on is on its +x side. */
   s.pillar(4, 9, 0, 2, P.post)
   s.set(4, 3, 9, P.lamp)
-  sign(3, 1, 9, 'east', ['Harvard Yard', 'Plaza and', 'Science Center', 'to the south'])
+  sign(3, 1, 9, 'east', ['Harvard Yard'])
 }
 
 /* ====================================================================== *
