@@ -638,9 +638,9 @@ times each, because other agents were loading the machine.
 | `npm run smoke`, same load, side by side | 28.0 s | **14.2 s** |
 | `resetWorld`, run before every spec | 371 ms | **88 ms** |
 
-## 1. FIXED: noa meshed one chunk per tick, whatever its budget said
+## 1. FIXED, noa meshed one chunk per tick whatever its budget said
 
-noa 0.33's `World.tick` has an inverted guard: `if (t < t1) t1 = t + 1` caps
+noa 0.33's `World.tick` has an inverted guard. `if (t < t1) t1 = t + 1` caps
 every tick that is still under budget at one millisecond, and a 32^3 chunk
 takes longer than that, so the world arrived at the tick rate, 30 chunks a
 second. The CPU profile of a 15-second boot was 83% idle. Raising
@@ -649,17 +649,17 @@ second. The CPU profile of a 15-second boot was 83% idle. Raising
 8 ms a tick while pointer locked, 16 ms while nobody is playing (the title
 menu, a paused game, the test suite). Nothing in node_modules is patched.
 
-The cost, measured: walking into fresh terrain without pointer lock, the
+The cost, measured. Walking into fresh terrain without pointer lock, the
 frame-time p99 goes from 16.8 to 33 to 50 ms, because those ticks now do
 the work that used to wait. Under pointer lock the budget is half that.
 
-## 2. FIXED: the sound samples raced the boot
+## 2. FIXED, the sound samples raced the boot
 
 53 samples fetched the moment `sounds.js` ran, for a page that cannot play
 one before the first click. They now start on that click, or four seconds
 in.
 
-## 3. FIXED: every spec paid for a 2-block fall
+## 3. FIXED, every spec paid for a 2-block fall
 
 `resetWorld` teleported to spawn + 2 and waited for the landing. It places
 the player on the grass now, wakes the body, and waits for the eye to
@@ -678,7 +678,7 @@ return from a sneak, which is what the fall had been covering for.
   About a second of the 3.4 s boot is that; waiting for neighbors before
   the first mesh is noa-internal and was not worth patching.
 - **The suite's known failures** under this checkout, all also failing on
-  the commit before this sprint: `06-mining` and `10-gamemode` expect grass
+  the commit before this sprint. `06-mining` and `10-gamemode` expect grass
   at the spawn column, `12-sounds` wants a vanilla sound build and an
   imported terrain asset, `34-nether` wants the imported Nether, `65-sky-light`
   counts vertices in a world that has since grown a landscape, and

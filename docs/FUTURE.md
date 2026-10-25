@@ -208,17 +208,17 @@ because "shipped work moves up and loses its section" is this file's own rule.
   panicking when hit, following wheat, mooing on vanilla's ambient clock,
   dropping vanilla's loot, spawning in herds of four on grass in daylight.
   You can punch them, with the 1.9 cooldown and vanilla weapon damage.
-  **Not built:** breeding and babies, shearing, sheep eating grass, milk,
+  **Not built** are breeding and babies, shearing, sheep eating grass, milk,
   leads, saddles, mob-to-mob collision, and hostile mobs of any kind.
-- **Food and eating** (`src/food.js`): the meats raw and cooked, vanilla's
+- **Food and eating** (`src/food.js`), the meats raw and cooked, vanilla's
   nutrition and saturation, 32 ticks of right-click. The smoker and blast
   furnace now take only their own recipe types.
-- **The sky is vanilla's arithmetic** (`src/celestial.js`, `src/skyDome.js`):
+- **The sky is vanilla's arithmetic** (`src/celestial.js`, `src/skyDome.js`),
   the bent clock (day outlasts night, the sun is up at tick 0), a sky-to-fog
   gradient, the sunrise glow on the sun's side only, vanilla's seed-10842 star
   field, moon phases, getSkyDarken light and getCloudColor clouds. The CE sun
   and moon had been drawing as squares in every CE build.
-- **Commands speak vanilla**: `/tp` targets, rotation, `^` local coordinates
+- **Commands speak vanilla**. `/tp` targets, rotation, `^` local coordinates
   and block-centered integers; `/give <target>` with the 100-stack cap and
   overflow dropped at your feet; `/time` units and `query`; `/summon`;
   `/kill @e[type=...]`; en_us wording for `/weather` and `/gamerule`.
