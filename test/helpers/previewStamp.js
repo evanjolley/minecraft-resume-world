@@ -11,6 +11,20 @@ import * as ch4 from '../../src/builds/ch4-new-york.js'
 import * as ch5 from '../../src/builds/ch5-san-francisco.js'
 import * as ch6 from '../../src/builds/ch6-the-climb.js'
 import { PREVIEW_AT, PREVIEW_SIZE } from './previewLayout.js'
+/*
+ * The game's own island.js and dimensions.js, re-exported for enterPreview.
+ *
+ * They MUST be reached through this file and not by `import('/src/...')`
+ * from page.evaluate. Once a dev server has seen either file change, vite
+ * serves the game's copy as `/src/dimensions.js?t=<edit time>`, and a bare
+ * `/src/dimensions.js` is a SECOND module instance with its own DIMENSIONS.
+ * A row added there is invisible to the game's `dimensions.enter`, which
+ * answers "Unknown dimension 'preview-chapters'". An import written in a
+ * file vite serves is rewritten to the same URL the game's is, so these
+ * are the live objects.
+ */
+export * as island from '../../src/island.js'
+export * as dimensions from '../../src/dimensions.js'
 
 export const BUILDS = { ch4, ch5, ch6 }
 
