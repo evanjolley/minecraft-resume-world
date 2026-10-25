@@ -338,7 +338,7 @@ export async function reloadWorld(page) {
  * origin so a future multiplayer socket still works.
  */
 function muteHmr(page) {
-  return page.routeWebSocket(/^wss?:\/\/localhost:5173\//, () => {})
+  return page.routeWebSocket(/^wss?:\/\/localhost:\d+\//, () => {})
 }
 
 /*
