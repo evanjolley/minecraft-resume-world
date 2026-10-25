@@ -40,13 +40,11 @@ export const MS_PER_TICK = 50
  * (minecraft.wiki/w/Smelting). Identical fuel is the part worth stating: a
  * blast furnace does not burn coal faster, it gets twice as much out of it.
  *
- * NOT reproduced: the recipe-book split. Vanilla's blast furnace accepts only
- * `minecraft:blasting` recipes and the smoker only `minecraft:smoking`, so a
- * blast furnace cannot make glass and a smoker cannot smelt iron. Every recipe
- * here is a furnace recipe (there is no food in items.js, so the smoker's
- * whole menu is empty) -- splitting the table three ways would give the smoker
- * nothing to do and the blast furnace a list identical to the ores it already
- * has. Flagged rather than quietly done.
+ * The recipe-type split IS reproduced, since food arrived with the passive
+ * mobs: vanilla's blast furnace accepts only `minecraft:blasting` recipes and
+ * the smoker only `minecraft:smoking`, so a blast furnace cannot make glass
+ * and a smoker cannot smelt iron. recipes.js tags each row; smeltingResult
+ * takes the furnace's kind.
  */
 export const FURNACE_KINDS = {
   furnace: { cookTicks: 200 },
@@ -102,7 +100,7 @@ export const isLit = (f) => f.burn > 0
 export function canSmelt(f) {
   const input = f.slots[INPUT]
   if (!input) return false
-  const result = smeltingResult(input.id)
+  const result = smeltingResult(input.id, f.kind)
   if (!result) return false
   const out = f.slots[OUTPUT]
   if (!out) return true
@@ -113,7 +111,7 @@ export function canSmelt(f) {
 /** smeltItem: one in, one out. Every furnace recipe yields exactly one. */
 function smeltOne(f) {
   const input = f.slots[INPUT]
-  const result = smeltingResult(input.id)
+  const result = smeltingResult(input.id, f.kind)
   const out = f.slots[OUTPUT]
   if (out) out.count++
   else f.slots[OUTPUT] = { id: result, count: 1 }

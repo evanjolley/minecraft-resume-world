@@ -149,7 +149,10 @@ export function installInteraction(noa, inv, fx, authority) {
     if (noa.inputs.state.fire) swing.triggerIfIdle()
 
     const held = noa.inputs.state.fire
-    const target = noa.targetedBlock
+    // A mob under the crosshair, nearer than the block, takes the click
+    // instead (src/mobs.js), so holding the button on a cow does not mine
+    // the grass behind it.
+    const target = fx.entityTargeted?.() ? null : noa.targetedBlock
     const caps = authority.caps()
 
     if (!held || !target || !caps.mayBreak) {
@@ -234,6 +237,8 @@ export function installInteraction(noa, inv, fx, authority) {
     if (busy()) return
     const target = noa.targetedBlock
     if (!target) return
+    // Right-clicking a mob uses the mob, not the block behind it.
+    if (fx.entityTargeted?.()) return
 
     /*
      * Using a block is checked FIRST, before the build permission and before

@@ -543,6 +543,20 @@ const MIX = {
   drink: { set: 'drink', shared: true, volume: 0.5, pitch: 0.95, vary: 0.05 },
   potionThrow: { set: 'potionThrow', shared: true, volume: 0.5, pitch: 0.4167, vary: 0.2 },
   shatter: { set: 'shatter', shared: true, volume: 1.0, pitch: 0.95, vary: 0.05 },
+
+  /* ------------------------------------------------------------------ *
+   * The passive mobs (src/mobs.js). Mob.getSoundVolume is 1 except the
+   * cow's 0.4, and getVoicePitch is (rand - rand) * 0.2 + 1 for an adult.
+   * ------------------------------------------------------------------ */
+  cowSay: { set: 'cowSay', shared: true, volume: 0.4, pitch: 1.0, vary: 0.2 },
+  cowHurt: { set: 'cowHurt', shared: true, volume: 0.4, pitch: 1.0, vary: 0.2 },
+  pigSay: { set: 'pigSay', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
+  pigDeath: { set: 'pigDeath', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
+  sheepSay: { set: 'sheepSay', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
+  chickenSay: { set: 'chickenSay', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
+  chickenHurt: { set: 'chickenHurt', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
+  // ChickenEntity's egg: volume 1, pitch (rand - rand) * 0.2 + 1.
+  chickenPlop: { set: 'chickenPlop', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
 }
 
 // Minecraft's LivingEntity.getFallDamageSound: more than 4 half-hearts of fall

@@ -236,6 +236,8 @@ const buildIndex = (rows) => {
 }
 
 const SMELT_BY_INPUT = buildIndex(SMELTING.map(r => [r.from, itemId(r.result)]))
+/* input id -> the second furnace kind that also takes it, if any. */
+const SMELT_ALSO = new Map(SMELTING.filter(r => r.also).map(r => [itemId(r.from), r.also]))
 const FUEL_BY_ITEM = buildIndex(FUELS)
 
 /**
@@ -246,7 +248,12 @@ const FUEL_BY_ITEM = buildIndex(FUELS)
  * 1s. If a mod-shaped recipe ever needs otherwise, that is the moment to add
  * it, not now.
  */
-export const smeltingResult = (id) => SMELT_BY_INPUT.get(id) ?? 0
+export const smeltingResult = (id, kind = 'furnace') => {
+  const result = SMELT_BY_INPUT.get(id) ?? 0
+  if (!result || kind === 'furnace') return result
+  // Blast furnaces and smokers take only their own recipe type.
+  return SMELT_ALSO.get(id) === kind ? result : 0
+}
 
 /** How many ticks one of this item burns for, or 0 if it is not fuel. */
 export const burnTicks = (id) => FUEL_BY_ITEM.get(id) ?? 0

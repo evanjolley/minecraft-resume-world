@@ -57,6 +57,8 @@ import { installPotions } from './potions.js'
  */
 import * as potionData from './potions.js'
 import { installFurnaceDrops } from './furnace.js'
+import { installMobs } from './mobs.js'
+import { installFood } from './food.js'
 import { installHighlightStyle } from './highlight.js'
 import { createAuthority, OP_PASSPHRASE } from './authority.js'
 import { entitiesInBox } from './entityBox.js'
@@ -541,6 +543,13 @@ const authority = createAuthority({
   },
 })
 
+/*
+ * What the crosshair is on when it is a mob rather than a block. Filled in
+ * once src/mobs.js is installed further down; interact.js asks it so a click
+ * on a cow hits the cow instead of mining the grass behind it.
+ */
+const entityAim = { targeted: () => null }
+
 const interaction = installInteraction(noa, inventory,
   // useBlock is a thunk because inventoryScreen is declared further down; it
   // only ever runs on a right-click, long after everything is constructed.
@@ -570,6 +579,7 @@ const interaction = installInteraction(noa, inventory,
    */
   {
     crack, held, swing, inputLock, effects,
+    entityTargeted: () => entityAim.targeted() !== null,
     useBlock: (id, pos) => inventoryScreen.useBlock(id, pos)
       || (authority.caps().mayBuild && signScreen.open(...pos)),
   },
@@ -693,6 +703,14 @@ const potions = installPotions(noa, {
 })
 installFurnaceDrops(inventory.furnaces, authority, drops.popResource)
 
+/*
+ * Passive mobs: cows, pigs, sheep and chickens (src/mobs.js), and eating the
+ * food they drop (src/food.js). After `drops`, which their loot lands in, and
+ * after `sky`, whose tick sets the entity light the hurt flash tints.
+ */
+const mobs = installMobs(noa, { ids, inventory, authority, sounds, drops, survival })
+entityAim.targeted = mobs.targeted
+const food = installFood(noa, { inventory, survival, inputLock, authority, effects, sounds })
 
 /*
  * A torch falls off a wall you mine, and lands as a torch.
@@ -852,7 +870,7 @@ interaction.onBlockPlace(({ position }) => signScreen.open(...position))
 // `playerName` is back, as a getter on the roster: /tp and /give accept your
 // own name as a target, the way vanilla does.
 const commands = installCommands(chat, authority, {
-  noa, playerName: () => roster.displayNameOf(LOCAL_ID),
+  noa, playerName: () => roster.displayNameOf(LOCAL_ID), mobs,
 })
 
 /* ------------------------------------------------------------------ *
@@ -1105,7 +1123,7 @@ window.game = {
   // `fluids` is exposed for the same reason `move` is: the test suite asserts
   // measured swim speeds and breath durations, and both need to know which
   // fluid the player is actually registering as in.
-  fluids, chunkBudget,
+  fluids, chunkBudget, mobs, food,
   inventory, survival, move, sky, menu, chat, inputLock, perspective,
   skinMaterial, sounds, particles, drops, weather, underwater,
   /*

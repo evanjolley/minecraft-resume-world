@@ -255,6 +255,18 @@ const SETS = {
   // water sound that is a HUD sound rather than a world sound, which is why
   // it lives under ui/ and plays flat.
   breath: ['ui/hud/hud_bubble'],
+
+  /* ------------------------------------------------------------------ *
+   * The passive mobs (src/mobs.js), under vanilla's mob/ asset names.
+   * ------------------------------------------------------------------ */
+  cowSay: ['mob/cow/say1', 'mob/cow/say2', 'mob/cow/say3', 'mob/cow/say4'],
+  cowHurt: ['mob/cow/hurt1', 'mob/cow/hurt2', 'mob/cow/hurt3'],
+  pigSay: ['mob/pig/say1', 'mob/pig/say2', 'mob/pig/say3'],
+  pigDeath: ['mob/pig/death'],
+  sheepSay: ['mob/sheep/say1', 'mob/sheep/say2', 'mob/sheep/say3'],
+  chickenSay: ['mob/chicken/say1', 'mob/chicken/say2', 'mob/chicken/say3'],
+  chickenHurt: ['mob/chicken/hurt1', 'mob/chicken/hurt2'],
+  chickenPlop: ['mob/chicken/plop'],
 }
 
 /* ------------------------------------------------------------------ *
@@ -374,6 +386,18 @@ const FREE = {
     'damage/fallsmall': 'opengameart/macro_jump_landing',
     'random/click_stereo': 'opengameart/kenney_ui_click',
     'random/pop': 'opengameart/kenney_ui_pickup',
+    // The passive mobs. One free recording per vanilla set where vanilla has
+    // several; see NOTICE.txt for whose they are.
+    'mob/cow/say1': 'voxelibre/mobs_mc_cow',
+    'mob/cow/hurt1': 'voxelibre/mobs_mc_cow_hurt',
+    'mob/pig/say1': 'voxelibre/mobs_pig',
+    'mob/pig/death': 'voxelibre/mobs_pig_angry',
+    'mob/sheep/say1': 'voxelibre/mobs_sheep',
+    'mob/chicken/say1': 'voxelibre/mobs_mc_chicken_buck.1',
+    'mob/chicken/say2': 'voxelibre/mobs_mc_chicken_buck.2',
+    'mob/chicken/say3': 'voxelibre/mobs_mc_chicken_buck.3',
+    'mob/chicken/hurt1': 'voxelibre/mobs_mc_chicken_hurt',
+    'mob/chicken/plop': 'voxelibre/mobs_mc_chicken_lay_egg',
   },
 }
 

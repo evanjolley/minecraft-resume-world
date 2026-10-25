@@ -685,7 +685,7 @@ export function createInventory() {
        */
       if (!moveItemStackTo(m, stack, m.INV_START, m.USE_ROW_END, true)) return false
     } else if (index !== m.FUEL_SLOT && index !== m.INPUT_SLOT) {
-      if (smeltingResult(stack.id)) {
+      if (smeltingResult(stack.id, inv.openFurnace?.kind)) {
         if (!moveItemStackTo(m, stack, m.INPUT_SLOT, m.INPUT_SLOT + 1, false)) return false
       } else if (burnTicks(stack.id)) {
         if (!moveItemStackTo(m, stack, m.FUEL_SLOT, m.FUEL_SLOT + 1, false)) return false
