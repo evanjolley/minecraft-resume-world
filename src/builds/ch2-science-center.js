@@ -527,9 +527,6 @@ function centralBlock(s) {
   // ...except the bridge's own wall line, which carries the slab.
   for (let z = FRONT; z <= BACK; z += 7) s.pillar(x0, z, 0, 3, P.fin)
 
-  library(s)
-  interiorStreet(s)
-
   /* THE TERRACED CLASSROOMS. Storeys 1..5 behind each step's front line;
    * each one a room with desks facing a board, and a door out onto the
    * terrace in front of it. */
@@ -552,6 +549,12 @@ function centralBlock(s) {
     // Through to the tower's floor at the same level.
     s.clear([x1, y, 70], [TOW[0], y + 2, 71])
   }
+
+  /* AFTER the storeys, not before: storey 1's floor is the ceiling of the
+   * interior street and the study room, and laying it first painted over
+   * every light in that ceiling -- the study room came out pitch black. */
+  library(s)
+  interiorStreet(s)
 
   // The terraces: a parapet along each deck's front and sides.
   STEPS.forEach((t, i) => {
