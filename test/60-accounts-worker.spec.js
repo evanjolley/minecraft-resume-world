@@ -385,3 +385,31 @@ test.describe('saved worlds', () => {
     expect(r.status).toBe(400)
   })
 })
+
+test.describe('AI Evan is keyed by the session, not by what the body claims', () => {
+  /* The rate limiter is the first thing handleEvan does with the visitor id,
+   * so a limiter that records its key and says no shows which id was used
+   * without running a model. */
+  const recordingLimit = () => {
+    const keys = []
+    return { keys, limit: async ({ key }) => { keys.push(key); return { success: false } } }
+  }
+  const evan = async (env, { token, visitorId }) => {
+    const { handleEvan } = await import('../worker/agent/route.js')
+    return handleEvan(req('/api/evan', { token, body: { visitorId, message: 'hi' } }), env)
+  }
+  const FORGED = 'someone_elses_visitor_id_123'
+
+  test('with a session, a forged visitorId in the body is ignored', async () => {
+    const env = makeEnv({ AGENT_LIMIT: recordingLimit() })
+    const { body } = await call(env, '/api/session')
+    await evan(env, { token: body.token, visitorId: FORGED })
+    expect(env.AGENT_LIMIT.keys).toEqual([body.visitor])
+  })
+
+  test('without a session secret, the body id is all there is', async () => {
+    const env = makeEnv({ SESSION_SECRET: undefined, AGENT_LIMIT: recordingLimit() })
+    await evan(env, { visitorId: FORGED })
+    expect(env.AGENT_LIMIT.keys).toEqual([FORGED])
+  })
+})

@@ -45,19 +45,37 @@ Re-run it whenever `corpus/profile.md` changes. Nothing else caches it.
 
 ## 3. The client
 
-One line in `src/main.js`, which this directory does not own:
+AI Evan with memory is `POST /api/evan` (`worker/agent/`, design in
+`docs/ai-evan/04-memory.md`). The page picks its brain at runtime:
 
-```diff
--import { createEvanTools, stubBackend, LINES } from './aiEvan.js'
-+import { createEvanTools, stubBackend, workerBackend, LINES } from './aiEvan.js'
-@@
--    backend: stubBackend,
-+    backend: workerBackend(),
+- default: `stubBackend`, the offline script. No key, no Worker, no network.
+- `?brain=evan`, or `game.useBrain('evan')` in the console: `evanBackend()`,
+  which posts one message at a time to `/api/evan`. The server holds the
+  transcript in the visitor's Durable Object.
+
+To make memory the default, change the `stub` fallback in `BRAINS` in
+`src/main.js` to `evan`. The older stateless `/api/agent` and `workerBackend`
+still work and can be removed once `/api/evan` is live.
+
+### Trying it locally without a key
+
+```sh
+npm run prompt:ci                       # or npm run prompt, with corpus/
+echo 'AGENT_MOCK_MODEL=1' >> .dev.vars
+npm run build:deploy && npx wrangler@4 dev
+# open http://localhost:8787/?brain=evan
 ```
 
-`stubBackend` stays exported and stays working. It is the offline path: no key,
-no Worker, no network, which is what keeps `npm run dev` usable on a plane and
-`test/21-ai-evan.spec.js` free to run.
+`AGENT_MOCK_MODEL=1` answers from `worker/agent/mock.js` and is ignored
+whenever `ANTHROPIC_API_KEY` is set.
+
+### The entry module
+
+`main` in `wrangler.toml` is `worker/main.js`, not `index.js`. workerd refuses
+to start a Worker whose main module has a named export that is not a function
+or class, and `index.js` exports `PROMPT_IS_STUB` and `CAPS`. That made the
+Worker fail at startup under `wrangler dev`, which `deploy --dry-run` does not
+catch. `test/110-ai-evan-memory.spec.js` now checks it.
 
 ## 4. AI Gateway
 
@@ -71,7 +89,7 @@ instead of Evan getting an invoice.
 
 Every ceiling is in `CAPS` in `index.js` with the thing it stops. The ones that
 bound the bill without needing to identify an attacker are `maxTokens`, the
-gateway throttle and the Console spend limit. The one this design does *not*
-have is a real per-visitor conversation cap, because there is no Durable Object
-yet; the comment above `MODEL` explains why that is survivable and what signal
-should change it.
+gateway throttle and the Console spend limit. The one the stateless design
+lacked was a real per-visitor conversation cap. `/api/evan` has one now, with a
+daily token budget, in the visitor's Durable Object (`worker/agent/memory.js`,
+`LIMITS`).

@@ -79,9 +79,9 @@ Cloudflare account has been touched, and no DNS record has been created.
 - `wrangler.toml` — the Worker, pointed at `dist/`, with the `VISITOR`
   Durable Object (one per signed-in visitor, SQLite) that holds passkeys,
   nicknames and saved worlds. Multiplayer is cancelled, so the room object the
-  section above argues for was never built; the per-visitor object is the
-  Durable Object this site actually uses. See "Accounts and saved worlds"
-  under Going live.
+  section above argues for was never built. The site uses two per-visitor
+  objects instead, `VisitorMemory` for AI Evan and `Visitor` for accounts.
+  See "Accounts and saved worlds" under Going live.
 - `deploy/_headers` and `deploy/.assetsignore` — cache policy and an upload
   blocklist, copied into `dist/` by the deploy build.
 - `.github/workflows/deploy.yml` — a fast build-and-smoke job on every push to

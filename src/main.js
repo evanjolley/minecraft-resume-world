@@ -10,7 +10,7 @@ import {
   resetPaintings, paintingTextureBytes,
 } from './paintingArt.js'
 import { installSignScreen } from './signScreen.js'
-import { getVoxelID, terrainInfo, SPAWN } from './island.js'
+import { getVoxelID, terrainInfo, SPAWN, currentDimension } from './island.js'
 import { installPhysics, installSpeedModes, MC } from './physics.js'
 import { createSurvival } from './survival.js'
 import { createFluids, installFluids } from './fluids.js'
@@ -65,11 +65,12 @@ import { installDimensions, prepare as prepareDimension } from './dimensions.js'
 import { createRoster, GUEST_NAME } from './identity.js'
 import { installNPC } from './npc.js'
 import { installDebugScreen } from './debugScreen.js'
-import { createEvanTools, stubBackend, LINES } from './aiEvan.js'
+import { createEvanTools, stubBackend, evanBackend, localVisitorId, LINES } from './aiEvan.js'
+import { createGuide, plotStops } from './tour.js'
+import { CHAPTERS, toLandWorld } from './builds/plots.js'
 import { createAccount } from './account.js'
 import { loadSave, installPersistence, savedStart } from './persistence.js'
 import { installProfile } from './profileScreen.js'
-import { currentDimension } from './island.js'
 
 /*
  * THE BOOT GATE -- still a gate, no longer a download.
@@ -921,6 +922,40 @@ const FACING = ['south', 'west', 'north', 'east']
 const facingName = (heading) =>
   FACING[(Math.round(heading / (Math.PI / 2)) % 4 + 4) % 4]
 
+/*
+ * THE TOUR. Plot stops are derived from CHAPTERS, so they follow the layout;
+ * they exist only in the overworld, where the chapters are built. The route
+ * is planned over getVoxelID -- the patch, readable for chunks that are not
+ * meshed yet -- which is what lets him plan a hundred-block walk at once.
+ */
+const TOUR_STOPS = plotStops(CHAPTERS, toLandWorld)
+const blockAt = (x, y, z) => getVoxelID(x, y, z, ids)
+const guide = createGuide({
+  npc: { get position() { return aiEvan.position }, walkTo: (xz, opts) => aiEvan.walkTo(xz, opts) },
+  visitor: () => noa.ents.getPosition(noa.playerEntity),
+  stops: () => (currentDimension() === 'overworld' ? TOUR_STOPS : null),
+  solidAt: (x, y, z) => noa.registry.getBlockSolidity(blockAt(x, y, z)),
+  fluidAt: (x, y, z) => noa.registry.getBlockFluidity(blockAt(x, y, z)),
+})
+
+/*
+ * WHICH BRAIN. The stub stays the default (no key, no Worker, works on a
+ * plane). `?brain=evan` talks to /api/evan -- the Worker with per-visitor
+ * memory -- which is how it is exercised under `wrangler dev` before Evan
+ * flips the default. See worker/README.md.
+ */
+/*
+ * The visitor id AI Evan's memory is keyed by: the signed session's id when
+ * the Worker has issued one (account.js), else aiEvan.js's local id. The
+ * Worker prefers the session cookie over this value anyway (route.js asks
+ * getVisitor first), so this is only what an unsigned deploy falls back to.
+ */
+const visitorId = () => account.state.visitor ?? localVisitorId()
+const BRAINS = { stub: () => stubBackend, evan: () => evanBackend({ visitorId }) }
+let brain = (BRAINS[new URLSearchParams(location.search).get('brain')] ?? BRAINS.stub)()
+/** Switch brains at runtime, from the console or a spec: game.useBrain('evan'). */
+const useBrain = (name) => { brain = (BRAINS[name] ?? BRAINS.stub)() }
+
 const aiEvan = installNPC(noa, {
   roster,
   id: EVAN_ID,
@@ -962,7 +997,7 @@ const aiEvan = installNPC(noa, {
      * the whole of "make AI Evan real". See agent.js for the request shape
      * and for why the API key cannot be on this side of that fetch.
      */
-    backend: stubBackend,
+    backend: (request) => brain(request),
     tools: createEvanTools({
       playerId: () => LOCAL_ID,
       setName: (id, name) => roster.setName(id, name),
@@ -974,6 +1009,7 @@ const aiEvan = installNPC(noa, {
        * function, not to know how legs work.
        */
       walkTo: ({ x, z }) => aiEvan.walkTo([x, z]),
+      leadTo: (chapter) => guide.leadTo(chapter),
       playerState: () => {
         const [x, y, z] = noa.ents.getPosition(noa.playerEntity)
         const target = noa.targetedBlock
@@ -1230,6 +1266,8 @@ window.game = {
    * in a chat handler.
    */
   roster, aiEvan, LOCAL_ID, EVAN_ID,
+  // The tour: the plot stops and the guide that leads to them (src/tour.js).
+  guide, TOUR_STOPS, useBrain,
   /*
    * A GETTER, and it has to be. This used to be a frozen `[x, y, z]` written
    * at boot; he has a physics body now, so the constant would go stale the

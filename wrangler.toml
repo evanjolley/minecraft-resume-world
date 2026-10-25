@@ -21,7 +21,11 @@ name = "world"
 # without it fails at bundle time, which is the correct failure. The
 # alternative, a committed placeholder prompt, would deploy an Evan who
 # confidently knows nothing about Evan.
-main = "./worker/index.js"
+#
+# The entry is worker/main.js, not index.js: workerd refuses a main module
+# whose named exports are not entrypoints, and index.js exports constants for
+# its spec. See the header of worker/main.js.
+main = "./worker/main.js"
 
 # Pinned deliberately. Cloudflare gates runtime behaviour changes behind this
 # date, so a deploy a year from now behaves like a deploy today. Bumping it is
@@ -50,8 +54,8 @@ directory = "./dist"
 binding = "ASSETS"
 
 # Every /api/ path must reach the Worker rather than the asset server, which
-# would answer it with a 404 before any code runs: the chat endpoint
-# (/api/agent) and the accounts and saved-world routes
+# would answer it with a 404 before any code runs: AI Evan (/api/agent,
+# /api/evan) and the accounts and saved-world routes
 # (worker/account/routes.js). Everything else still skips the Worker
 # entirely, which is why serving the site costs nothing.
 run_worker_first = ["/api/*"]
@@ -85,13 +89,35 @@ namespace_id = "1001"
 simple = { limit = 15, period = 60 }
 
 # --------------------------------------------------------------------------
+# AI Evan's memory of each visitor. One SQLite-backed Durable Object per
+# visitor id, named by idFromName(visitorId). See worker/agent/visitorMemory.js
+# for the class and docs/decisions.md for why a DO and not D1 or KV.
+#
+# new_sqlite_classes, NOT new_classes: the storage backend is fixed at class
+# creation (the same warning the Visitor block below carries). The tag is the
+# first migration this Worker has; if another branch adds a Durable Object
+# too, the two migrations must be ordered (v1, v2), not both called v1.
+[[durable_objects.bindings]]
+name = "VISITOR_MEMORY"
+class_name = "VisitorMemory"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VisitorMemory"]
+
+# Local development only, never set in production: `AGENT_MOCK_MODEL=1` in
+# .dev.vars makes /api/evan answer from worker/agent/mock.js instead of
+# Anthropic, so `wrangler dev` exercises memory without a key. A real
+# ANTHROPIC_API_KEY always overrides it.
+
+# --------------------------------------------------------------------------
 # Accounts and saved worlds: one Durable Object per signed-in visitor.
 #
 # worker/world/visitor.js, logic in worker/world/store.js. Holds that
-# visitor's passkeys, nickname and saved world. Guests never create one; their
-# world lives in IndexedDB. docs/decisions.md has the cost math against D1
-# and R2. Multiplayer is cancelled (docs/SPRINT-1.md), so there is no room
-# object any more and this is the only Durable Object.
+# visitor's passkeys, nickname and saved world, keyed by the same visitor id
+# as VISITOR_MEMORY above. Guests never create one; their world lives in
+# IndexedDB. docs/decisions.md has the cost math against D1 and R2.
+# Multiplayer is cancelled (docs/SPRINT-1.md), so there is no room object.
 #
 # Secrets, set with `npx wrangler@4 secret put <NAME>`:
 #   SESSION_SECRET   32+ random characters. Signs every session token. With it
@@ -106,10 +132,10 @@ name = "VISITOR"
 class_name = "Visitor"
 
 # new_sqlite_classes, NOT new_classes. The storage backend is fixed at class
-# creation and cannot be changed afterwards. Getting this wrong is a
-# migration, not an edit.
+# creation and cannot be changed afterwards. v2 because VisitorMemory is v1:
+# migrations apply in order and each tag is used once.
 [[migrations]]
-tag = "v1"
+tag = "v2"
 new_sqlite_classes = ["Visitor"]
 # --------------------------------------------------------------------------
 

@@ -62,9 +62,6 @@
  */
 import * as PROMPT from './prompt.generated.js'
 import { createGate } from './allowlist.js'
-// Accounts, sessions and saved worlds. Mounted with one line in fetch below.
-import { routeAccount } from './account/routes.js'
-export { Visitor } from './world/visitor.js'
 
 const { SYSTEM_PROMPT, CHUNKS, WITHHELD_TERMS, COMP_PATTERNS, GATE_LINE } = PROMPT
 
@@ -476,8 +473,6 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url)
     if (url.pathname === '/api/agent') return handleAgent(request, env)
-    const account = await routeAccount(request, env)
-    if (account) return account
     /* Everything else is the static site. `run_worker_first` in wrangler.toml
      * keeps this handler off the hot path for assets. */
     if (env.ASSETS) return env.ASSETS.fetch(request)
