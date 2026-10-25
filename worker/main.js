@@ -19,14 +19,19 @@
  */
 import legacy, { handleAgent } from './index.js'
 import { handleEvan } from './agent/route.js'
+// Sessions, passkeys, nicknames and saved worlds (worker/account, worker/world).
+import { routeAccount } from './account/routes.js'
 
 export { VisitorMemory } from './agent/visitorMemory.js'
+export { Visitor } from './world/visitor.js'
 
 export default {
   async fetch(request, env, ctx) {
     const { pathname } = new URL(request.url)
     if (pathname === '/api/evan') return handleEvan(request, env)
     if (pathname === '/api/agent') return handleAgent(request, env)
+    const account = await routeAccount(request, env)
+    if (account) return account
     return legacy.fetch(request, env, ctx)
   },
 }

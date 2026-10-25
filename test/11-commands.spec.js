@@ -63,7 +63,8 @@ test.describe('the command line', () => {
 
     // And /help is not the only place that filters -- the dispatcher uses the
     // same predicate, so the two can never disagree.
-    expect(await visibleCommands(page)).toEqual(['help', 'op', 'kill'])
+    // /nick is open to everyone (src/profileScreen.js): it only renames you.
+    expect(await visibleCommands(page)).toEqual(['help', 'op', 'kill', 'nick'])
   })
 
   test('/kill is open to everyone and kills only the caller', async ({ page }) => {

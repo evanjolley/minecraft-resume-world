@@ -23,6 +23,7 @@ import { MemoryStore } from './memory.js'
 import { memoryClient } from './visitorMemory.js'
 import { callChat } from './upstream.js'
 import { mockUpstream } from './mock.js'
+import { getVisitor } from '../account/session.js'
 
 const IS_STUB = PROMPT.IS_STUB === true
 const gate = createGate(PROMPT)
@@ -58,7 +59,17 @@ export async function handleEvan(request, env = {}, deps = {}) {
   let body
   try { body = await request.json() } catch { return json({ error: 'bad json' }, 400) }
 
-  const visitorId = String(body?.visitorId ?? '')
+  /*
+   * The signed session wins. When the Worker has SESSION_SECRET, the visitor
+   * id comes from the HMAC-signed cookie or bearer token (ACCOUNTS,
+   * worker/account/session.js), and whatever id the body claims is ignored,
+   * so nobody can talk to another visitor's memory by sending their id. The
+   * body's id is only used on a deploy with no session secret, where there
+   * is nothing better to go on. Account and guest ids share the same memory
+   * key, so signing in keeps the conversation.
+   */
+  const session = await getVisitor(request, env)
+  const visitorId = session?.id ?? String(body?.visitorId ?? '')
   if (!VISITOR_ID.test(visitorId)) return json({ error: 'bad visitorId' }, 400)
 
   /* Build the one new message, and refuse anything else. A `messages` array,

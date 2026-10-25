@@ -76,9 +76,12 @@ binding in `wrangler.toml`, not a re-platform.
 Everything below exists and has been exercised. Nothing has been deployed, no
 Cloudflare account has been touched, and no DNS record has been created.
 
-- `wrangler.toml` — the Worker, pointed at `dist/`, with the Durable Object
-  binding multiplayer will need written out and commented so the claim above
-  about "a binding, not a re-platform" can be checked rather than believed.
+- `wrangler.toml` — the Worker, pointed at `dist/`, with the `VISITOR`
+  Durable Object (one per signed-in visitor, SQLite) that holds passkeys,
+  nicknames and saved worlds. Multiplayer is cancelled, so the room object the
+  section above argues for was never built. The site uses two per-visitor
+  objects instead, `VisitorMemory` for AI Evan and `Visitor` for accounts.
+  See "Accounts and saved worlds" under Going live.
 - `deploy/_headers` and `deploy/.assetsignore` — cache policy and an upload
   blocklist, copied into `dist/` by the deploy build.
 - `.github/workflows/deploy.yml` — a fast build-and-smoke job on every push to
@@ -398,6 +401,31 @@ thing that serves evanjolley.com, so it is Evan's to make, not an agent's.
 
 The alternative, if that trade is unattractive: leave the zone where it is and
 live on the `workers.dev` URL. Everything works; the address is just uglier.
+
+### Accounts and saved worlds
+
+Nothing to create by hand. The first deploy creates the `Visitor` Durable
+Object class from the `[[migrations]]` block in `wrangler.toml`. One secret
+turns sessions on:
+
+    openssl rand -base64 48 | npx wrangler@4 secret put SESSION_SECRET
+
+Without it the site still works. Every visitor is a local guest whose world is
+saved in their browser, and the sign-in button is hidden.
+
+Passkeys are bound to the domain they were made on, so sign-in should wait
+for the domain decision above. Until then set `LOGIN = "off"` under `[vars]`
+in `wrangler.toml`. Once the domain is final, set `PASSKEY_RP_ID` (for example
+`world.evanjolley.com`) and `PASSKEY_ORIGIN` (`https://world.evanjolley.com`)
+the same way. `docs/decisions.md` has the reasoning and the cost math.
+
+To try it locally, with no account and no resources created:
+
+    npm run prompt:ci && mkdir -p dist
+    npx wrangler@4 dev --port 8787 \
+      --var SESSION_SECRET:local-dev-secret-at-least-32-characters \
+      --var PASSKEY_RP_ID:localhost --var PASSKEY_ORIGIN:http://localhost:5173
+    WORLD_API_PROXY=http://localhost:8787 VITE_WORLD_API=1 npm run dev
 
 ### Turning on automatic deploys
 

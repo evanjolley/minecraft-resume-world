@@ -53,11 +53,12 @@ directory = "./dist"
 # the Worker instead of reaching the asset server's own handling.
 binding = "ASSETS"
 
-# The chat endpoint must reach the Worker rather than the asset server, which
-# would answer /api/agent with a 404 before any code runs. Scoped to the one
-# path: everything else still skips the Worker entirely, which is why serving
-# the site costs nothing.
-run_worker_first = ["/api/agent", "/api/evan"]
+# Every /api/ path must reach the Worker rather than the asset server, which
+# would answer it with a 404 before any code runs: AI Evan (/api/agent,
+# /api/evan) and the accounts and saved-world routes
+# (worker/account/routes.js). Everything else still skips the Worker
+# entirely, which is why serving the site costs nothing.
+run_worker_first = ["/api/*"]
 
 # not_found_handling is left at its default ("none": a real 404) rather than
 # "single-page-application". SPA handling would answer /textures/atlas9.png
@@ -93,7 +94,7 @@ simple = { limit = 15, period = 60 }
 # for the class and docs/decisions.md for why a DO and not D1 or KV.
 #
 # new_sqlite_classes, NOT new_classes: the storage backend is fixed at class
-# creation (the same warning the Room block below carries). The tag is the
+# creation (the same warning the Visitor block below carries). The tag is the
 # first migration this Worker has; if another branch adds a Durable Object
 # too, the two migrations must be ordered (v1, v2), not both called v1.
 [[durable_objects.bindings]]
@@ -110,30 +111,32 @@ new_sqlite_classes = ["VisitorMemory"]
 # ANTHROPIC_API_KEY always overrides it.
 
 # --------------------------------------------------------------------------
-# Multiplayer, later. Commented out because none of it exists yet.
+# Accounts and saved worlds: one Durable Object per signed-in visitor.
 #
-# This block IS the "adding multiplayer is not a re-platform" claim in
-# docs/DEPLOYMENT.md, written out so it can be checked rather than believed.
-# docs/FUTURE.md section 2 describes the room; section 1c describes the block
-# diff it also stores.
+# worker/world/visitor.js, logic in worker/world/store.js. Holds that
+# visitor's passkeys, nickname and saved world, keyed by the same visitor id
+# as VISITOR_MEMORY above. Guests never create one; their world lives in
+# IndexedDB. docs/decisions.md has the cost math against D1 and R2.
+# Multiplayer is cancelled (docs/SPRINT-1.md), so there is no room object.
 #
-#   main = "./worker/index.js"
-#
-#   [[durable_objects.bindings]]
-#   name = "ROOM"
-#   class_name = "Room"
-#
-#   # new_sqlite_classes, NOT new_classes. The storage backend is fixed at
-#   # class creation and cannot be changed afterwards, and the SQLite backend
-#   # is what the persisted block diff in FUTURE.md 1c needs. Getting this
-#   # wrong is a migration, not an edit.
-#   [[migrations]]
-#   tag = "v1"
-#   new_sqlite_classes = ["Room"]
-#
-#   # And inside [assets] above, so the WebSocket upgrade reaches the Worker
-#   # instead of being answered by the asset server:
-#   #   run_worker_first = ["/ws"]
+# Secrets, set with `npx wrangler@4 secret put <NAME>`:
+#   SESSION_SECRET   32+ random characters. Signs every session token. With it
+#                    unset the site still works: everyone is a local guest and
+#                    the sign-in button is hidden.
+# Optional vars, once the domain is final (passkeys are bound to it):
+#   PASSKEY_RP_ID    e.g. world.evanjolley.com   (defaults to the request host)
+#   PASSKEY_ORIGIN   e.g. https://world.evanjolley.com
+#   LOGIN            "off" hides sign-in while the domain is still moving
+[[durable_objects.bindings]]
+name = "VISITOR"
+class_name = "Visitor"
+
+# new_sqlite_classes, NOT new_classes. The storage backend is fixed at class
+# creation and cannot be changed afterwards. v2 because VisitorMemory is v1:
+# migrations apply in order and each tag is used once.
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Visitor"]
 # --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------

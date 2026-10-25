@@ -327,7 +327,7 @@ test('/world switches, and it is still operator-only', async ({ page }) => {
    * side.
    */
   await page.evaluate(() => window.game.authority.requestDeop())
-  expect(await visibleCommands(page)).toEqual(['help', 'op', 'kill'])
+  expect(await visibleCommands(page)).toEqual(['help', 'op', 'kill', 'nick'])
 
   await grantOp(page)
   const opped = await visibleCommands(page)

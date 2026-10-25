@@ -65,10 +65,12 @@ import { installDimensions, prepare as prepareDimension } from './dimensions.js'
 import { createRoster, GUEST_NAME } from './identity.js'
 import { installNPC } from './npc.js'
 import { installDebugScreen } from './debugScreen.js'
-import { installTabList } from './tabList.js'
-import { createEvanTools, stubBackend, evanBackend, LINES } from './aiEvan.js'
+import { createEvanTools, stubBackend, evanBackend, localVisitorId, LINES } from './aiEvan.js'
 import { createGuide, plotStops } from './tour.js'
 import { CHAPTERS, toLandWorld } from './builds/plots.js'
+import { createAccount } from './account.js'
+import { loadSave, installPersistence, savedStart } from './persistence.js'
+import { installProfile } from './profileScreen.js'
 
 /*
  * THE BOOT GATE -- still a gate, no longer a download.
@@ -115,7 +117,15 @@ import { CHAPTERS, toLandWorld } from './builds/plots.js'
  * generating the overworld makes moot; it is still open for the Nether.
  */
 const terrainT0 = performance.now()
-await prepareDimension('overworld')
+/*
+ * Who you are and what you left behind, fetched alongside the terrain.
+ * account.js and persistence.js have the full story: a guest never waits on
+ * the network here (the save is IndexedDB), and a signed-in visitor waits at
+ * most a couple of seconds for the server's copy of their world.
+ */
+const account = createAccount()
+const [, loadedSave] = await Promise.all([prepareDimension('overworld'), loadSave(account)])
+account.start()
 console.log(`terrain: ${JSON.stringify(terrainInfo())} in `
   + `${Math.round(performance.now() - terrainT0)}ms`)
 
@@ -154,7 +164,9 @@ const noa = new Engine({
   chunkAddDistance: [4, 3],
   chunkRemoveDistance: [6, 5],
 
-  playerStart: SPAWN,
+  // Where you were standing last time, or spawn. persistence.js moves you
+  // back to spawn before the first tick if the landscape changed since.
+  playerStart: savedStart(loadedSave, SPAWN),
 
   // Minecraft's exact player box. These also happen to be noa's defaults.
   // From physics.js rather than written out again: the collision box and
@@ -218,6 +230,16 @@ const terrainAnim = installTerrainAnimation(noa)
  */
 const blockLight = installBlockLight(noa, { ids })
 
+/*
+ * The saved block diff. Installed before the first chunk is requested so the
+ * overlay below is ready for it, and after installBlockLight so its wrap of
+ * world.setBlockID sits outside block light's (order does not matter for
+ * correctness: it records what actually landed).
+ */
+const persist = installPersistence(noa, {
+  ids, getVoxelID, currentDimension, loaded: loadedSave, account,
+})
+
 // noa asks for chunk contents whenever its loader decides it needs them and
 // expects setChunkData in response. Forget that call and the chunk simply
 // never appears, with no error.
@@ -229,6 +251,8 @@ noa.world.on('worldDataNeeded', (id, data, x, y, z) => {
       }
     }
   }
+  // The visitor's saved edits, over the generated chunk. See persistence.js.
+  persist.overlayChunk(data, x, y, z)
   noa.world.setChunkData(id, data)
 })
 
@@ -271,9 +295,10 @@ noa.camera.heading = Math.PI
  * You arrive as Guest. That is the visible half of docs/FUTURE.md 1b: a
  * visitor gets into the world without an account, under a name that is
  * obviously a placeholder, and the way they stop being a placeholder is by
- * telling the NPC their name. The login half of that section is still
- * unbuilt; this is the guest path, and the rename is the nickname path
- * arriving through a conversation instead of a text box.
+ * telling the NPC their name, typing /nick, or the Profile screen in the
+ * pause menu. Signing in (a passkey, optional) is src/account.js and
+ * src/profileScreen.js; it keeps this same entry and only changes where the
+ * name is also stored.
  *
  * It used to say `const PLAYER_NAME = 'Evan'`, which conflated the visitor
  * with the person whose resume this is -- a confusion that only became
@@ -744,20 +769,11 @@ const debug = installDebugScreen(noa, {
 })
 
 /*
- * Tab. Like F3 it is an OVERLAY and reads `inputLock` rather than taking it --
- * you can walk while the player list is up, which is the whole point of it
- * being drawn in the HUD pass.
- *
- * `skinOf` and `pingOf` are passed in rather than looked up inside tabList.js,
- * because both are facts about THIS world that the widget has no business
- * knowing. Today skinOf answers with the same two files installNPC and
- * createSkinMaterial already use, and pingOf is the honest zero of a game with
- * no transport -- see the note on it in tabList.js for what replaces it.
+ * No Tab player list. This world is single player (docs/SPRINT-1.md item 6),
+ * and vanilla hides the list in singleplayer too: PlayerTabOverlay is only
+ * shown when the connection is not a local server or more than one player is
+ * listed. tabList.js was removed with multiplayer presence.
  */
-const tabList = installTabList(noa, {
-  roster, inputLock,
-  skinOf: (entry) => (entry.id === EVAN_ID ? '/skins/evan.png' : '/skins/default.png'),
-})
 
 const menu = installMenu(noa, { inputLock, inventory, inventoryScreen })
 
@@ -928,7 +944,14 @@ const guide = createGuide({
  * memory -- which is how it is exercised under `wrangler dev` before Evan
  * flips the default. See worker/README.md.
  */
-const BRAINS = { stub: () => stubBackend, evan: () => evanBackend() }
+/*
+ * The visitor id AI Evan's memory is keyed by: the signed session's id when
+ * the Worker has issued one (account.js), else aiEvan.js's local id. The
+ * Worker prefers the session cookie over this value anyway (route.js asks
+ * getVisitor first), so this is only what an unsigned deploy falls back to.
+ */
+const visitorId = () => account.state.visitor ?? localVisitorId()
+const BRAINS = { stub: () => stubBackend, evan: () => evanBackend({ visitorId }) }
 let brain = (BRAINS[new URLSearchParams(location.search).get('brain')] ?? BRAINS.stub)()
 /** Switch brains at runtime, from the console or a spec: game.useBrain('evan'). */
 const useBrain = (name) => { brain = (BRAINS[name] ?? BRAINS.stub)() }
@@ -1011,11 +1034,32 @@ const aiEvan = installNPC(noa, {
 chat.announceJoin(roster.displayNameOf(EVAN_ID))
 chat.announceJoin(roster.displayNameOf(LOCAL_ID))
 
+/*
+ * Your saved inventory, time, game mode and place in the world, if there is
+ * a save. After every system it touches exists. See persistence.js.
+ */
+const { restored } = persist.attach({
+  inventory, sky, authority, dimensions, teleport: movePlayer, spawn: SPAWN,
+  playerEntity: () => noa.playerEntity, camera: noa.camera,
+})
+
+/*
+ * Name, sign-in and /nick. The profile entry sits in the pause menu, above
+ * Save and Quit; nothing about identity stands between a visitor and play.
+ */
+const profile = installProfile({
+  roster, localId: LOCAL_ID, account, persist, chat,
+  menuButtons: document.getElementById('pause-buttons'),
+})
+
 // Starter kit. Minecraft survival starts you empty-handed, but this world is
-// meant to be poked at within seconds of arriving, so seed the hotbar.
-inventory.add(ids.planks, 64)
-inventory.add(ids.cobblestone, 64)
-inventory.add(ids.dirt, 32)
+// meant to be poked at within seconds of arriving, so seed the hotbar. Only
+// on a first visit: a returning visitor gets back exactly what they had.
+if (!restored) {
+  inventory.add(ids.planks, 64)
+  inventory.add(ids.cobblestone, 64)
+  inventory.add(ids.dirt, 32)
+}
 
 /*
  * Pointer lock. There is no entry screen -- you spawn straight into the live
@@ -1176,7 +1220,9 @@ window.game = {
    * the numbers BEFORE they are formatted, which is how a spec asserts that
    * the position is live rather than that a div exists.
    */
-  debug, tabList,
+  debug,
+  /* Identity and the saved world, for the console and test/61-62. */
+  account, persist, profile,
   authority, gamemode, commands, interaction, flight: movement.flight,
   /*
    * Status effects, for the console and for the test suite. The specs measure

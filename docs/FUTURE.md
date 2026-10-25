@@ -586,8 +586,8 @@ the moment Millard North went up. What follows is the list as it now stands.
    led around this world feels good before paying per token to find out.
 8. **Video screens.** The richest way to deliver the content, independent of
    everything else, and gated on recording the clips rather than on code.
-9. **Multiplayer presence**, then **skin customization**, then the long
-   tail.
+9. ~~**Multiplayer presence**~~ (cancelled 2026-10-25, see 2b), then
+   **skin customization**, then the long tail.
 
 The ordering rule has not changed: anything that makes the world worth
 visiting beats anything that makes it more elaborate. Engine polish has been
@@ -602,7 +602,10 @@ did not exist; the rule had been stated and never had a place to point at.
 
 ---
 
-## 1. Video screens with proximity audio
+## ~~1. Video screens with proximity audio~~
+
+**CANCELLED by Evan, 2026-10-25** (`docs/SPRINT-1.md` item 6). Kept below as
+a record of the design, not as work to do.
 
 Play recorded clips on block faces — a wall of black wool becomes a screen —
 with volume rising as you approach.
@@ -646,7 +649,21 @@ additional screen. The real cost is recording and editing the clips.
 
 ## 1b. Identity: login, guests and nicknames
 
-**PARTLY BUILT.** The guest half of this section landed with AI Evan below.
+**BUILT, sprint 1 (2026-10-25).** Every visitor is a guest instantly. A
+nickname comes from AI Evan, `/nick`, or the Profile screen in the pause menu,
+and is checked by `src/nickname.js` in the browser and again on the Worker
+(shape, impersonation of Evan or staff, slurs). Signing in is optional and is
+a passkey that upgrades the guest in place, keeping the same visitor id, so
+the world and AI Evan's memory follow the person to any device. Sessions are
+HMAC-signed tokens (`worker/account/session.js`, `getVisitor(request, env)`).
+The choice of passkeys over email or OAuth, and the domain caveat, are in
+`docs/decisions.md`. Still open from the sketch below: the fast path straight
+to the resume, and the `/login` versus `/op` split, which matters less now
+that there are no other players to op.
+
+The history of this section, for context:
+
+**PARTLY BUILT (before sprint 1).** The guest half of this section landed with AI Evan below.
 What exists today:
 
 - `src/identity.js` is a **roster**, not a name. Entries are `{ id, name,
@@ -705,6 +722,18 @@ one, decided before it ships rather than after.
 ---
 
 ## 1c. Persistence: a world that stays changed
+
+**BUILT, sprint 1 (2026-10-25), as PER-VISITOR worlds.** Single player made
+the sandbox debate below moot: every visitor has their own world, so there is
+no shared surface to moderate and no area to fence. `src/persistence.js` keeps
+a block diff (by block key, with the generator's original block per edit, so
+edits survive a landscape change wherever the ground did not move), plus
+inventory, position, game mode and time of day. Local first in IndexedDB for
+everyone; signed-in visitors also sync to their own Durable Object with SQLite
+(`worker/world/`). Storage choice and cost math are in `docs/decisions.md`.
+Not yet saved: furnace contents, sign text and painting art.
+
+The original design notes follow.
 
 Break a block, leave, come back, it is still broken. Technically small, and the
 codebase is already shaped for it — but it forces a product decision first.
@@ -999,7 +1028,12 @@ talk about is a demo of an agent.
 
 ---
 
-## 2b. Multiplayer presence
+## ~~2b. Multiplayer presence~~
+
+**CANCELLED by Evan, 2026-10-25** (`docs/SPRINT-1.md` item 6). Single player
+only: every visitor gets their own world and their own private conversation
+with AI Evan. The Tab player list was removed with it (vanilla hides it in
+singleplayer too). Kept below as a record, not as work to do.
 
 Concurrent visitors seeing each other walk around.
 
@@ -1041,7 +1075,15 @@ everyone teleport ten times a second.
 
 ---
 
-## 3. Chat moderation, when chat becomes multiplayer
+## 3. Chat moderation
+
+**ADJUSTED for single player (2026-10-25).** Chat will never carry another
+visitor's words, so player to player moderation is no longer needed. What is
+left is narrower. The only text that leaves a visitor's browser goes to AI
+Evan, whose Worker already caps length, turns and rate (`worker/index.js`
+CAPS), and the nickname an account stores, which the Worker filters
+(`src/nickname.js`). The kill switch for AI Evan is the remaining item worth
+building. The original multiplayer framing follows.
 
 Chat itself is built, and so are commands. What is NOT built, and must be
 before chat carries anyone else's words, is moderation.
@@ -1061,6 +1103,14 @@ the Minecraft feel and the useful half, and leaves the abuse surface closed.
 ---
 
 ## 3b. OP authority, and where the server takes over
+
+**MOSTLY MOOT in single player (2026-10-25).** The passphrase in the bundle
+was intolerable only because a griefer with creative could damage a world
+other visitors see. Each visitor now has a private world, so an operator can
+only redecorate their own, and the server never validates block changes. The
+one thing the server does guard is an account's saved world, and that is keyed
+by the signed session, not by operator status. Nothing below needs building
+unless worlds become shared again.
 
 `src/authority.js` is the only module that grants or denies anything. It is
 written on the assumption that the client is untrusted, even though today it is
