@@ -216,6 +216,13 @@ export const EMISSION = {
   torch: 14,
   redstone_torch: 7,
   magma_block: 3,
+  /* Vanilla's other full-brightness blocks. They were in blocks.js with
+   * their glowing textures and emitted nothing, so a froglight read as lit
+   * and lit nothing round it; chapter 4's subway globes are froglights. */
+  shroomlight: 15,
+  ochre_froglight: 15,
+  verdant_froglight: 15,
+  pearlescent_froglight: 15,
 }
 
 /** Vanilla's cap. One nibble, and the reason decay is 1/15 per block. */
