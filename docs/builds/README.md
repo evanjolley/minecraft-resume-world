@@ -346,6 +346,16 @@ stage markers so tall that nobody walking past could read them.
 things. Stage 1 has three: a cellar under a missing floorboard, three emerald
 blocks buried under a doghouse, and a 2011 dirt shack on the garage roof.
 
+**No trivia signs.** From the owner: "i dont really care to have physical
+signs that have such trivial information. That is the type of stuff that
+should be stored in AI Evan memory." A build carries only what the real place
+would: a building's name, a hall's letter, way-finding, and the chapter marker
+`chapters.js` draws. Dates, titles, numbers and stories go into AI Evan's
+corpus as chunks in `corpus/extra/` with a `Source:` line and a `Chapter:` line
+(`ch1`..`ch6`), so `chapter_notes` finds them at the plot (format in
+`scripts/build-prompt.mjs`, `extraFiles()`). Let the architecture and the
+objects tell the story; AI Evan supplies the caption.
+
 **Nothing factual is invented.** The licence a build takes is in how a fact is
 drawn, never in what the fact is.
 

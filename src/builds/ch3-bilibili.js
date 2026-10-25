@@ -61,9 +61,8 @@
  * warning). So on the TV's face and on the studio's back wall, `u` counted
  * from the viewer's left is plain +z, and nothing is reversed. The chart is
  * read facing -z, where +x is on the viewer's LEFT, so time runs toward -x.
- * Every word is a sign (src/signText.js), which derives its own facing.
+ * The only words here are the chapter marker chapters.js draws; see signs().
  */
-import { setSignText } from '../signText.js'
 import { BAMBOO } from './biomes.js'
 
 export const SIZE = { w: 70, d: 64 }
@@ -377,7 +376,6 @@ function chart(s) {
   s.hollow([TODAY - 2, 29, AXIS_Z - 2], [TODAY + 2, 29, AXIS_Z + 2], { walls: 'white_concrete' })
   s.clear([TODAY + 2, 28, AXIS_Z], [TODAY + 2, 29, AXIS_Z + 1])
   s.set(TODAY, 28, AXIS_Z, P.lamp)
-  s.set(TODAY, 29, AXIS_Z, P.pink)                   // a plinth for the sign
 
   // Light along the walk.
   for (let x = DAY0; x >= 6; x -= 6) { s.pillar(x, AXIS_Z + 4, 0, 2, P.post); s.set(x, 3, AXIS_Z + 4, P.lamp) }
@@ -418,39 +416,16 @@ function bamboo(s) {
 /* ====================================================================== */
 
 function signs(s) {
-  const sign = (x, y, z, dir, lines) => {
-    s.set(x, y, z, `oak_wall_sign_${dir}`)
-    setSignText(...s.toWorld(x, y, z), lines)
-  }
-  /* On the TV's face either side of the mouth, facing the forecourt. A
-   * sign facing WEST faces +x in this engine (FACINGS in
-   * src/blockMeshes.js), which is toward the path. */
-  const fx = TV.x1 + 1
-  sign(fx, 2, MOUTH[0] - 2, 'west', ['Bilibili', 'Content Creator', 'March 2025 -', 'present'])
-  sign(fx, 2, MOUTH[1] + 2, 'west', ['Educational', 'videos about', 'American', 'culture'])
-  sign(fx, 2, MOUTH[0] - 4, 'west', ['Bilibili:', "China's", 'cultural equiv.', 'of YouTube'])
-  sign(fx, 2, MOUTH[1] + 4, 'west', ['280k followers'])
+  /* NO SIGNS ON THIS PLOT, and that is the owner's rule rather than an
+   * omission: "i dont really care to have physical signs that have such
+   * trivial information. That is the type of stuff that should be stored
+   * in AI Evan memory." The dates, the follower numbers and the video
+   * topics are in AI Evan's corpus under chapter ch3; the plot keeps the
+   * objects that carry them -- the set, the thirteen lights, the chart. */
 
-  // In the studio, on the set wall's ends, facing the camera (+x).
-  const sx = TV.x0 + 5
-  sign(sx, 2, 15, 'west', ['Midwest life'])
-  sign(sx, 2, 31, 'west', ['Army stories,', 'motorcycle', 'clubs'])
-  sign(sx, 2, 33, 'west', ['Small town', 'kid to Harvard'])
-  sign(TV.x0 + 2, 1, 30, 'west', ['0 to 10,000', 'followers in', '13 days.', 'Count them.'])
-
-  // The back door of the TV, out to the chart, with its sign.
+  // The back door of the TV, out to the chart.
   s.clear([52, 0, TV.z1], [53, 2, TV.z1])
   s.clear([52, 0, TV.z1 - 1], [53, 2, TV.z1 - 1])
-
-  // On the chart, facing the visitor who walks it facing north.
-  const z = AXIS_Z + 1
-  sign(DAY0 + 1, 1, z, 'south', ['Day 0', 'March 2025', 'Up: 10k a block', 'Along: 2 days'])
-  sign(dayX(13), 0, z, 'south', ['Day 13', '10,000', 'followers'])
-  sign(dayX(72), 1, AXIS_Z + 2, 'south', ['Day 72', '100,000', 'followers'])
-  sign(12, 1, AXIS_Z + 2, 'south', ['Now', '280k followers', 'Climb it.'])
-  sign(12, 29, AXIS_Z + 1, 'south', ['280k', 'followers'])
-  s.pillar(DAY0 - 3, AXIS_Z - 2, 0, 1, P.post)
-  sign(DAY0 - 3, 1, AXIS_Z - 1, 'south', ['Pink: the', 'numbers the', 'resume gives.', 'White: the walk'])
 
   // The roof egg: a play button, laid flat between the antennae.
   const { x1, z0, top } = TV
