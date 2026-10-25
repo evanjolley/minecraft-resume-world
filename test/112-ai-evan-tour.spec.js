@@ -184,6 +184,20 @@ async function sendEvanHome(page) {
 }
 
 async function meetEvan(page, name) {
+  /*
+   * A STRANGER, whatever ran before. Evan's `talking` flag lives as long as
+   * the page, and resetWorld cannot clear it: spawn is inside his
+   * LEAVE_RADIUS, so any earlier spec that stood at spawn (01, 11) left him
+   * mid-conversation, and walking up to him then produced no greeting to
+   * wait for. Reset him the way sendEvanHome does, then walk up.
+   */
+  await page.evaluate(() => {
+    const g = window.game
+    g.aiEvan._setTalking(false)
+    g.aiEvan.relocate(g.EVAN_DROP)
+    g.roster.setName(g.LOCAL_ID, 'Guest')
+    g.roster.forget()
+  })
   await teleport(page, ...NEAR_EVAN)
   await settleOnGround(page)
   await page.waitForFunction(() => window.game.aiEvan.session && document.querySelector('#chat-lines')
