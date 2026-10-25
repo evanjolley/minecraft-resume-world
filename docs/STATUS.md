@@ -14,6 +14,7 @@ The brief is `docs/SPRINT-1.md`.
 
 ### Still open
 - **Landscape agent.** Rolling vanilla terrain and trees, a 288 x 400 overworld, all six plots wired in. It runs on branch `worktree-agent-a298b2e3da88326df`. If that session is gone, merge the branch as is, or resume from its worktree at `.claude/worktrees/agent-a298b2e3da88326df`
+- **Merge the landscape branch with `git merge --squash`, not a plain merge.** It merged main before the floor-number history rewrite, so a plain merge would bring the old commit message saying the Patronus floor back into public history. After the squash, check that `git grep -i 14th` finds nothing
 - After landscape merges, run the larger test set, take wide shots of every chapter from the path, and push
 
 ### Evan's items
