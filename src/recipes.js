@@ -356,14 +356,22 @@ TAGS.wool = [
 ].map(c => `${c}_wool`)
 
 /** One furnace recipe. `from` is an item key or a "#tag", same as a grid cell. */
-const smelt = (result, from) => ({ result, from })
+const smelt = (result, from, also = null) => ({ result, from, also })
+/*
+ * Which other furnaces take a recipe, vanilla's recipe types: `blasting` (the
+ * blast furnace) is ores, raw metal and the iron and gold gear that melts to
+ * nuggets; `smoking` (the smoker) is food. Every recipe works in a plain
+ * furnace. A blast furnace cannot make glass, and a smoker cannot smelt iron.
+ */
+const blast = (result, from) => smelt(result, from, 'blast_furnace')
+const smoke = (result, from) => smelt(result, from, 'smoker')
 
 /**
  * Every ore that yields its metal, including the deepslate and nether
  * variants. Written as a generator because the five-line block per ore is
  * where a copy-paste puts gold ingots in the copper row.
  */
-const oreSmelts = (product, ores) => ores.map(ore => smelt(product, ore))
+const oreSmelts = (product, ores) => ores.map(ore => blast(product, ore))
 
 export const SMELTING = [
   /* ---- ores and the raw metals ---- */
@@ -376,7 +384,7 @@ export const SMELTING = [
   ...oreSmelts('lapis_lazuli', ['lapis_ore', 'deepslate_lapis_ore']),
   ...oreSmelts('redstone', ['redstone_ore', 'deepslate_redstone_ore']),
   ...oreSmelts('quartz', ['nether_quartz_ore']),
-  smelt('netherite_scrap', 'ancient_debris'),
+  blast('netherite_scrap', 'ancient_debris'),
 
   /*
    * Iron and gold gear back to nuggets. Vanilla's one deliberately lossy
@@ -384,11 +392,17 @@ export const SMELTING = [
    * a furnace is worth anything to a player with a chest of junk armor.
    */
   ...['pickaxe', 'axe', 'shovel', 'hoe', 'sword'].flatMap(t => [
-    smelt('iron_nugget', `iron_${t}`), smelt('gold_nugget', `golden_${t}`),
+    blast('iron_nugget', `iron_${t}`), blast('gold_nugget', `golden_${t}`),
   ]),
   ...ARMOR_SLOTS.flatMap(s => [
-    smelt('iron_nugget', `iron_${s}`), smelt('gold_nugget', `golden_${s}`),
+    blast('iron_nugget', `iron_${s}`), blast('gold_nugget', `golden_${s}`),
   ]),
+
+  /* ---- food, which the passive mobs drop (src/mobs.js) ---- */
+  smoke('cooked_beef', 'beef'),
+  smoke('cooked_porkchop', 'porkchop'),
+  smoke('cooked_mutton', 'mutton'),
+  smoke('cooked_chicken', 'chicken'),
 
   /* ---- glass, and the sands that make it ---- */
   smelt('glass', 'sand'),

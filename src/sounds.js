@@ -543,6 +543,20 @@ const MIX = {
   drink: { set: 'drink', shared: true, volume: 0.5, pitch: 0.95, vary: 0.05 },
   potionThrow: { set: 'potionThrow', shared: true, volume: 0.5, pitch: 0.4167, vary: 0.2 },
   shatter: { set: 'shatter', shared: true, volume: 1.0, pitch: 0.95, vary: 0.05 },
+
+  /* ------------------------------------------------------------------ *
+   * The passive mobs (src/mobs.js). Mob.getSoundVolume is 1 except the
+   * cow's 0.4, and getVoicePitch is (rand - rand) * 0.2 + 1 for an adult.
+   * ------------------------------------------------------------------ */
+  cowSay: { set: 'cowSay', shared: true, volume: 0.4, pitch: 1.0, vary: 0.2 },
+  cowHurt: { set: 'cowHurt', shared: true, volume: 0.4, pitch: 1.0, vary: 0.2 },
+  pigSay: { set: 'pigSay', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
+  pigDeath: { set: 'pigDeath', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
+  sheepSay: { set: 'sheepSay', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
+  chickenSay: { set: 'chickenSay', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
+  chickenHurt: { set: 'chickenHurt', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
+  // ChickenEntity's egg: volume 1, pitch (rand - rand) * 0.2 + 1.
+  chickenPlop: { set: 'chickenPlop', shared: true, volume: 1.0, pitch: 1.0, vary: 0.2 },
 }
 
 // Minecraft's LivingEntity.getFallDamageSound: more than 4 half-hearts of fall
@@ -610,6 +624,9 @@ function noiseBuffer(ctx, seconds = 2) {
   return buf
 }
 
+/* How long after boot the samples download if nobody has clicked yet. */
+const FETCH_AFTER_MS = 4000
+
 export function installSounds(noa, deps = {}) {
   const { interaction, movement, survival, fluids } = deps
 
@@ -630,7 +647,20 @@ export function installSounds(noa, deps = {}) {
    * fetching the samples on the click itself would put a few hundred KB of
    * network between the click and the first sound.
    */
-  const loading = fetch('/sounds/manifest.json')
+  /*
+   * NOT AT BOOT. Every sample used to be fetched the moment this ran, 53
+   * requests and about half a megabyte racing the bundle, the textures and
+   * the chunk meshing for a page that cannot play a note before the first
+   * click anyway (the gesture gate below). The fetch now starts on that first
+   * gesture, or a few seconds after boot if none comes, whichever is first.
+   * Decoding waited on the gesture already; this only moves the download out
+   * of the window where the world is being built.
+   */
+  let startFetch
+  const fetchGate = new Promise((resolve) => { startFetch = resolve })
+  setTimeout(() => startFetch(), FETCH_AFTER_MS)
+
+  const loading = fetchGate.then(() => fetch('/sounds/manifest.json'))
     .then(r => (r.ok ? r.json() : null))
     .then(async (m) => {
       if (!m) return
@@ -789,6 +819,7 @@ export function installSounds(noa, deps = {}) {
    * tabs can suspend it again later.
    */
   const unlock = () => {
+    startFetch()
     if (!ctx && !buildGraph()) return
     if (ctx.state !== 'running') ctx.resume().catch(() => {})
     decodeAll()

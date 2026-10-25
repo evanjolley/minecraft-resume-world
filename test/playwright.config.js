@@ -28,6 +28,15 @@ import { GL_FLAGS } from './helpers/launch.js'
  * Rejected: dropping the device spread entirely. It also supplies
  * `defaultBrowserType`, which is what actually selects the engine.
  */
+/*
+ * The port is overridable because several agents (or a human and an agent)
+ * may each run a worktree's suite at once. With a fixed 5173 and
+ * reuseExistingServer, the second suite silently tests the FIRST worktree's
+ * code. `WORLD_PORT=5191 npm run smoke` gives a run its own server.
+ */
+const PORT = Number(process.env.WORLD_PORT) || 5173
+const BASE = `http://localhost:${PORT}`
+
 const FIXED_SURFACE = {
   viewport: { width: 1280, height: 720 },
   deviceScaleFactor: 1,
@@ -57,7 +66,7 @@ export default defineConfig({
   outputDir: './screenshots/.playwright',
 
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: BASE,
     // The surface itself is per-project, since the device descriptors each
     // project spreads would otherwise win over anything set here.
     ...FIXED_SURFACE,
@@ -98,8 +107,8 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
+    command: PORT === 5173 ? 'npm run dev' : `npx vite --port ${PORT} --strictPort`,
+    url: BASE,
     // Reuse a dev server a human already has open, but never in CI, where a
     // stale server would silently test the wrong commit.
     reuseExistingServer: !process.env.CI,

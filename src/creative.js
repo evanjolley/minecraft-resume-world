@@ -186,6 +186,9 @@ const RULES = [
   [/^glass_bottle$/, 'ingredients',
     'Ingredients: the empty bottle is a brewing input, not a drink. It is what a '
     + 'drunk potion hands back'],
+  [/^(cooked_)?(beef|porkchop|mutton|chicken)$/, 'food_and_drinks',
+    'the meats the passive mobs drop, raw and cooked, are Food & Drinks'],
+  [/^egg$/, 'ingredients', 'vanilla files the egg under Ingredients'],
   [/^(stick|coal|charcoal|flint|clay_ball|leather|string|feather|gunpowder|paper|book|wheat|slime_bal)/,
     'ingredients', 'Ingredients holds every crafting material that is not a block'],
   [/^(iron|gold|copper|netherite)_(ingot|nugget|scrap)$|^raw_(iron|gold|copper)$/, 'ingredients',

@@ -394,7 +394,32 @@ const BLOCK_ITEMS = BLOCK_TYPES
  * is not a block in Minecraft either. The `places: 0` default in the assembly
  * below is all it needs, which is the same route a stick and a pickaxe take.
  */
-const NON_BLOCK = [...MATERIALS, ...UNPLACEABLE, ...TOOLS, ...ARMOR, ...GEAR, ...POTION_ITEMS]
+/*
+ * FOOD, which arrived with the passive mobs (src/mobs.js) that drop it, and
+ * src/food.js, which eats it.
+ *
+ * `food` is vanilla 1.21's FoodProperties: nutrition (half drumsticks) and the
+ * saturation it adds, which since 1.20.5 is stored as the final number rather
+ * than as a modifier. Raw chicken's 30% chance of Hunger is vanilla's too.
+ *
+ * APPENDED, LAST, because item ids are ITEM_BASE + index (see the note on
+ * bamboo above): anything inserted earlier renumbers every item after it.
+ */
+const FOOD = [
+  { key: 'beef', name: 'Raw Beef', food: { nutrition: 3, saturation: 1.8 } },
+  { key: 'cooked_beef', name: 'Steak', food: { nutrition: 8, saturation: 12.8 } },
+  { key: 'porkchop', name: 'Raw Porkchop', food: { nutrition: 3, saturation: 1.8 } },
+  { key: 'cooked_porkchop', name: 'Cooked Porkchop', food: { nutrition: 8, saturation: 12.8 } },
+  { key: 'mutton', name: 'Raw Mutton', food: { nutrition: 2, saturation: 1.2 } },
+  { key: 'cooked_mutton', name: 'Cooked Mutton', food: { nutrition: 6, saturation: 9.6 } },
+  { key: 'chicken', name: 'Raw Chicken',
+    food: { nutrition: 2, saturation: 1.2, effect: { key: 'hunger', seconds: 30, chance: 0.3 } } },
+  { key: 'cooked_chicken', name: 'Cooked Chicken', food: { nutrition: 6, saturation: 7.2 } },
+  // Not food: an egg is thrown in vanilla. It stacks to 16.
+  { key: 'egg', name: 'Egg', stack: 16 },
+]
+
+const NON_BLOCK = [...MATERIALS, ...UNPLACEABLE, ...TOOLS, ...ARMOR, ...GEAR, ...POTION_ITEMS, ...FOOD]
   .map((def, i) => ({
     id: ITEM_BASE + i,
     places: 0,
@@ -446,6 +471,8 @@ export const itemName = (id) =>
   ITEM_BY_ID.get(id)?.name ?? BLOCK_BY_ID.get(id)?.name ?? String(id)
 
 export const stackMax = (id) => ITEM_BY_ID.get(id)?.stack ?? DEFAULT_STACK
+/** { nutrition, saturation, effect? } for an edible item, else null. */
+export const foodOf = (id) => ITEM_BY_ID.get(id)?.food ?? null
 
 /** Tool data, or null. `tool` is the shape, `tier` the material. */
 function toolOf(id) {

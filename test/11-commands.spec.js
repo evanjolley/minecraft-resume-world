@@ -206,11 +206,17 @@ test.describe('operator commands, opped', () => {
      *
      * The ground at (6, -6) is grass at y=138, so 160 is a 22-block drop.
      */
+    /*
+     * A bare integer x or z is the CENTER of the block, as vanilla's
+     * Vec3Argument has it, and the message prints the landing point with
+     * Java's %f.
+     */
     const out = await chatCommand(page, '/tp 6 160 -6')
-    expect(systemIn(out)).toEqual([`Teleported ${await playerName(page)} to 6, 160, -6`])
+    expect(systemIn(out)).toEqual(
+      [`Teleported ${await playerName(page)} to 6.500000, 160.000000, -5.500000`])
     const [x, y, z] = await position(page)
-    expect(x).toBeCloseTo(6, 1)
-    expect(z).toBeCloseTo(-6, 1)
+    expect(x).toBeCloseTo(6.5, 1)
+    expect(z).toBeCloseTo(-5.5, 1)
     // y drifts immediately -- you start falling the moment you arrive.
     expect(y).toBeLessThanOrEqual(160)
     expect(y).toBeGreaterThan(SURFACE_Y - 1)
@@ -257,7 +263,7 @@ test.describe('operator commands, opped', () => {
   test('/gamerule doDaylightCycle false actually stops the clock',
     async ({ page }) => {
       const out = await chatCommand(page, '/gamerule doDaylightCycle false')
-      expect(systemIn(out)).toEqual(['Game rule doDaylightCycle is now set to: false'])
+      expect(systemIn(out)).toEqual(['Gamerule doDaylightCycle is now set to: false'])
 
       const t0 = await page.evaluate(() => window.game.sky.getTime())
       await waitTicks(page, 30)   // a full second of world time
@@ -327,7 +333,7 @@ test.describe('operator commands, opped', () => {
   test('/gamerule with no value queries it instead of setting it',
     async ({ page }) => {
       const out = await chatCommand(page, '/gamerule naturalRegeneration')
-      expect(systemIn(out)).toEqual(['Game rule naturalRegeneration is currently set to: true'])
+      expect(systemIn(out)).toEqual(['Gamerule naturalRegeneration is currently set to: true'])
 
       const bad = await chatCommand(page, '/gamerule doTileDrops')
       expect(errorsIn(bad)).toEqual(['Unknown game rule: doTileDrops'])

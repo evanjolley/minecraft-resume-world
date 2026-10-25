@@ -229,7 +229,8 @@ export function installWeather(noa, { sky, authority, sounds = null } = {}) {
     if (what === 'clear') setParameters(duration ?? sample(RAIN_DELAY), 0, false, false)
     else if (what === 'rain') setParameters(0, duration ?? sample(RAIN_DURATION), true, false)
     else setParameters(0, duration ?? sample(THUNDER_DURATION), true, true)
-    return { ok: true, message: `Set the weather to ${what}` }
+    // en_us.json's commands.weather.set.thunder is "rain & thunder".
+    return { ok: true, message: `Set the weather to ${what === 'thunder' ? 'rain & thunder' : what}` }
   }
 
   return {

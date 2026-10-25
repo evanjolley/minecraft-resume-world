@@ -36,10 +36,11 @@ import { installSky, LIGHT_VECTOR } from './sky.js'
 import { installUnderwater } from './underwater.js'
 import { installTerrainAnimation } from './terrainAnimation.js'
 import { installBlockLight } from './blockLight.js'
+import { installChunkBudget } from './chunkBudget.js'
 import { createArmorReduction } from './armor.js'
 import { createEffects } from './effects.js'
 import { installEffectSwirl } from './effectSwirl.js'
-import { itemName, itemId, dropFor, rollDrops, unmappedDrops } from './items.js'
+import { itemName, itemId, dropFor, rollDrops, unmappedDrops, stackMax } from './items.js'
 import { itemModelStats } from './itemModel.js'
 import { installSounds } from './sounds.js'
 import { installParticles } from './particles.js'
@@ -56,6 +57,8 @@ import { installPotions } from './potions.js'
  */
 import * as potionData from './potions.js'
 import { installFurnaceDrops } from './furnace.js'
+import { installMobs } from './mobs.js'
+import { installFood } from './food.js'
 import { installHighlightStyle } from './highlight.js'
 import { createAuthority, OP_PASSPHRASE } from './authority.js'
 import { entitiesInBox } from './entityBox.js'
@@ -203,8 +206,11 @@ const noa = new Engine({
  * about fifteen of them, so the warning is a false positive -- and a
  * misleading one, because it names whichever system happened to be the
  * eleventh rather than anything actually wrong.
+ *
+ * 64, because 'tick' passed 32 listeners (the warning named paintingArt.js
+ * as the 33rd) and every boot printed it.
  */
-noa.setMaxListeners?.(32)
+noa.setMaxListeners?.(64)
 
 const ids = registerBlocks(noa)
 
@@ -255,6 +261,9 @@ noa.world.on('worldDataNeeded', (id, data, x, y, z) => {
   persist.overlayChunk(data, x, y, z)
   noa.world.setChunkData(id, data)
 })
+
+// noa meshes one chunk per tick whatever its budget says; see chunkBudget.js.
+const chunkBudget = installChunkBudget(noa)
 
 /*
  * The player is drawn by perspective.js as a real Minecraft model wearing a
@@ -530,8 +539,25 @@ const authority = createAuthority({
     blockIsSolid: (id) => noa.registry.getBlockSolidity(id),
     getTime: () => sky.getTime(),
     setTime: (t) => sky.setTime(t),
+    getDayTime: () => sky.dayTime,
+    getGameTime: () => sky.gameTime,
     teleport: movePlayer,
-    give: (id, count) => inventory.add(id, count),
+    /*
+     * What does not fit is dropped at your feet, as vanilla's GiveCommand
+     * does, rather than refused. `drops` is declared further down; give only
+     * ever runs from a command, long after it exists.
+     */
+    give: (id, count) => {
+      const left = inventory.add(id, count)
+      if (left > 0) {
+        const p = noa.ents.getPositionData(noa.playerEntity).position
+        for (let n = left, max = stackMax(id); n > 0; n -= max) {
+          drops.spawn(id, Math.min(n, max), [p[0], p[1] + 0.5, p[2]], [0, 0, 0], 0)
+        }
+      }
+      return 0
+    },
+    stackMax: (id) => stackMax(id),
     blockName: (id) => itemName(id),
     kill: () => survival.kill(),
     /*
@@ -546,6 +572,13 @@ const authority = createAuthority({
     playerEntity: () => noa.playerEntity,
   },
 })
+
+/*
+ * What the crosshair is on when it is a mob rather than a block. Filled in
+ * once src/mobs.js is installed further down; interact.js asks it so a click
+ * on a cow hits the cow instead of mining the grass behind it.
+ */
+const entityAim = { targeted: () => null }
 
 const interaction = installInteraction(noa, inventory,
   // useBlock is a thunk because inventoryScreen is declared further down; it
@@ -576,6 +609,7 @@ const interaction = installInteraction(noa, inventory,
    */
   {
     crack, held, swing, inputLock, effects,
+    entityTargeted: () => entityAim.targeted() !== null,
     useBlock: (id, pos) => inventoryScreen.useBlock(id, pos)
       || (authority.caps().mayBuild && signScreen.open(...pos)),
   },
@@ -698,6 +732,15 @@ const potions = installPotions(noa, {
   swirl: effectSwirl,
 })
 installFurnaceDrops(inventory.furnaces, authority, drops.popResource)
+
+/*
+ * Passive mobs: cows, pigs, sheep and chickens (src/mobs.js), and eating the
+ * food they drop (src/food.js). After `drops`, which their loot lands in, and
+ * after `sky`, whose tick sets the entity light the hurt flash tints.
+ */
+const mobs = installMobs(noa, { ids, inventory, authority, sounds, drops, survival })
+entityAim.targeted = mobs.targeted
+const food = installFood(noa, { inventory, survival, inputLock, authority, effects, sounds })
 
 /*
  * A torch falls off a wall you mine, and lands as a torch.
@@ -845,9 +888,11 @@ interaction.onBlockPlace(({ position }) => signScreen.open(...position))
 
 // The whole command set is one call. /tp <plot> for the resume plots goes in
 // commands.js once the plots exist.
-// `playerName` is gone from this call: commands.js never read it, and the
-// roster is now the answer to that question anyway.
-const commands = installCommands(chat, authority, { noa })
+// `playerName` is back, as a getter on the roster: /tp and /give accept your
+// own name as a target, the way vanilla does.
+const commands = installCommands(chat, authority, {
+  noa, playerName: () => roster.displayNameOf(LOCAL_ID), mobs,
+})
 
 /* ------------------------------------------------------------------ *
  * AI Evan
@@ -1155,7 +1200,7 @@ window.game = {
   // `fluids` is exposed for the same reason `move` is: the test suite asserts
   // measured swim speeds and breath durations, and both need to know which
   // fluid the player is actually registering as in.
-  fluids,
+  fluids, chunkBudget, mobs, food,
   inventory, survival, move, sky, menu, chat, inputLock, perspective,
   skinMaterial, sounds, particles, drops, weather, underwater,
   /*

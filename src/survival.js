@@ -204,6 +204,17 @@ export function createSurvival(noa, {
     changed()
   }
 
+  /*
+   * FoodData.eat, 1.21: nutrition onto the bar (capped at 20), and the item's
+   * saturation onto saturation, capped at the new food level. src/food.js is
+   * the caller.
+   */
+  state.eat = (nutrition, saturation) => {
+    state.food = Math.min(MAX_FOOD, state.food + nutrition)
+    state.saturation = Math.min(state.food, state.saturation + saturation)
+    changed()
+  }
+
   state.reset = () => {
     state.health = MAX_HEALTH
     state.food = MAX_FOOD

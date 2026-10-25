@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { RECIPES, SMELTING, TAGS } from '../src/recipes.js'
 import { ITEMS, item, itemId, dropFor } from '../src/items.js'
+import { MOB_ITEMS } from '../src/mobLoot.js'
 
 /*
  * "A RECIPE WHOSE INGREDIENT CAN NEVER EXIST IS WORSE THAN NO RECIPE."
@@ -78,6 +79,9 @@ function minableWithoutCrafting() {
       }
     }
   }
+  // And what the passive mobs drop (src/mobLoot.js): killing a cow is as
+  // much a way to get leather as breaking a block is a way to get its drop.
+  for (const key of MOB_ITEMS) have.add(key)
   return have
 }
 
@@ -125,10 +129,8 @@ function closure(base) {
 const CANNOT_EXIST = [
   'amethyst_shard', // no amethyst cluster block to break
   'bow',            // needs string
-  'feather',        // a chicken drop, and there are no mobs
   'gunpowder',      // a creeper drop, and there are no mobs
   'hay_block',      // needs wheat; a closed pair, see above
-  'leather',        // a cow drop, and there are no mobs
   'paper',          // needs sugar_cane
   'slime_ball',     // a slime drop, and there are no mobs
   'slime_block',    // needs slime_ball; a closed pair, see above

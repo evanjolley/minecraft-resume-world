@@ -121,7 +121,7 @@ test.describe('weather', () => {
     await grantOp(page)
     const out = await chatCommand(page, '/weather thunder 1d')
     expect(out.map(l => l.text).join(' | '),
-      'a duration in days was not accepted').toContain('Set the weather to thunder')
+      'a duration in days was not accepted').toContain('Set the weather to rain & thunder')
   })
 
   test('doWeatherCycle false freezes the weather clock', async ({ page }) => {
