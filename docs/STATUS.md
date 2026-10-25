@@ -9,13 +9,14 @@ The brief is `docs/SPRINT-1.md`.
 - **AI Evan.** Per-visitor memory in one SQLite Durable Object per visitor, plus the `npm run interview` tool and an A* guided tour to each chapter. Design in `docs/ai-evan/04-memory.md`
 - **Accounts.** Instant guests, nicknames, optional passkey sign-in, saved worlds, Forget me, and single player only (the tab list is removed)
 - **Fidelity.** Boot is 4.5x faster (15.2 s to 3.4 s), vanilla sky and day/night, vanilla commands, and passive mobs. Pigs are silent until a licensed pig sound is found (see FUTURE.md)
+- **Landscape.** Rolling vanilla terrain and trees, a 288 x 400 overworld, all six chapters stamped, ch1 unchanged. Plot table in `src/builds/plots.js`
 - **Builds.** ch2 Harvard Science Center, ch3 Bilibili TV, ch4 the Cable Building at 611 Broadway, ch5 One Post Street, ch6 The climb (75 jumps, all tested)
 - **Rule.** No trivia signs. Facts live in AI Evan's gitignored corpus (`corpus/extra/`)
 
 ### Still open
-- **Landscape agent.** Rolling vanilla terrain and trees, a 288 x 400 overworld, all six plots wired in. It runs on branch `worktree-agent-a298b2e3da88326df`. If that session is gone, merge the branch as is, or resume from its worktree at `.claude/worktrees/agent-a298b2e3da88326df`
-- **Merge the landscape branch with `git merge --squash`, not a plain merge.** It merged main before the floor-number history rewrite, so a plain merge would bring the old commit message saying the Patronus floor back into public history. After the squash, check that `git grep -i 14th` finds nothing
-- After landscape merges, run the larger test set, take wide shots of every chapter from the path, and push
+- **Frame rate.** The bigger forested world drops spawn fps from about 25 to 18 under software rendering. Check on a real GPU before thinning plants (`PLANT_REACH` in `src/builds/flora.js`). Spec 68's 20 fps budget fails on a loaded machine
+- **Review pass.** Look at every chapter from the path (screenshots in `~/.agent-library/minecraft-resume-world/2026-10-25-sprint-1/landscape/`) and give Evan wide shots. Builder B's ch4 and ch5 screenshots were too close up to judge
+- Run the full suite once on a quiet machine
 
 ### Evan's items
 - Run `npm run interview` with `ANTHROPIC_API_KEY` set. The corpus only exists on this Mac, in `corpus/extra/`
@@ -33,4 +34,4 @@ The brief is `docs/SPRINT-1.md`.
 - `public/terrain` (the mountains and Nether assets) is not in the repo, so those worlds and 7 specs fail on a fresh clone
 - Spec 12's fingerprint test fails on the free sound set, same as before the sprint
 
-Next session start. "Read docs/STATUS.md, merge the landscape branch if it is done, then run the test set and show me every chapter from the path"
+Next session start. "Read docs/STATUS.md and CLAUDE.md in ~/Personal/minecraft-resume-world. Sprint 1 is merged. Show me wide shots of every chapter from the path, then let us go through the open items"
