@@ -25,6 +25,10 @@
  * Grass and flowers may come right up to the path's edge -- that is where a
  * verge has them -- but never onto it, never inside the spawn clearing, and
  * never inside a plot, which the voxel writer refuses anyway.
+ *
+ * AND OFF THE SIGHT LINES. Where SIGHT_LINES in plots.js opens a view from
+ * the walk to a chapter, no canopy reaches a line (`dView`, from land.js).
+ * Ground cover still grows there.
  */
 import { hash, rng, perlin } from './noise.js'
 import { BIOME, BAMBOO } from './biomes.js'
@@ -166,6 +170,7 @@ export function plantAll(V, model, KIND) {
     if (model.dWalk[i] < reach + 3) return false
     if (model.dPlot[i] < reach + 2) return false
     if (model.dWater[i] < 2) return false
+    if (model.dView[i] < reach + 1) return false
     if (nearSpawn(x, z, SPAWN_CLEAR + 6)) return false
     return true
   }

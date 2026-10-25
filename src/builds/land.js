@@ -70,7 +70,7 @@
  * regenerated from source on every load and must be the same world.
  */
 import { hash, smoothNoise, fbm, ridged, smoothstep } from './noise.js'
-import { GROUND_Y, LAND_W, LAND_D, CHAPTERS, LAND_SPAWN_X, LAND_SPAWN_Z } from './plots.js'
+import { GROUND_Y, LAND_W, LAND_D, CHAPTERS, LAND_SPAWN_X, LAND_SPAWN_Z, SIGHT_LINES } from './plots.js'
 import { SPINE, sampleSpine } from './spine.js'
 import { carveWater, WATER_Y, SHORE_H, toRect } from './river.js'
 import {
@@ -151,6 +151,9 @@ function newModel(W, D) {
     /** Distance to the nearest plot (0 inside one) and to water. */
     dPlot: new Float32Array(n),
     dWater: new Float32Array(n),
+    /** Distance to the nearest sight line from the walk to a chapter (see
+     *  SIGHT_LINES in plots.js); trees keep their canopies off them. */
+    dView: new Float32Array(n),
     /** Something already grows or stands here. */
     standing: new Uint8Array(n),
     /** The top block's key, per column, decided by the surface pass. */
@@ -482,6 +485,8 @@ export function generateLand({ surfaceY = GROUND_Y, ceilingY = GROUND_Y + 64 } =
   model.near = walkField.near
   finalHeights(model)
   model.dWater = chamfer(W, D, (i) => model.kind[i] === KIND.WATER || model.kind[i] === KIND.BRIDGE).d
+  const view = sightLines(model, samples, spurs)
+  model.dView = chamfer(W, D, (i) => view[i] === 1).d
   lap('walk')
 
   /* 6 and 7. Surface, and the write. */
@@ -575,6 +580,48 @@ export function generateLand({ surfaceY = GROUND_Y, ceilingY = GROUND_Y + 64 } =
     samples: samples.length, palette: palette.length,
   })
   return { world, model, samples, spurs }
+}
+
+/*
+ * THE SIGHT LINES, as a mask of columns, from SIGHT_LINES in plots.js.
+ *
+ * For each listed chapter: every second block of the walk on the way in,
+ * from `approach` blocks out (straight-line distance to the plot) to the
+ * point where its spur leaves, sees every block round the middle `frame`
+ * share of the plot's footprint. Each of those lines is stepped a block at a
+ * time and its columns marked. Flora then keeps a tree's canopy off every
+ * marked column, so what stands between the walk and the build's middle is
+ * open and its corners stay framed. Pure arithmetic on the survey and the
+ * spine, so it is the same clearing on every boot.
+ */
+function sightLines(model, samples, spurs) {
+  const { W, D } = model
+  const mask = new Uint8Array(W * D)
+  for (const { id, approach, frame } of SIGHT_LINES) {
+    const spur = spurs.find((s) => s.chapter.id === id)
+    if (!spur) throw new Error(`SIGHT_LINES names ${JSON.stringify(id)}, which is not a chapter`)
+    const c = spur.chapter
+    /* The middle `frame` of the footprint, and every block round its edge. */
+    const cx = (c.x0 + c.x1 + 1) / 2, cz = (c.z0 + c.z1 + 1) / 2
+    const hw = (c.x1 - c.x0 + 1) * frame / 2, hd = (c.z1 - c.z0 + 1) * frame / 2
+    const targets = []
+    for (let t = -hw; t <= hw; t++) targets.push([cx + t, cz - hd], [cx + t, cz + hd])
+    for (let t = -hd; t <= hd; t++) targets.push([cx - hw, cz + t], [cx + hw, cz + t])
+    /* The walk in, sampled every two blocks (samples are a quarter apart). */
+    for (let i = spur.from; i >= 0; i -= 8) {
+      const s = samples[i]
+      if (toRect(s.x, s.z, c) > approach) break
+      for (const [tx, tz] of targets) {
+        const len = Math.hypot(tx - s.x, tz - s.z)
+        for (let k = 0; k <= len; k++) {
+          const x = Math.round(s.x + (tx - s.x) * k / len)
+          const z = Math.round(s.z + (tz - s.z) * k / len)
+          if (x >= 0 && x < W && z >= 0 && z < D) mask[z * W + x] = 1
+        }
+      }
+    }
+  }
+  return mask
 }
 
 /*

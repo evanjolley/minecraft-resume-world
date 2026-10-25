@@ -327,6 +327,29 @@ export const CHAPTERS = ROWS.map((r) => {
   return { ...r, x0, x1: x0 + w - 1, z1: r.z0 + d - 1 }
 })
 
+/*
+ * SIGHT LINES: where the trees stand aside so a chapter reads from its
+ * approach.
+ *
+ * Seen at eye level from the walk, the Science Center was mostly behind
+ * the wood and One Post Street's base behind conifers. For every chapter
+ * listed here, src/builds/land.js draws a line from each point of the walk
+ * on the way in (from `approach` blocks out to where the spur leaves) to
+ * every point round the middle `frame` share of the plot's footprint, and
+ * src/builds/flora.js keeps every tree's canopy off those lines. The
+ * corners of the plot stay framed by whatever grew there, the grass and
+ * flowers still grow under the lines (it is a meadow, not a lawn), and the
+ * forest everywhere else is untouched. Same inputs, same clearing: no
+ * randomness goes into it.
+ *
+ * To open another chapter's view, add a row. To narrow a clearing, lower
+ * `frame` or `approach`.
+ */
+export const SIGHT_LINES = [
+  { id: 'ch2', approach: 80, frame: 0.5 },
+  { id: 'ch5', approach: 80, frame: 0.5 },
+]
+
 /** Every overworld allocation by id. Separate from ALL above, because the two
  *  surveys are two coordinate systems and a single map would let a typo in
  *  one world resolve to a plot in the other. */
