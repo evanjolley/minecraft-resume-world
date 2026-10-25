@@ -652,3 +652,26 @@ export async function forgetVisitor({ visitorId = () => localVisitorId(), url = 
   })
   return res.ok
 }
+
+/**
+ * Is Evan here for this visitor? Asked once at boot, so a visitor he left
+ * (see worker/agent/conduct.js) does not find him standing there until they
+ * speak. Answers 'present' on any failure: the server refuses every message
+ * from someone he left regardless, so a missed check costs one exchange, and
+ * a world where he silently vanishes because the network blinked would be
+ * the worse bug.
+ *
+ * @returns {Promise<'present'|'left'>}
+ */
+export async function evanPresence({ visitorId = () => localVisitorId(), url = '/api/evan', fetch: f = globalThis.fetch } = {}) {
+  try {
+    const res = await f(url, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ visitorId: visitorId(), status: true }),
+    })
+    if (!res.ok) return 'present'
+    return (await res.json())?.evan === 'left' ? 'left' : 'present'
+  } catch {
+    return 'present'
+  }
+}

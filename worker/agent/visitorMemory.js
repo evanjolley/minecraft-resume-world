@@ -28,7 +28,7 @@ import { consolidatePending } from './consolidate.js'
 import { summariserFor } from './upstream.js'
 import { mockSummariser } from './mock.js'
 
-const METHODS = new Set(['begin', 'commit', 'release', 'remember', 'forget', 'snapshot', 'render'])
+const METHODS = new Set(['begin', 'commit', 'release', 'remember', 'forget', 'snapshot', 'render', 'standing'])
 
 export class VisitorMemory {
   constructor(state, env) {
@@ -91,5 +91,6 @@ export function memoryClient(stub) {
     remember: call('remember'),
     forget: call('forget'),
     snapshot: call('snapshot'),
+    standing: call('standing'),
   }
 }

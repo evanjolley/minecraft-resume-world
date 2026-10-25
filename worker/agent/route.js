@@ -6,6 +6,7 @@
  *   { visitorId, message: "what they typed" }            a visitor turn
  *   { visitorId, toolResults: [tool_result, ...] }        the browser's tool results
  *   { visitorId, forget: true }                           "forget me", from UI
+ *   { visitorId, status: true }                           is Evan here for me
  *   + tools: ["walk_to_plot", ...]                        names the browser can run
  *
  * The reply is a /v1/messages-shaped object, exactly as /api/agent returns,
@@ -19,6 +20,7 @@ import * as PROMPT from '../prompt.generated.js'
 import { createGate } from '../allowlist.js'
 import { runTurn } from './turn.js'
 import { TOUR_RULES } from './tools.js'
+import { CONDUCT_RULES, STANDING } from './conduct.js'
 import { MemoryStore } from './memory.js'
 import { memoryClient } from './visitorMemory.js'
 import { callChat } from './upstream.js'
@@ -28,8 +30,9 @@ import { getVisitor } from '../account/session.js'
 const IS_STUB = PROMPT.IS_STUB === true
 const gate = createGate(PROMPT)
 
-/** The cached prefix: the built prompt, then the tour and memory rules. */
-export const STATIC_SYSTEM = `${PROMPT.SYSTEM_PROMPT}\n\n---\n\n${TOUR_RULES}`
+/** The cached prefix: the built prompt, then the tour and memory rules, then
+ *  when to flag a visitor (conduct.js). */
+export const STATIC_SYSTEM = `${PROMPT.SYSTEM_PROMPT}\n\n---\n\n${TOUR_RULES}\n\n---\n\n${CONDUCT_RULES}`
 
 /* Mirrors CAPS in worker/index.js. The turn and token caps live in memory.js
  * now, where they are counted against a record the client cannot edit. */
@@ -87,8 +90,8 @@ export async function handleEvan(request, env = {}, deps = {}) {
         .filter((r) => r && r.type === 'tool_result' && typeof r.tool_use_id === 'string')
         .map((r) => ({ type: 'tool_result', tool_use_id: r.tool_use_id, content: r.content, is_error: !!r.is_error })),
     }
-  } else if (body.forget !== true) {
-    return json({ error: 'need message, toolResults or forget' }, 400)
+  } else if (body.forget !== true && body.status !== true) {
+    return json({ error: 'need message, toolResults, forget or status' }, 400)
   }
 
   /* Rate limit before anything that costs, keyed on the visitor, not the IP. */
@@ -104,6 +107,26 @@ export async function handleEvan(request, env = {}, deps = {}) {
   if (body.forget === true) {
     await memory.forget()
     return json({ forgotten: true })
+  }
+
+  /*
+   * Signed in is a fact about THIS REQUEST, read off the HMAC-signed session
+   * and never off the body, so a visitor cannot claim to be a guest to get
+   * the guest's time-limited standing. On a deploy with no SESSION_SECRET
+   * there are no accounts and everyone is a guest, keyed by the id their
+   * browser minted; that is the weakest handle in the system, and the
+   * standing is only as sticky as it. Nothing stronger exists without sign-in.
+   */
+  const account = session?.account === true
+
+  /*
+   * "Is he here for me?" Asked once at boot so a visitor he left does not
+   * see him standing there until they say something. Read-only: it does not
+   * count as an attempt and does not move a guest's window.
+   */
+  if (body.status === true) {
+    const st = await memory.standing({ now: deps.now ?? Date.now(), account })
+    return json({ evan: st.state === STANDING.left ? STANDING.left : 'present' })
   }
 
   /* The mock is for local development only. A real key always wins, so a
@@ -129,6 +152,7 @@ export async function handleEvan(request, env = {}, deps = {}) {
     chunks: deps.chunks ?? PROMPT.CHUNKS ?? [],
     gate: deps.gate ?? gate,
     now: deps.now ?? Date.now(),
+    account,
   })
   return json(reply, status)
 }

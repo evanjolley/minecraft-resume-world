@@ -68,7 +68,7 @@ import { installDimensions, prepare as prepareDimension } from './dimensions.js'
 import { createRoster, GUEST_NAME } from './identity.js'
 import { installNPC } from './npc.js'
 import { installDebugScreen } from './debugScreen.js'
-import { createEvanTools, stubBackend, evanBackend, localVisitorId, LINES } from './aiEvan.js'
+import { createEvanTools, stubBackend, evanBackend, evanPresence, localVisitorId, LINES } from './aiEvan.js'
 import { createGuide, plotStops } from './tour.js'
 import { CHAPTERS, toLandWorld } from './builds/plots.js'
 import { createAccount } from './account.js'
@@ -997,9 +997,31 @@ const guide = createGuide({
  */
 const visitorId = () => account.state.visitor ?? localVisitorId()
 const BRAINS = { stub: () => stubBackend, evan: () => evanBackend({ visitorId }) }
-let brain = (BRAINS[new URLSearchParams(location.search).get('brain')] ?? BRAINS.stub)()
+const brainName = (name) => (BRAINS[name] ? name : 'stub')
+const BOOT_BRAIN = brainName(new URLSearchParams(location.search).get('brain'))
+let brain = BRAINS[BOOT_BRAIN]()
 /** Switch brains at runtime, from the console or a spec: game.useBrain('evan'). */
-const useBrain = (name) => { brain = (BRAINS[name] ?? BRAINS.stub)() }
+const useBrain = (name) => { brain = BRAINS[brainName(name)]() }
+
+/*
+ * EVAN LEAVES THE GAME. worker/agent/conduct.js has the rule: one friendly
+ * warning, and a visitor who keeps at it after it sees him go. The SERVER
+ * decides that and says so with `evan: 'left'` on a reply; this is only the
+ * part a server cannot do, which is the body and the chat line. Yellow and in
+ * vanilla's words because it is vanilla's event: announceLeave is the same
+ * call a real server's disconnect would make.
+ *
+ * Nothing in the browser brings him back. The server refuses the visitor for
+ * the rest of the session (a guest) or for good (signed in), so a reload or a
+ * hand-made request finds him gone too, and checkEvanPresence below keeps a
+ * reload from showing him standing there in the meantime.
+ */
+const evanLeaves = () => {
+  if (aiEvan.leave()) chat.announceLeave(roster.displayNameOf(EVAN_ID))
+}
+const checkEvanPresence = () => {
+  evanPresence({ visitorId }).then((p) => { if (p === 'left') evanLeaves() })
+}
 
 const aiEvan = installNPC(noa, {
   roster,
@@ -1042,7 +1064,11 @@ const aiEvan = installNPC(noa, {
      * the whole of "make AI Evan real". See agent.js for the request shape
      * and for why the API key cannot be on this side of that fetch.
      */
-    backend: (request) => brain(request),
+    backend: async (request) => {
+      const reply = await brain(request)
+      if (reply?.evan === 'left') evanLeaves()
+      return reply
+    },
     tools: createEvanTools({
       playerId: () => LOCAL_ID,
       setName: (id, name) => roster.setName(id, name),
@@ -1078,6 +1104,10 @@ const aiEvan = installNPC(noa, {
 // client and this is what you would see.
 chat.announceJoin(roster.displayNameOf(EVAN_ID))
 chat.announceJoin(roster.displayNameOf(LOCAL_ID))
+// Only the memory brain has a server to ask. The stub has no standing to lose.
+// Once, at boot: a runtime useBrain('evan') is a console and spec switch, and
+// the server refuses a visitor he left whichever way the page got there.
+if (BOOT_BRAIN === 'evan') checkEvanPresence()
 
 /*
  * Your saved inventory, time, game mode and place in the world, if there is
@@ -1312,7 +1342,7 @@ window.game = {
    */
   roster, aiEvan, LOCAL_ID, EVAN_ID,
   // The tour: the plot stops and the guide that leads to them (src/tour.js).
-  guide, TOUR_STOPS, useBrain,
+  guide, TOUR_STOPS, useBrain, evanLeaves,
   /*
    * A GETTER, and it has to be. This used to be a frozen `[x, y, z]` written
    * at boot; he has a physics body now, so the constant would go stale the
