@@ -168,251 +168,164 @@ export const SPAWN_PATCH_Z = 120
 
 /* ====================================================================== *
  *
- * THE SECOND SURVEY: the 256x256 overworld, and why it lives in this file.
+ * THE SECOND SURVEY: the overworld, 288 x 400, and why it lives in this file.
  *
  * Everything above describes `claude-opus-5-1` -- a 128x128 patch, eight
  * plots, a straight paved road -- and NONE of it changed when the overworld
  * grew. That world is the owner's archive and its coordinates are frozen.
  *
  * What follows is the survey of the world he is actually walking: a winding
- * path through a living landscape with six chapter plots on alternating
- * sides, laid out across 256 blocks instead of 128. Same file, because this
- * is what the file is FOR -- the one place you look to find out what you are
- * allowed to write to -- and because both surveys share GROUND_Y, `plot()`,
- * `toPatch` and the stamper that reads them. Two files would mean two answers
- * to "where am I allowed to build".
+ * path through rolling, vanilla-shaped country with six chapter plots on
+ * alternating sides. Same file, because this is what the file is FOR -- the
+ * one place you look to find out what you are allowed to write to -- and
+ * because both surveys share GROUND_Y, `toPatch` and the stamper.
  *
- * WHAT IS DIFFERENT, and there are only three things:
+ * WHAT IS DIFFERENT FROM THE ARCHIVE:
  *
- *   - Patch indices run 0..255, not 0..127.
- *   - The origin is 128/16, not 87/56, so world x = patch x - 128 and world
- *     z = patch z - 16. See WORLDS.overworld in src/island.js for why.
- *   - THE VISITOR WALKS SOUTH. In the archive, spawn was the south end and
- *     north (-z) was forward through time. Here spawn is the NORTH end,
- *     chapter 1 is a short walk in front of you, and z counts UP as the years
- *     do. The direction flipped because spawn has to be world (0, 0) and the
- *     walk has to start there.
+ *   - Patch indices run 0..287 on x and 0..399 on z. The world is NOT
+ *     square any more (see LAND_W / LAND_D for why).
+ *   - The origin is 144/16, so world x = patch x - 144 and world z = patch
+ *     z - 16. Spawn is world (0, 0), at the north end of the walk.
+ *   - THE VISITOR WALKS SOUTH, and z counts up as the years do.
  *
  * REJECTED -- one id namespace. The ids below are prefixed `ch` and the
  * archive's are not, so `plot('omaha')` still means the archive's Omaha and
- * `plot('ch1')` means this world's. A shared `omaha` would be a name whose
- * meaning depends on which world is being generated, which is the one kind of
- * ambiguity a coordinate table must not have.
+ * `landPlot('ch1')` means this world's.
  * ====================================================================== */
 
-/** The overworld's side, in blocks. WORLDS.overworld.size, copied for the
- *  same reason GROUND_Y is a copy: this module must stay import-free so
- *  island.js and node scripts can read it. Asserted in test/75-land.spec.js. */
-export const LAND_SIZE = 256
+/*
+ * THE WORLD'S SIZE, AND WHY IT IS 288 x 400 AND NOT A SQUARE.
+ *
+ * Sprint 1 grew chapters 2 to 6 to 74 x 76 each, the size the owner's own
+ * Harvard plot reached. Six plots that size, on alternating sides of one
+ * path, need two columns of plots and a corridor between them:
+ *
+ *   x:  22 margin | 74 plot | 96 corridor for the path | 74 plot | 22 margin
+ *
+ * which is 288. The 22-column margins are not waste: they are the hills
+ * behind each plot, so a build's back wall has country behind it rather
+ * than the barrier.
+ *
+ * In z the plots stagger, L R L / river / R L R, and the walk needs room
+ * between them for the forest, the river and the bridge. Measured from the
+ * table below: 16 rows from spawn to chapter 1, then the plots, then 20 rows
+ * of mountain foot past chapter 6. 400.
+ *
+ * REJECTED -- a 400 x 400 square. It is what island.js assumed until this
+ * pass, and it is 112 more columns of x that nobody walks to: 44,800 extra
+ * columns to generate, mesh and hold in memory every boot. A WORLDS row now
+ * says `sizeX` and `sizeZ` (see src/island.js), and a square world is the
+ * case where they are equal.
+ */
+export const LAND_W = 288
+export const LAND_D = 400
 /** Patch column of world x = 0, and patch row of world z = 0, for the
- *  overworld. WORLDS.overworld.originX / originZ, same caveat. */
-export const LAND_ORIGIN_X = 128
+ *  overworld. WORLDS.overworld.originX / originZ, copied rather than
+ *  imported for the reason GROUND_Y is a copy. */
+export const LAND_ORIGIN_X = 144
 export const LAND_ORIGIN_Z = 16
 
-/** Where the visitor lands and where the path starts, in patch indices.
- *  (128, 16) is world (0, 0) -- the origin, which every world spawns at. */
+/** Where the visitor lands and where the path starts, in patch indices. */
 export const LAND_SPAWN_X = LAND_ORIGIN_X
 export const LAND_SPAWN_Z = LAND_ORIGIN_Z
 
 /*
- * THE WHOLE MAP, as one allocation.
- *
- * The path, the river, the trees and the undergrowth are not a plot-shaped
- * thing -- a winding path legitimately wanders from x=96 to x=158 and from
- * one end of the world to the other, and boxing it would mean either a
- * bounding box so large it asserts nothing or a dozen little rectangles that
- * the path then has to be drawn to fit. So the landscape's allocation is the
- * entire 256 square.
- *
- * WHICH WOULD MAKE THE STAMPER'S BOUNDS CHECK MEANINGLESS, and that is the
- * problem this pass had to solve rather than shrug at. The check is what
- * stops one build writing into another's plot, and it is the only thing that
- * will protect the owner's six chapters from a landscape pass that decides
- * to plant a forest. So the stamper grew `forbid` (see src/builds/stamp.js):
- * the landscape's stamper is handed the six chapter footprints as NO-GO
- * rectangles and throws if a tree, a lamp or a spill of gravel lands in one.
- * The guard is inverted -- "everywhere except there" instead of "only here"
- * -- and it is exactly as loud.
+ * THE WHOLE MAP, as one allocation. The path, the river, the trees and the
+ * hills are not plot-shaped, so the landscape's allocation is the entire
+ * patch, and the six chapters are handed to it as NO-GO rectangles. See
+ * `forbid` in src/builds/stamp.js.
  */
 export const LAND = {
   id: 'land', label: 'The path and the landscape',
-  x0: 0, x1: LAND_SIZE - 1, z0: 0, z1: LAND_SIZE - 1,
+  x0: 0, x1: LAND_W - 1, z0: 0, z1: LAND_D - 1,
 }
 
 /*
- * THE SIX CHAPTERS, north to south. There were seven until Harvard and the
- * school work became one chapter, which is what the owner asked for -- they
- * are the same years and the same subject, and two plots made a walk out of
- * one stage of a life.
+ * HOW BIG EACH CHAPTER IS, and it is the one table a builder may need to
+ * touch.
  *
- * 52 x 24 each -- a touch smaller than the archive's 56 x 28, which is what
- * the owner asked for -- and MUCH further apart. (TWO are exceptions now and
- * both say why in their own rows: ch1 is 66 x 63 and holds a high school,
- * ch2 is 74 x 76 and holds a nine-storey building, a plaza and a yard.) In the archive the plots
- * tiled: stage 3 began on the row stage 1 ended on, so the walk between two
- * chapters was zero blocks long and the world read as a street. Here the
- * nearest edges of two consecutive chapters are 8 or 9 blocks apart in z AND
- * on opposite sides of a path that swings 50 blocks east and west between
- * them. MEASURED, not estimated, and re-measured after the merge re-cut the
- * spine: the path is 412 blocks long, the walk from one spur mouth to the
- * next is 54 to 99 blocks of it, and each spur is another 23 to 34 blocks off
- * the path to the plot edge. (Before the merge: 434, 53 to 73, and 20 to 33 --
- * one fewer chapter over the same ground, so the gaps grew and the pacing
- * held.) In the archive the equivalent numbers were 28 and nothing. The walk
- * between chapters is the point.
+ * Every chapter's build file exports `SIZE = { w, d }`, and
+ * src/builds/chapters.js checks it against this table at boot: a build that
+ * is SMALLER than its row is fine (it is the north-west corner of its plot,
+ * like any build), and one that is LARGER throws, naming this table. The
+ * check lives there rather than here because this file has no imports, on
+ * purpose: island.js, node scripts and the specs all read it.
  *
- * `side` is which hand the plot falls on as you walk SOUTH, and the compass
- * here is not the one you expect: +x is WEST in this engine (Babylon is
- * left-handed, so facing +z puts +x on your right -- see HEADING in
- * test/helpers/world.js, measured in test/25-orientation.spec.js). So LEFT is
- * the low-x side, which is EAST, and RIGHT is high-x, which is west. In the
- * archive you walked north and the hands were the other way round. The words
- * follow the visitor, not the compass, which is why `side` is a label and
- * every coordinate below is an index.
+ * Chapter 1 is 66 x 63 and FROZEN: Millard North is standing on it and the
+ * sprint brief forbids changing a block of it. It may move; it may not grow.
  *
- * THE GAP AT z 142..171 IS THE RIVER, and it is the widest gap on the map by
- * 20 blocks. It falls between Bilibili and New York on purpose: the crossing
- * is the move to the city, and a bridge means more when what it separates is
- * two chapters rather than two fields.
- *
- * CHAPTER 6 CLAIMS THE AIR, which no other plot does. It is a parkour going
- * UP, so its allocation is the same 52 x 24 footprint and the full build
- * height above it -- local y 0..+60, the ceiling being GROUND_Y + 64. Nothing
- * enforces the vertical claim because nothing else builds up there; it is
- * written down so that whoever plants a tree near it knows what is coming.
- *
- * ------------------------------------------------------------------------
- * THE MERGE, and the one thing about it that did not come out as promised.
- *
- * Harvard (old ch2, RIGHT) and School work (old ch3, LEFT) are now one
- * chapter. The merged row keeps HARVARD'S rectangle and HARVARD'S side, and
- * old ch3's 52 x 24 at z 86..109 goes back to being landscape -- which is
- * where the birch forest between the two chapters now has room to be a
- * forest instead of a verge.
- *
- * WHY THE MERGED ROW TOOK THE NORTHERN RECTANGLE AND NOT THE SOUTHERN ONE:
- * chapter 1 is 63 rows deep and ends at z = 84. A merged chapter at z 86 is
- * one block south of the chapter before it, on the other side of a path that
- * has no room to swing between them. At z 54 it overlaps ch1 in z and sits
- * across the path from it, which is what every other pair on this walk does.
- *
- * THE SIDES ALTERNATE, L R L R L R, AND EVERYTHING AFTER THE MERGE MOVED TO
- * KEEP IT THAT WAY.
- *
- * Seven plots alternating L R L R L R L lose one from the middle, and the
- * two neighbours of the one that went are suddenly on the same hand. The
- * first attempt at this pass left them there and argued the walker would not
- * feel it. The walker felt it immediately: "the path between harvard and
- * bilibili is inefficient after you combined the plots, it goes to the left
- * to nothing then comes back to the right". The spine was still carrying the
- * swing it used to make for the school-work plot, and that plot no longer
- * exists -- fifty blocks of detour to a field. A bend whose reason has been
- * deleted is not a bend.
- *
- * The second attempt moved Bilibili across and stopped there, leaving New
- * York on the same hand as Bilibili and arguing the river between them was
- * reason enough. The owner disagreed, in as many words: "gotta flip the
- * later portion and have the island now on the right and the sf mountain on
- * the left, has to be done."
- *
- * So chapters 3, 4, 5 and 6 all changed hands. Four plots' rows, the spine
- * from the bridge south, the island's whole loop and the mountain, because
- * ALTERNATION IS THE LAYOUT. It is what makes the path have a reason to
- * bend, and a path with a reason to bend is the one thing src/builds/spine.js
- * is written to protect.
- *
- * WHAT IT COST, recorded because the next person to move a plot should know:
- * everything except New York was a row in this table. New York is an island
- * -- a loop cut off the river, a shoreline, a bank ring the entire height
- * field is solved against, and a bridge -- and all of it is derived from the
- * plot rectangle and `side` in src/builds/river.js. Moving the chapter moved
- * the island, and the only thing that had to be re-placed by hand was the
- * summit of the mountain, which chapter 6 landed on top of.
- * ------------------------------------------------------------------------
+ * SLOT is the largest a chapter may be without re-cutting the walk. Each row
+ * below is placed by its PATH-SIDE edge and its north edge, so a smaller
+ * plot keeps its entrance where the spur arrives and gives the difference
+ * back to the landscape on its far side.
  */
-export const CHAPTERS = [
-  /*
-   * CHAPTER 1 IS THE ONE PLOT THAT IS NOT 52 x 24, and it is 66 x 63.
-   *
-   * It holds Millard North High School, and a high school for 2,534 students
-   * does not fit in a 52 x 24 rectangle at any scale that still lets you walk
-   * down a corridor. The owner's brief said so in as many words -- "feel free
-   * to change the size of the plot if you need it to be bigger" -- so this
-   * row grew WEST (x0 28 -> 14) and SOUTH (z1 45 -> 84).
-   *
-   * WHY THOSE TWO DIRECTIONS AND NOT THE OTHER TWO. East is where the path
-   * is: the spine swings to x = 104 at z = 44 (src/builds/spine.js) and
-   * drawPath THROWS if the path touches a plot, so x1 did not move by a
-   * single block. North is spawn: the visitor lands at patch (128, 16) and
-   * the first fifteen blocks of the walk are not this chapter's to take. West
-   * is empty to the world edge and south is empty for sixty-three rows, so
-   * both were free.
-   *
-   * IT USED TO END ONE BLOCK SHORT OF ch3 at z = 85, deliberately, so that no
-   * column was in two plots at once and the landscape's `forbid` guard never
-   * had to answer for one. The merge took that neighbour away -- the ground
-   * from z 85 to z 117 on this side is landscape again -- but z1 stays at 84,
-   * because the school is built on it and nothing inside this plot moves.
-   */
-  { n: 1, id: 'ch1', label: 'Omaha, Nebraska',       marker: 'OMAHA',         side: 'LEFT',  x0: 14,  x1: 79,  z0: 22,  z1: 84 },
-  /* THE MERGED CHAPTER. The marker stays the one word because the font is
-   * A-Z and a space, 4 columns a character: "HARVARD AND SCHOOL WORK" is 79
-   * blocks, and while THIS row is now wide enough to take it, the plot was 52
-   * when the rule was written and the label is still where both halves are
-   * written down.
-   *
-   * ------------------------------------------------------------------------
-   * AND IT IS 74 x 76 NOW, NOT 52 x 24, which makes it the largest plot in
-   * either survey. The owner's brief for it: "this one is really big and many
-   * stories so you might have to make this plot bigger."
-   *
-   * WHAT IS STANDING ON IT. Harvard's Science Center -- Josep Lluis Sert,
-   * 1970-72 -- is NINE STOREYS plus an observatory, and at this world's
-   * elevation scale (5 blocks a storey; see the header of
-   * src/builds/ch2-science-center.js) that is a fifty-block tower. A tower
-   * needs ground in front of it or the visitor arrives with their nose on the
-   * plinth and never sees the stepped profile that is the whole point of the
-   * building. It also STRADDLES A PEDESTRIAN PASSAGE between Harvard Yard and
-   * the northern campus, so the plot has to hold three things in a row -- the
-   * plaza, the building, and the Yard on the far side of it -- rather than
-   * one object in a field.
-   *
-   * WHICH FOUR DIRECTIONS IT GREW IN, AND WHY IT COULD.
-   *
-   *   WEST (low x), 176 -> 168. The path is the limit on this side and it is
-   *     a hard one: drawPath THROWS if the path touches a plot. The spine's
-   *     eastern swing for this chapter peaks at x = 154 (z = 84) with a
-   *     half-width of at most 2.15 and a spill pass that widens it another
-   *     block or two, so the path's own easternmost column is about x = 158.
-   *     168 keeps ten blocks of grass between the plot line and the widest
-   *     the path can get, which is the same clearance the row had before.
-   *   EAST (high x), 227 -> 241. Open field to the patch edge at 255. Stopped
-   *     at 241 rather than taken to the edge: the last dozen columns of the
-   *     map are the barrier wall's business and a plot that ends ON the
-   *     horizon has nothing behind it.
-   *   NORTH: NOT AT ALL. z0 stays 54. The spur src/builds/path.js draws is
-   *     aimed at z0 + 6 and the arrival works; moving z0 would move the
-   *     entrance for no gain, since the growth this chapter needs is depth
-   *     BEHIND the plaza, not more approach.
-   *   SOUTH, 77 -> 129. Fifty-two rows, and they were free: ch3 is on the
-   *     other hand entirely (x 28..79) and ch4 does not begin until z = 172.
-   *
-   * WHERE IT STOPS, AND IT IS THE RIVER THAT SAYS SO. src/builds/river.js
-   * throws if the channel runs into a plot. Its course at this chapter's x
-   * range is centred near z = 155 with a half width around 5, so the water
-   * and its two-block shelf begin at about z = 148. z1 = 129 leaves nineteen
-   * rows of bank between the last Georgian house in the Yard and the water,
-   * which is walkable landscape rather than a plot line on a shore.
-   * ------------------------------------------------------------------------ */
-  { n: 2, id: 'ch2', label: 'Harvard, school work',  marker: 'HARVARD',       side: 'RIGHT', x0: 168, x1: 241, z0: 54,  z1: 129 },
-  /* FOUR ROWS THAT CHANGED HANDS when the merge cost the walk its
-   * alternation. Only the x pair moved on any of them; every z is where it
-   * has always been, so the pacing down the map is untouched. */
-  { n: 3, id: 'ch3', label: 'Bilibili',              marker: 'BILIBILI',      side: 'LEFT',  x0: 28,  x1: 79,  z0: 118, z1: 141 },
-  { n: 4, id: 'ch4', label: 'New York, No Logo',     marker: 'NEW YORK',      side: 'RIGHT', x0: 176, x1: 227, z0: 172, z1: 195 },
-  { n: 5, id: 'ch5', label: 'San Francisco, Patronus', marker: 'SAN FRANCISCO', side: 'LEFT',  x0: 28,  x1: 79,  z0: 204, z1: 227 },
-  { n: 6, id: 'ch6', label: 'The climb',             marker: 'THE CLIMB',     side: 'RIGHT', x0: 176, x1: 227, z0: 230, z1: 253 },
+export const SLOT = { w: 74, d: 76 }
+export const CHAPTER_SIZE = {
+  ch1: { w: 66, d: 63 },
+  ch2: { w: 74, d: 76 },
+  ch3: { w: 70, d: 64 },   // Bilibili's build says SIZE 70 x 64
+  ch4: { w: 74, d: 76 },
+  ch5: { w: 74, d: 76 },
+  ch6: { w: 74, d: 76 },
+}
+
+/** The two columns of plots. LEFT plots end at x = 95 (their path-side
+ *  edge; +x is west in this engine, so that is their east edge); RIGHT
+ *  plots start at 192. The 96 columns between are the path's corridor. */
+export const LEFT_EDGE_X = 95
+export const RIGHT_EDGE_X = 192
+
+/*
+ * THE SIX CHAPTERS, north to south, alternating sides of the path.
+ *
+ * `side` is which hand the plot falls on as you walk SOUTH. +x is WEST in
+ * this engine (Babylon is left-handed; see HEADING in test/helpers/world.js),
+ * so LEFT is the low-x side. Unchanged from the previous survey: every
+ * chapter is on the hand it was on before, so a build that faces the path
+ * still faces it.
+ *
+ * THE RESULT, so that nobody has to run the arithmetic to find their plot.
+ * test/75-land.spec.js asserts these numbers against the rows:
+ *
+ *   ch1  LEFT   x  30..95   z  32..94    66 x 63
+ *   ch2  RIGHT  x 192..265  z  64..139   74 x 76
+ *   ch3  LEFT   x  26..95   z 122..185   70 x 64
+ *   ch4  RIGHT  x 192..265  z 192..267   74 x 76   (an island in the river)
+ *   ch5  LEFT   x  22..95   z 238..313   74 x 76
+ *   ch6  RIGHT  x 192..265  z 304..379   74 x 76   (and the air above it)
+ *
+ * THE RIVER CROSSES BETWEEN CHAPTERS 3 AND 4. It runs diagonally, from the
+ * west edge near z = 218 (between ch3 and ch5) to the east edge near z = 160
+ * (between ch2 and New York's moat), so it separates the first three
+ * chapters from the last three on both sides of the path, and the path
+ * crosses it on a bridge. The crossing is the move to the city.
+ *
+ * NEW YORK IS AN ISLAND, kept from the previous survey: a moat ring cut off
+ * the river all the way round chapter 4, and its spur crosses on a second
+ * bridge. See src/builds/river.js.
+ *
+ * CHAPTER 6 CLAIMS THE AIR. It is a parkour going UP, so its allocation is
+ * the footprint and the full build height above it, local y 0..+63. Nothing
+ * enforces the vertical claim; the landscape keeps its trees back from it.
+ *
+ * Every z0 is chosen so that consecutive plots on one side have 27 to 40
+ * rows of country between them, and so that each plot's north corner, where
+ * its spur arrives, comes into view as the previous one falls behind.
+ */
+const ROWS = [
+  { n: 1, id: 'ch1', label: 'Omaha, Nebraska',         marker: 'OMAHA',         side: 'LEFT',  z0: 32 },
+  { n: 2, id: 'ch2', label: 'Harvard, school work',    marker: 'HARVARD',       side: 'RIGHT', z0: 64 },
+  { n: 3, id: 'ch3', label: 'Bilibili',                marker: 'BILIBILI',      side: 'LEFT',  z0: 122 },
+  { n: 4, id: 'ch4', label: 'New York, No Logo',       marker: 'NEW YORK',      side: 'RIGHT', z0: 192 },
+  { n: 5, id: 'ch5', label: 'San Francisco, Patronus', marker: 'SAN FRANCISCO', side: 'LEFT',  z0: 238 },
+  { n: 6, id: 'ch6', label: 'The climb',               marker: 'THE CLIMB',     side: 'RIGHT', z0: 304 },
 ]
+
+export const CHAPTERS = ROWS.map((r) => {
+  const { w, d } = CHAPTER_SIZE[r.id]
+  const x0 = r.side === 'LEFT' ? LEFT_EDGE_X - w + 1 : RIGHT_EDGE_X
+  return { ...r, x0, x1: x0 + w - 1, z1: r.z0 + d - 1 }
+})
 
 /** Every overworld allocation by id. Separate from ALL above, because the two
  *  surveys are two coordinate systems and a single map would let a typo in

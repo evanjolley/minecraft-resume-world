@@ -19,7 +19,7 @@
  * because there is nothing to come back for, it kinks hard at the river
  * because that is where the bank is low enough to cross.
  *
- * So the spine is twenty-three hand-placed control points, and a Catmull-Rom
+ * So the spine is thirty hand-placed control points, and a Catmull-Rom
  * spline through them. Each one is a decision somebody made, the curve radius
  * between them varies because the spacing and the turn angle vary, and the
  * only way to change the path is to move a place -- which is the right unit
@@ -32,25 +32,18 @@
  *     deliberately EARLY or LATE against the plot's midpoint (never on it) --
  *     seven swings all peaking exactly opposite their plot is a rule the eye
  *     finds even when the amplitudes differ.
- *   - The amplitudes differ on purpose: the west swings reach x = 104, 102
- *     and 106; the east swings reach 152, 150 and 154. No two bends are the
+ *   - The amplitudes differ on purpose: the west swings reach x = 120, 116
+ *     and 116; the east swings reach 170, 166 and 172. No two bends are the
  *     same size.
- *   - The spacing differs on purpose: 10 to 14 blocks. A constant spacing
+ *   - The spacing differs on purpose: 10 to 16 blocks. A constant spacing
  *     with varying amplitude is still a rhythm.
  *   - The first two points are STRAIGHT and level. You arrive facing down a
  *     path, not into a bend, and the spawn clearing has to stay flat for the
  *     test rigs (see SPAWN_FLAT in land.js).
- *   - `h` is the height in blocks above the grass, and it is the other half
- *     of "it rises and falls". It runs -1 to +1 and it changes on a different
- *     schedule from the bends, so the path does not conveniently crest on
- *     every corner.
- *
- *     IT RAN TO +2 AND THAT WAS TOO MUCH. A column is either at a height or
- *     it is not -- there are no half blocks -- so a two-block rise with a
- *     four-block feather is two visible terraces with a dirt cliff between
- *     them, and at eye level you are walking in a trench with a wall beside
- *     you. One block, feathered over six, is a rise you notice underfoot and
- *     do not see the edges of.
+ *   - The path's HEIGHT is no longer in this table. It used to be a third
+ *     column, -1 to +1, because the land was flat and the path had to supply
+ *     its own rise and fall. The land rolls now, and the path follows it:
+ *     see `walkProfile` in src/builds/path.js.
  * ------------------------------------------------------------------------
  * CATMULL-ROM, specifically, and not a Bezier or a linear run.
  *
@@ -61,69 +54,66 @@
  * polyline with visible corners, which is the one thing worse than a sine.
  */
 
-/** [patch x, patch z, height above the grass]. North (-z) is behind you; the
- *  visitor walks south, so this list is in walking order. */
+/*
+ * [patch x, patch z]. North (-z) is behind you; the visitor walks south, so
+ * this list is in walking order.
+ *
+ * RE-CUT FOR SPRINT 1's 288 x 400 SURVEY. The plots doubled in area and the
+ * corridor between the two columns of them is x 96..191, so every bend below
+ * is a new place. The rules that made the old spine read as a walk and not a
+ * wave still hold, and the numbers show them:
+ *
+ *   - each chapter gets a swing TOWARD its entrance (the north corner of its
+ *     path-side edge, z0 + 6), peaking a few rows LATE so the spur peels back
+ *     rather than branching straight off;
+ *   - the west swings reach x = 118, 116 and 116, the east ones 170, 168 and
+ *     172, and the spacing between points runs 10 to 16 rows;
+ *   - the path never comes nearer a plot than 20 columns, and never nearer
+ *     New York's moat than 8, so its widest spill is still grass.
+ *
+ * THE HEIGHT COLUMN IS GONE. The previous spine carried a hand-placed
+ * +/-1 per point because the land under it was flat. The land is not flat any
+ * more, and the path now takes its height FROM the land: see `walkProfile` in
+ * src/builds/path.js, which smooths the terrain along the walk and limits the
+ * grade, so the path rises over a hill and dips to a bridge on its own.
+ */
 export const SPINE = [
-  [128, 2, 0],    // off the top of the map, so the curve starts straight
-  [128, 16, 0],   // SPAWN. Flat and dead ahead.
-  [126, 28, 0],
-  [116, 36, 0],
-  [104, 44, 1],   // west, for Omaha (plot midpoint z=33) -- peaks LATE
-  [108, 56, 1],
-  [130, 64, 0],
-  [152, 72, -1],  // east, for Harvard (z=65) -- peaks late, and drops
-  [154, 84, 0],
-  /*
-   * RE-CUT WHEN HARVARD AND THE SCHOOL WORK MERGED, and it is the one part of
-   * this table that was changed by something other than a place.
-   *
-   * There used to be four points here making a swing west to x = 106, and
-   * they were making it for the school-work plot at z 86..109. That plot is
-   * gone -- it is the same chapter as Harvard now -- and the swing stayed,
-   * which is how the walk ended up going "to the left to nothing then back to
-   * the right", in the owner's words. A bend whose reason has been deleted is
-   * not a bend, it is a detour.
-   *
-   * Bilibili moved to the low-x side in the same pass (src/builds/plots.js),
-   * so the swing has a destination again, and it is one long approach rather
-   * than a wobble: 154 at Harvard down to 102 at Bilibili over sixty rows,
-   * with the two points between it placed to keep the curve's radius growing
-   * rather than constant.
-   */
-  [142, 94, 1],
-  [122, 102, 1],
-  [106, 114, 1],
-  [102, 126, 1],  // west, for Bilibili (plot midpoint z=129) -- peaks EARLY
-  [110, 138, 1],
-  [128, 148, 0],
-  [142, 156, 1],  // THE BRIDGE. Nearly straight across the water.
-  /*
-   * AND THE WHOLE SOUTHERN HALF IS RE-CUT, because chapters 4, 5 and 6 all
-   * changed hands (see the long note in src/builds/plots.js). Every bend
-   * below used to point the other way.
-   *
-   * THE ONE POINT THAT IS NOT ABOUT A CHAPTER is [150, 180]: it is as far
-   * east as the path may come at New York. The island's loop reaches x = 159
-   * at that row and the path has to stop clear of the water, so the spur --
-   * not the path -- is what crosses, over the bridge, which is the same
-   * arrangement the river crossing has and for the same reason.
-   */
-  [140, 166, 0],
-  [150, 180, 1],  // east, for New York (z=183) -- peaks EARLY, and stops
-                  // short of the moat; the spur and the bridge do the rest
-  [146, 192, 1],
-  [120, 202, 1],
-  [106, 212, 1],  // west, for San Francisco (z=215) -- peaks early
-  [108, 224, 1],
-  [132, 236, 1],
-  [154, 246, 0],  // east, for the climb (z=241) -- peaks late
-  [162, 255, 0],
+  [144, 0],     // off the top of the map, so the curve starts straight
+  [144, 16],    // SPAWN. Flat and dead ahead.
+  [143, 30],
+  [134, 42],
+  [120, 52],    // west, for Omaha (entrance z = 38) -- peaks late
+  [118, 64],
+  [130, 74],
+  [152, 82],
+  [170, 92],    // east, for Harvard (entrance z = 70) -- the long approach
+  [168, 106],
+  [150, 116],
+  [128, 126],
+  [116, 138],   // west, for Bilibili (entrance z = 128)
+  [118, 152],
+  [128, 166],
+  [140, 178],
+  [148, 188],   // THE BRIDGE. Nearly square across the water.
+  [158, 198],
+  [166, 210],   // east, for New York -- stops short of the moat
+  [162, 224],
+  [142, 236],
+  [120, 246],
+  [116, 258],   // west, for San Francisco (entrance z = 244)
+  [124, 272],
+  [146, 286],
+  [166, 298],
+  [172, 314],   // east, for the climb (entrance z = 310)
+  [168, 330],
+  [160, 346],   // and on, to the foot of the range
+  [154, 362],
 ]
 
 /**
  * Walk the spline and hand back a dense list of points along it.
  *
- * @returns [{ x, z, h, nx, nz }] where (nx, nz) is the unit NORMAL -- the
+ * @returns [{ x, z, nx, nz }] where (nx, nz) is the unit NORMAL -- the
  *          direction "sideways off the path", which is what the width, the
  *          ragged edge, the lamp posts and the spurs are all measured along.
  *
@@ -142,7 +132,7 @@ export function sampleSpine(points, step = 0.25) {
     const n = Math.max(2, Math.ceil(len / step))
     for (let k = 0; k < n; k++) {
       const t = k / n
-      const [x, z, h] = catmull(p0, p1, p2, p3, t)
+      const [x, z] = catmull(p0, p1, p2, p3, t)
       // The tangent by finite difference rather than by the derivative: it is
       // two more evaluations and it cannot disagree with the points the
       // raster actually uses, which a hand-differentiated basis can.
@@ -151,17 +141,17 @@ export function sampleSpine(points, step = 0.25) {
       const [bx, bz] = catmull(p0, p1, p2, p3, Math.min(1, t + e))
       const tx = bx - ax, tz = bz - az
       const m = Math.hypot(tx, tz) || 1
-      out.push({ x, z, h, nx: -tz / m, nz: tx / m })
+      out.push({ x, z, nx: -tz / m, nz: tx / m })
     }
   }
   return out
 }
 
-/** The standard uniform Catmull-Rom basis, run on all three components at
- *  once so the height curves as smoothly as the ground plan does. */
+/** The standard uniform Catmull-Rom basis, run on both components at
+ *  once. */
 function catmull(p0, p1, p2, p3, t) {
   const t2 = t * t, t3 = t2 * t
   const f = (a, b, c, d) => 0.5 * (
     (2 * b) + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3)
-  return [f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1]), f(p0[2], p1[2], p2[2], p3[2])]
+  return [f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1])]
 }

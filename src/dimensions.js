@@ -257,7 +257,7 @@
  */
 import {
   loadTerrain, generateTerrain, setDimension as setIslandDimension, isLoaded,
-  currentDimension, spawnFor, SURFACE_Y, PATCH_SIZE, WORLDS,
+  currentDimension, spawnFor, SURFACE_Y, WORLDS,
 } from './island.js'
 import { flatPatch, FLAT_PRESETS } from './flatworld.js'
 /* Named here rather than left to flatPatch's default, so that the ONE fact
@@ -268,12 +268,11 @@ import { flatPatch, FLAT_PRESETS } from './flatworld.js'
  * so the node-verifier argument that keeps this import out of island.js does
  * not apply here. */
 import { stampBuilds } from './builds/index.js'
-/* The overworld's own landscape, which is a DIFFERENT survey of a different
- * sized world -- see the second half of src/builds/plots.js. It is imported
- * here for the same reason stampBuilds is: `builds` is a field on the
- * dimension row, so the one fact that distinguishes two generated worlds is
- * visible in the table that defines them. */
-import { stampLand } from './builds/land.js'
+/* The overworld's own generator: the landscape and its six chapters, a
+ * DIFFERENT survey of a different sized world -- see the second half of
+ * src/builds/plots.js. It was a `builds` hook on a flatPatch row until the
+ * land had to roll; see the overworld row below. */
+import { landPatch } from './builds/overworld.js'
 import { BLOCK_TYPES } from './blocks.js'
 import { installPortals } from './portals.js'
 
@@ -340,33 +339,17 @@ export const DIMENSIONS = {
      * build the world, it does not hold one. island.js calls it exactly once,
      * through generateTerrain.
      *
-     * THIS IS THE SWAP POINT. The owner weighed a plains generator and chose
-     * superflat "for now". Plains is a new module exporting a function of the
-     * same shape and this one line pointing at it -- nothing in island.js,
-     * main.js or the barrier changes, because all any of them know is that
-     * something handed them 128x128 columns of block ids.
+     * THE LANDSCAPE, generated -- see src/builds/land.js. It used to be the
+     * Classic Flat preset compiled by flatPatch with the landscape stamped
+     * over it; Sprint 1 made the land roll, which a superflat ladder of four
+     * blocks cannot hold (a valley needs stone under it), so the overworld
+     * has its own generator now and flatPatch keeps the archive.
+     *
+     * Its size is not passed: the survey in src/builds/plots.js owns it
+     * (LAND_W x LAND_D), and island.js's WORLDS row is checked against the
+     * world it receives at install.
      */
-    generate: () => flatPatch({
-      preset: FLAT_PRESETS.classic,
-      width: PATCH_SIZE, depth: PATCH_SIZE,
-      surfaceY: SURFACE_Y, ceilingY: CEILING_Y,
-      /*
-       * AND A LANDSCAPE ON IT, which is what this line used to say `null` for.
-       *
-       * The bare superflat was the right answer for one brief -- "the owner's
-       * world to build in" -- and the brief changed: a winding path through a
-       * living landscape, a river with a bridge, and seven plots sketched and
-       * left empty for him to build in. The plots are still bare ground. What
-       * is around them is not.
-       *
-       * `stampLand`, not `stampBuilds`. They are two surveys of two different
-       * worlds and neither function will touch the other's: each checks the
-       * patch size and the ground height it was written against and throws
-       * on anything else, which is what stops this row and the archive's from
-       * being swapped by a copy-paste.
-       */
-      builds: stampLand,
-    }),
+    generate: () => landPatch({ surfaceY: SURFACE_Y, ceilingY: CEILING_Y }),
     /* null means "the normal sky": sun, moon, clouds, day cycle. */
     sky: null,
     fog: { density: 0 },

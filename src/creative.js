@@ -283,6 +283,8 @@ const RULES = [
   // The two nylia are Natural for the same reason grass is: they are a
   // surface that spreads, not a thing anybody crafts.
   [/nylium$/, 'natural_blocks', 'crimson and warped nylium generate in the nether forests'],
+  [/^(short_grass|fern|dead_bush|tall_grass|large_fern|dandelion|poppy|blue_orchid|allium|azure_bluet|(red|orange|white|pink)_tulip|oxeye_daisy|cornflower|lily_of_the_valley|lilac|rose_bush|peony|brown_mushroom|red_mushroom|lily_pad)$/,
+    'natural_blocks', 'grass, ferns, flowers, mushrooms and lily pads: vanilla files every plant under Natural Blocks'],
   [/^(stone|andesite|diorite|granite|tuff|calcite|dripstone_block|deepslate|cobbled_deepslate|smooth_basalt|basalt|blackstone|obsidian|crying_obsidian|magma_block|bedrock|reinforced_deepslate)$/,
     'natural_blocks', 'the rock the world is made of, in its as-generated form'],
   [/^(netherrack|soul_sand|soul_soil|nether_wart_block|warped_wart_block|sculk|sculk_catalyst|end_stone|prismarine|dark_prismarine|amethyst_block|budding_amethyst|bone_block|resin_block)$/,

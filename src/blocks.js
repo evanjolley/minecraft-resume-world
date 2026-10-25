@@ -4,7 +4,7 @@ import {
   installPlacementOrientation, installThinInstanceUploadFix, SIGN_FACINGS,
   PAINTING_FACINGS, paintingShapeKey, PAINTING_DEPTH,
   SIGN_SEGMENTS, segmentFromHeading, segmentNormal, signShapeKey,
-  BAMBOO_VARIANTS, bambooShapeKey, BAMBOO_SAPLING_SHAPE,
+  BAMBOO_VARIANTS, bambooShapeKey, BAMBOO_SAPLING_SHAPE, PLANT_SHAPES,
 } from './blockMeshes.js'
 import { EMISSION } from './blockLight.js'
 
@@ -1515,17 +1515,120 @@ export const bambooId = (variant, leaves = 'none') =>
 export const BAMBOO_SAPLING_ID = BAMBOO_ID + BAMBOO_VARIANTS * BAMBOO_LEAVES.length
 export const isBambooId = (id) => id >= BAMBOO_ID && id <= BAMBOO_SAPLING_ID
 
+/* ------------------------------------------------------------------ *
+ * Ground plants, for the landscape: grass, ferns, flowers, mushrooms,
+ * the double-tall plants and the lily pad. Appended after bamboo, so
+ * every id above is untouched.
+ *
+ * THE SHAPES are vanilla's `block/cross` and `block/tinted_cross`, at 45
+ * degrees with rescale -- see PLANT_SHAPES in blockMeshes.js, which also
+ * carries each plant's outline from its vanilla block class.
+ *
+ * THE TEXTURES are Pixel Perfection CE's, from the same pack as everything
+ * else in textures-src/ce (NOTICE.txt). CE predates 1.20.3, so its short
+ * grass is `grass.png`; it is committed as `short_grass.png`, the name a
+ * vanilla install uses, so either source builds the same material.
+ *
+ * TINTS are vanilla's: grass and ferns are greyscale and multiplied by the
+ * grass colour (`tintindex` in tinted_cross.json; BlockColors registers
+ * GRASS, FERN, TALL_GRASS and LARGE_FERN against the biome grass colour), the
+ * lily pad by the fixed 0x208030 BlockColors gives it, and flowers not at all.
+ *
+ * DOUBLE PLANTS are two ids, `_top` over the plain key, exactly as slabs carry
+ * their half in the key: noa has no block state. The top half `drops` to the
+ * lower one so it is a variant rather than an item of its own, and the item
+ * shows the TOP art, which is what vanilla's item models for all five use.
+ *
+ * Hardness 0 for all of them: `.instabreak()` in Blocks.java.
+ * ------------------------------------------------------------------ */
+const LILY_PAD_TINT = [0x20, 0x80, 0x30]
+/*
+ * ID 700 IS SKIPPED, and the gap is the Nether portal's. src/portals.js
+ * registers block id 700 itself, outside this table, until blocks.js grows
+ * the walk-through full-cube flag it needs (see NETHER_PORTAL_ID there). The
+ * first version of this table started the plants at 697 and the dandelion
+ * landed on 700, where the portal's registration replaced it with a purple
+ * cube in every meadow. RESERVED_IDS below records the gap so the contiguity
+ * check knows it is meant.
+ */
+const RESERVED_IDS = new Set([700])
+const PLANT_ID = BAMBOO_ID + BAMBOO_VARIANTS * BAMBOO_LEAVES.length + 1
+
+/** [key, name, shape, tint] for every single-block plant, in id order. */
+const SINGLE_PLANTS = [
+  ['short_grass', 'Short Grass', PLANT_SHAPES.grass, GRASS],
+  ['fern', 'Fern', PLANT_SHAPES.grass, GRASS],
+  ['dead_bush', 'Dead Bush', PLANT_SHAPES.grass],
+  ['dandelion', 'Dandelion', PLANT_SHAPES.flower],
+  ['poppy', 'Poppy', PLANT_SHAPES.flower],
+  ['blue_orchid', 'Blue Orchid', PLANT_SHAPES.flower],
+  ['allium', 'Allium', PLANT_SHAPES.flower],
+  ['azure_bluet', 'Azure Bluet', PLANT_SHAPES.flower],
+  ['red_tulip', 'Red Tulip', PLANT_SHAPES.flower],
+  ['orange_tulip', 'Orange Tulip', PLANT_SHAPES.flower],
+  ['white_tulip', 'White Tulip', PLANT_SHAPES.flower],
+  ['pink_tulip', 'Pink Tulip', PLANT_SHAPES.flower],
+  ['oxeye_daisy', 'Oxeye Daisy', PLANT_SHAPES.flower],
+  ['cornflower', 'Cornflower', PLANT_SHAPES.flower],
+  ['lily_of_the_valley', 'Lily of the Valley', PLANT_SHAPES.flower],
+  ['brown_mushroom', 'Brown Mushroom', PLANT_SHAPES.mushroom],
+  ['red_mushroom', 'Red Mushroom', PLANT_SHAPES.mushroom],
+  ['lily_pad', 'Lily Pad', PLANT_SHAPES.lilyPad, LILY_PAD_TINT],
+]
+
+/** [key, name, tint] for every double plant. Each takes two ids. */
+const DOUBLE_PLANTS = [
+  ['tall_grass', 'Tall Grass', GRASS],
+  ['large_fern', 'Large Fern', GRASS],
+  ['lilac', 'Lilac'],
+  ['rose_bush', 'Rose Bush'],
+  ['peony', 'Peony'],
+]
+
+const PLANTS = []
+{
+  let next = PLANT_ID
+  const take = () => { while (RESERVED_IDS.has(next)) next++; return next++ }
+  for (const [key, name, shape, tint] of SINGLE_PLANTS) {
+    PLANTS.push({
+      id: take(), key, name, all: key, shape, alpha: true, cutout: true,
+      flatItem: true, hardness: T(0, false), ...(tint ? { tint } : {}),
+    })
+  }
+  for (const [key, name, tint] of DOUBLE_PLANTS) {
+    const lower = take()
+    PLANTS.push({
+      id: lower, key, name, all: `${key}_bottom`, shape: PLANT_SHAPES.tall,
+      alpha: true, cutout: true, flatItem: true, flatTexture: `${key}_top`,
+      hardness: T(0, false), ...(tint ? { tint } : {}),
+    })
+    PLANTS.push({
+      id: take(), key: `${key}_top`, name, all: `${key}_top`, shape: PLANT_SHAPES.tall,
+      alpha: true, cutout: true, hardness: T(0, false), drops: lower,
+      ...(tint ? { tint } : {}),
+    })
+  }
+}
+
+/** Every plant key, for the generator and the specs. */
+export const PLANT_KEYS = PLANTS.map(p => p.key)
+
 export const BLOCK_TYPES = normaliseHardness(
   [...CUBES, ...NON_CUBE, ...FLUIDS, ...BARRIER, ...FLUID_FLOW_BLOCKS, ...TORCHES,
     ...SIGNS,
-    ...PAINTING_BLOCKS, ...BAMBOO])
+    ...PAINTING_BLOCKS, ...BAMBOO, ...PLANTS])
 
 // Ids must be contiguous from 1. noa fills any gap with a silently-registered
 // filler block that has no material, which renders as untextured white and is
 // a nightmare to trace back to a typo'd id three hundred rows up.
-BLOCK_TYPES.forEach((def, i) => {
-  if (def.id !== i + 1) throw new Error(`block id gap at "${def.key}": expected ${i + 1}, got ${def.id}`)
-})
+{
+  let want = 1
+  for (const def of BLOCK_TYPES) {
+    while (RESERVED_IDS.has(want)) want++
+    if (def.id !== want) throw new Error(`block id gap at "${def.key}": expected ${want}, got ${def.id}`)
+    want++
+  }
+}
 
 // id -> definition, for the O(1) lookups mining and the inventory do per frame.
 export const BLOCK_BY_ID = new Map(BLOCK_TYPES.map(b => [b.id, b]))
@@ -1737,6 +1840,16 @@ for (const def of BLOCK_TYPES) {
   // line above just set.
   if (def.alphaLevel) (MATERIAL_RECIPES[def.all] ??= {}).alpha = def.alphaLevel
 }
+
+/*
+ * BIRCH LEAVES ARE GREEN. Pixel Perfection CE draws them pre-coloured in
+ * autumn orange, which the build's greyscale test (rightly) refuses to tint
+ * twice -- so every birch wood in the landscape came out orange. `regrey`
+ * tells scripts/build-textures.mjs to take such a source back to its
+ * luminance first and then tint it with vanilla's birch colour. A vanilla
+ * source is already greyscale and is untouched by the flag.
+ */
+MATERIAL_RECIPES.birch_leaves.regrey = true
 
 /*
  * The water surface, seen from underneath.

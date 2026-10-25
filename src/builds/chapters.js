@@ -21,9 +21,10 @@
  *   4. A MARKER, which is the label, and is the only thing here taller than
  *      two blocks.
  *
- * Nothing else. Every chapter is 52 x 24 of flat grass with a frame around
- * it, which is the deliverable -- except ch1, which is 66 x 63 and has a
- * school on it.
+ * And then the chapter's own build, from its own file (CHAPTER_BUILDS
+ * below), drawn over the frame so it may pave over any of it. Chapter 1 is
+ * the owner's Millard North and is frozen; chapters 2 to 6 are built by
+ * their own files, which start as stubs that place nothing.
  * ------------------------------------------------------------------------
  * WHY THE MARKER FACES NORTH, all six of them, on both sides of the path.
  *
@@ -32,7 +33,8 @@
  * the plot is east or west of the path, which is the property that mattered.
  * The alternative, facing each marker at the path, means an east-facing wall
  * on one side and a west-facing wall on the other; those are `zy` planes, and
- * a `zy` marker can only be as wide as the plot is DEEP, which is 24 blocks.
+ * a `zy` marker can only be as wide as the plot is DEEP -- 24 blocks when
+ * this was written; the rule outlived the reason.
  * "SAN FRANCISCO" is 51 blocks of lettering. It does not fit on any wall in
  * this world except one that spans x.
  *
@@ -55,10 +57,15 @@
  * of the two mistakes only a screenshot found.
  */
 import { stamper } from './stamp.js'
-import { CHAPTERS } from './plots.js'
+import { CHAPTERS, CHAPTER_SIZE } from './plots.js'
 import { textRows, textWidth } from './font.js'
-import { hash } from './land.js'
+import { hash } from './noise.js'
 import { build as ch1 } from './ch1-millard-north.js'
+import * as ch2 from './ch2-science-center.js'
+import * as ch3 from './ch3-bilibili.js'
+import * as ch4 from './ch4-new-york.js'
+import * as ch5 from './ch5-san-francisco.js'
+import * as ch6 from './ch6-the-climb.js'
 
 /*
  * CHAPTER ID -> THE FILE THAT FILLS IT, and the same shape as BUILDS in
@@ -80,6 +87,38 @@ import { build as ch1 } from './ch1-millard-north.js'
  */
 const CHAPTER_BUILDS = {
   ch1,
+  ch2: ch2.build,
+  ch3: ch3.build,
+  ch4: ch4.build,
+  ch5: ch5.build,
+  ch6: ch6.build,
+}
+
+/*
+ * EACH BUILD'S OWN FOOTPRINT, checked against the plot it was given.
+ *
+ * Sprint 1's builders export `SIZE = { w, d }` from their build files so the
+ * layout follows the builds rather than the other way round. The layout
+ * itself lives in src/builds/plots.js, which has no imports on purpose, so
+ * the agreement between the two is checked HERE, at boot, where both are in
+ * hand: a build smaller than its plot is fine (it is the plot's north-west
+ * corner, like any build), and a build larger than its plot would be clipped
+ * by the stamper's bounds check halfway through a wall -- so it throws first,
+ * and says which line to change. Chapter 1 has no SIZE export because its
+ * file is frozen; its row in CHAPTER_SIZE is the record.
+ */
+const BUILD_SIZE = { ch2: ch2.SIZE, ch3: ch3.SIZE, ch4: ch4.SIZE, ch5: ch5.SIZE, ch6: ch6.SIZE }
+
+export function checkBuildSizes() {
+  for (const [id, size] of Object.entries(BUILD_SIZE)) {
+    if (!size) continue
+    const plot = CHAPTER_SIZE[id]
+    if (size.w > plot.w || size.d > plot.d) {
+      throw new Error(`[${id}] the build says SIZE ${size.w} x ${size.d} and its plot is `
+        + `${plot.w} x ${plot.d}. Grow CHAPTER_SIZE.${id} in src/builds/plots.js `
+        + `(the walk may need re-cutting past SLOT; see the note there).`)
+    }
+  }
 }
 
 /*
@@ -96,6 +135,21 @@ const CHAPTER_BUILDS = {
  * needs its own flag and its own screenshot, not this one.
  */
 const MIRROR = false
+
+/*
+ * WHERE EACH FRAME'S POST PATTERN IS HASHED FROM, and it exists for one
+ * chapter.
+ *
+ * The survey posts skip one in five at random, and the random number is a
+ * hash of the post's PATCH coordinate. So moving a plot reshuffles which of
+ * its posts stand -- harmless for an empty plot, and a change to chapter 1,
+ * whose posts stand among the owner's school, which the sprint brief freezes
+ * "byte for byte". Chapter 1 therefore hashes from where it stood when the
+ * school was built (patch 14, 22 in the 256 survey), and test/91-biomes
+ * checks the whole plot against that baseline in plot-local coordinates.
+ * Every other chapter hashes from where it is.
+ */
+const FRAME_ORIGIN = { ch1: [14, 22] }
 
 /** The ground the border is drawn in, and the paving of the entrance. */
 const BORDER = 'polished_andesite'
@@ -115,6 +169,7 @@ const LETTER = 'glowstone'
  *              up with the spur the path pass actually drew
  */
 export function markChapters(world, model) {
+  checkBuildSizes()
   for (const c of CHAPTERS) {
     const s = stamper(world, c, { label: `${c.id}/${c.marker}` })
     const w = c.x1 - c.x0, d = c.z1 - c.z0      // last local index on each axis
@@ -148,7 +203,8 @@ export function markChapters(world, model) {
        * them. The first screenshot had one through the second A of OMAHA.
        */
       if (z === 0 && x >= mx0 - 1 && x <= mx0 + tw0) return
-      if (hash(c.x0 + x, c.z0 + z, 307) < 0.2) return
+      const [sx, sz] = FRAME_ORIGIN[c.id] ?? [c.x0, c.z0]
+      if (hash(sx + x, sz + z, 307) < 0.2) return
       s.pillar(x, z, 0, 1, POST)
     }
     for (let x = 0; x <= w; x += 7) { post(x, 0); post(x, d) }
@@ -185,24 +241,14 @@ export function markChapters(world, model) {
     })
 
     /*
-     * THE CLIMB RESERVES ITS START AND NOTHING ELSE.
+     * THE CHAPTER'S OWN BUILD, over its frame. All six exist now.
      *
-     * It is a parkour going UP, visiting his other interests on the way, and
-     * the brief is explicit: reserve the footprint and the start, build none
-     * of it. So it gets a five by five pad where the first jump would stand
-     * and four two-block posts around it -- enough that the place is obviously
-     * the bottom of something, with not one block of the climb decided.
+     * (The climb used to get a placeholder here: a five by five pad and four
+     * posts where its first jump would stand, reserving the start before
+     * anybody had built it. ch6-the-climb.js builds that start itself, and
+     * the pad stood in the middle of it, so it is gone.)
      */
-    /* And the chapter's own build, if it has one yet. */
     const fill = CHAPTER_BUILDS[c.id]
     if (fill) fill(stamper(world, c, { label: `${c.id}/build` }))
-
-    if (c.id === 'ch6') {
-      const px = lowX ? w - 12 : 8
-      s.rect([px - 2, doorZ + 4], [px + 2, doorZ + 8], -1, 'polished_andesite')
-      for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) {
-        s.pillar(px + dx, doorZ + 6 + dz, 0, 1, POST)
-      }
-    }
   }
 }

@@ -50,7 +50,7 @@
  *
  * The north rows (z 0..4) from x 21 to the path are the chapter marker's.
  */
-import { CHAPTERS, LAND_SIZE } from './plots.js'
+import { CHAPTERS, LAND_W, LAND_D } from './plots.js'
 import { SPINE, sampleSpine } from './spine.js'
 import { wordRows } from './lettering.js'
 import { wallSign, switchback, tree } from './kit.js'
@@ -268,16 +268,18 @@ function officeFloor(s) {
 }
 
 /*
- * THE WORLD MODEL: a model of this whole map on a table, 1 block to 20 --
+ * THE WORLD MODEL: a model of this whole map on a table, 1 block to 31 --
  * grass, the path in gravel from the same spine the landscape draws, the six
  * chapters raised in their own colours, a gold block where you are. Derived
  * from src/builds/plots.js and spine.js, so it moves when the map does.
  */
 function worldModel(s, y) {
-  const scale = 20
-  const n = Math.ceil(LAND_SIZE / scale)                   // 13 across
+  /* The map is 288 x 400 (not square) since the landscape pass: the scale is
+   * chosen so its longer side still fits the 13-cell table. */
+  const scale = Math.ceil(Math.max(LAND_W, LAND_D) / 13)  // 31
+  const nx = Math.ceil(LAND_W / scale), nz = Math.ceil(LAND_D / scale)  // 10 x 13
   const tx0 = 48, tz0 = 17
-  const tx1 = tx0 + n - 1, tz1 = tz0 + n - 1
+  const tx1 = tx0 + nx - 1, tz1 = tz0 + nz - 1
   s.box([tx0 - 1, y, tz0 - 1], [tx1 + 1, y, tz1 + 1], P.dark)
   s.rect([tx0, tz0], [tx1, tz1], y, 'moss_block')
   const cell = (px, pz) => [tx0 + Math.floor(px / scale), tz0 + Math.floor(pz / scale)]

@@ -1,207 +1,153 @@
 /*
- * THE PATH ITSELF: the surface, the ragged edge, the spurs and the lamps.
- *
- * Everything here writes into the model (see src/builds/land.js) except the
- * lamps, which stand ON the finished ground and therefore run after it.
+ * THE PATH: the walked surface, its spurs to each chapter, the height it
+ * walks at, the steps where it climbs, and the lamps beside it.
  *
  * ------------------------------------------------------------------------
- * WHAT MAKES IT READ AS WORN RATHER THAN LAID, which is the whole brief:
+ * "A road through my life... a winding path, plots on either side
+ * alternating... organic and living." And from Sprint 1: "the path following
+ * the terrain gracefully".
  *
- *   - THE WIDTH VARIES AND NEVER SYMMETRICALLY. Two independent noise fields
- *     at different scales -- 9 samples for the left edge, 13 for the right --
- *     so one side bulges where the other narrows and the pair never repeats.
- *     A single width with both edges tracking it is a road with a camber.
- *   - THE EDGE IS RAGGED. The outermost half block of each side only gets
- *     placed 58% of the time, decided per column by the coordinate hash, so
- *     the boundary frays instead of ending.
- *   - AND IT SPILLS. A few percent of the columns just outside the frayed
- *     edge get a single block of path material anyway, one or two out into
- *     the grass. That is the detail that makes it look walked: the mess is
- *     OUTSIDE the line, not just missing from it.
- *   - AND THE GRASS POKES BACK. Three percent of interior columns keep their
- *     grass. Only the two together read correctly -- spill alone looks like a
- *     bad mask, grass alone looks like wear.
+ * THE PATH NOW TAKES ITS HEIGHT FROM THE LAND, and that reverses a decision
+ * the previous pass recorded on purpose. It held the walk level and let the
+ * relief rise BESIDE it, because a one-block riser on full cubes is a jump:
+ * noa's sweep has no step-up, and src/blockMeshes.js deliberately gives only
+ * NON-CUBE blocks vanilla's 0.6 step height. A walk that needs the space bar
+ * was not the walk the owner asked for.
  *
- * REJECTED -- a Perlin-displaced constant-width ribbon, which is the usual
- * way to do this. It gives you a wobbly edge whose wobble has a scale, and at
- * eye level you see the scale. Deciding per column with a hash has no scale
- * at all, which is what a footpath's edge actually looks like.
+ * What makes following the land possible now is the same rule read the
+ * other way: a SLAB is a non-cube, and 0.5 is under 0.6. So wherever the walk
+ * climbs a block, `steps` lays a slab on the lower column, and you walk up
+ * slab, then block, without jumping -- the way a worn trail has a stone set
+ * into every rise. The grade is held to one block in three (WALK_GRADE), so
+ * the risers are spaced, never stacked.
  * ------------------------------------------------------------------------
+ * EVERY RANDOM NUMBER HERE IS A HASH OF ITS COORDINATE.
  */
-import { KIND, at, onMap, hash, smoothNoise, nearSpawn, SPAWN_FLAT } from './land.js'
-import { CHAPTERS } from './plots.js'
+import { hash, smoothNoise } from './noise.js'
+import { CHAPTERS, LAND_SPAWN_X, LAND_SPAWN_Z } from './plots.js'
 
-/** Half-widths, left and right of the centreline, at sample `i`. Total width
- *  runs about 3 to 5 blocks, which is the brief's range. */
-function halves(i) {
+/** Within this many blocks of spawn the walk is dead flat at plot level,
+ *  because specs build `setBlock` rigs there and drop down the column four
+ *  blocks west of it (test/helpers/world.js DROP_X). */
+export const SPAWN_FLAT = 10
+/** ...and within this many nothing at all stands above the ground. */
+export const SPAWN_CLEAR = 8
+export const nearSpawn = (x, z, r) => Math.hypot(x - LAND_SPAWN_X, z - LAND_SPAWN_Z) <= r
+
+/** Rise over run the walk may climb: one block in three. */
+const WALK_GRADE = 1 / 3
+/** How far either side of a sample the walk's height is averaged, in
+ *  samples (four to a block): 14 blocks. */
+const SMOOTH = 56
+
+/** The two half-widths of the path at sample i: 1.0 to 2.15 blocks each
+ *  side, wandering on two different slow fields so the edges are not
+ *  parallel. */
+export function halves(i) {
   return [
     1.0 + 1.15 * smoothNoise(i, 0, 9, 31),
     1.0 + 1.15 * smoothNoise(i, 0, 13, 47),
   ]
 }
 
-/**
- * Paint the main path into the model.
- *
- * @param model    the column model
- * @param samples  sampleSpine's output
- * @param surfaceOf (x, z) -> block key for the worn mix
+/*
+ * THE WORN GROUND. There is no dirt-path block in this palette, so the
+ * worn look comes from the mix: coarse and rooted dirt carry most of it,
+ * gravel is the worn middle, andesite and podzol the odd stone and leaf
+ * litter. Two noise scales, so the answer is clumps rather than static.
  */
-export function drawPath(model, samples, surfaceOf) {
-  const edges = []   // columns at the frayed edge, for the spill pass
+export function pathSurface(x, z) {
+  const slow = smoothNoise(x, z, 17, 101)
+  const fast = smoothNoise(x, z, 4.5, 202)
+  const v = slow * 0.65 + fast * 0.35
+  if (v < 0.32) return 'coarse_dirt'
+  if (v < 0.47) return 'rooted_dirt'
+  if (v < 0.58) return 'dirt'
+  if (v < 0.70) return 'gravel'
+  if (v < 0.82) return 'coarse_dirt'
+  if (v < 0.89) return 'andesite'
+  return 'podzol'
+}
 
+/**
+ * Mark the path's columns. Each gets KIND.PATH (or KIND.BRIDGE where it is
+ * over water) and remembers which spine sample drew it, which is how it
+ * learns its height later.
+ *
+ * Throws if the path touches a plot: a path through somebody's chapter is
+ * the one mistake this layout must never ship.
+ */
+export function rasterPath(model, samples, KIND) {
+  const { W, D } = model
+  const edges = []
   samples.forEach((s, i) => {
     const [wl, wr] = halves(i)
     for (let d = -wl; d <= wr; d += 0.3) {
       const x = Math.round(s.x + s.nx * d)
       const z = Math.round(s.z + s.nz * d)
-      if (!onMap(x, z)) continue
-      const j = at(x, z)
-
-      /*
-       * THE PATH MAY NOT TOUCH A CHAPTER, and this throws rather than skips.
-       * A skip would hide the real failure -- a spine control point drifting
-       * into a plot as the layout is tuned -- behind a path that quietly goes
-       * one block narrower for forty blocks. The stamper would catch the
-       * write later, but not with the coordinate that caused it.
-       */
-      if (model.kind[j] === KIND.PLOT) {
-        throw new Error(
-          `the path runs into a chapter plot at patch (${x}, ${z}) -- `
-          + `spine sample ${i} at (${s.x.toFixed(1)}, ${s.z.toFixed(1)}). `
-          + `Move the control point in src/builds/spine.js.`)
+      if (x < 0 || x >= W || z < 0 || z >= D) continue
+      const j = z * W + x
+      const k = model.kind[j]
+      if (k === KIND.PLOT) {
+        throw new Error(`the path runs into a chapter plot at patch (${x}, ${z}) -- `
+          + `spine sample ${i}. Move the control point in src/builds/spine.js.`)
       }
-
+      if (k === KIND.PATH || k === KIND.BRIDGE) continue
+      /* The ragged edge: the outermost half block is kept only some of the
+       * time, so the verge is frayed rather than ruled. */
       const outer = d < 0 ? -d > wl - 0.55 : d > wr - 0.55
-      if (outer) {
-        if (hash(x, z, 71) > 0.58) { edges.push(j); continue }
-        edges.push(j)
-      }
-
-      /*
-       * BRIDGE IS STICKY, and the bug that makes it worth a comment: the
-       * raster visits most columns several times (many samples, many offsets
-       * across the width), and the FIRST visit turns water into a deck. On
-       * the second visit the column is no longer water -- it is BRIDGE -- so
-       * a test that only asks "is this water" turns the deck back into path,
-       * and the path then fills the river with dirt up to its own height. The
-       * whole bridge vanished, silently, into a dam.
-       */
-      const prev = model.kind[j]
-      const water = prev === KIND.WATER || prev === KIND.SHALLOW || prev === KIND.BRIDGE
-      model.kind[j] = water ? KIND.BRIDGE : KIND.PATH
-      /*
-       * A DECK IS NEVER BELOW y = 0, whatever the spine says. The spine
-       * crests at h = 1 over the river and falls to 0 at each bank, and a
-       * deck at h = 0 would be written at local y = -1 -- exactly the level
-       * of the water surface, so the last two blocks of bridge at each end
-       * were a plank floating IN the river. Clamping here rather than bending
-       * the spine keeps the approach ramp gentle and makes the step onto the
-       * bridge one block, which is a step.
-       */
-      /*
-       * THE SPINE'S HEIGHT IS NOW A HEIGHT ABOVE THE LANDSCAPE, not above the
-       * grass. It was the same number for as long as the landscape was flat.
-       * `model.ground` is what the relief and the slope clamp left here, and
-       * the path rides on top of it -- so a stretch the spine marks +1 is one
-       * block above whatever the ground beside it is doing, which is what a
-       * raised causeway is, rather than one block above sea level, which
-       * halfway up a hillside is a trench.
-       */
-      const base = model.ground[j]
-      const want = nearSpawn(x, z, SPAWN_FLAT) ? 0 : base + Math.round(s.h)
-      model.h[j] = water ? Math.max(1, want) : want
-      /* Three percent of the surface stays grass: a tuft the walking never
-       * quite killed. `null` means "leave the generator's block", which for a
-       * column at h = 0 is exactly the grass that was already there. */
-      model.surface[j] = hash(x, z, 89) < 0.03 ? null : surfaceOf(x, z)
+      if (outer && hash(x, z, 71) > 0.58) { edges.push(j); continue }
+      model.kind[j] = k === KIND.WATER ? KIND.BRIDGE : KIND.PATH
+      model.walk[j] = i
     }
   })
-
-  /*
-   * THE SPILL. One or two blocks of path material out in the grass beside the
-   * frayed edge, at 7% of edge columns. They are KIND.PATH so nothing plants
-   * a tree on them, and they carry the same worn mix.
-   */
+  /* The spill: here and there a worn patch where walkers stepped off. */
   for (const j of edges) {
-    const x0 = j % 256, z0 = (j / 256) | 0
+    const x0 = j % W, z0 = (j / W) | 0
     if (hash(x0, z0, 113) > 0.07) continue
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1]]) {
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const x = x0 + dx, z = z0 + dz
-      if (!onMap(x, z)) continue
-      const k = at(x, z)
-      if (model.kind[k] !== KIND.FIELD) continue
-      if (hash(x, z, 127) > 0.4) continue
+      if (x < 0 || x >= W || z < 0 || z >= D) continue
+      const k = z * W + x
+      if (model.kind[k] !== KIND.FIELD || hash(x, z, 127) > 0.4) continue
+      const near = nearestPathNeighbour(model, x, z, KIND)
+      if (near < 0) continue
       model.kind[k] = KIND.PATH
-      model.h[k] = model.h[j]
-      model.surface[k] = surfaceOf(x, z)
+      model.walk[k] = model.walk[near]
     }
   }
 }
 
-/*
- * THE SPURS, and the reason every chapter has one.
- *
- * "A short spur off the main path, so arriving somewhere is a choice." They
- * came out 20 to 33 blocks long, which is not short -- it is the plot sitting
- * well back from the path, which is what stops six plots reading as a
- * street. A plot
- * that the path runs straight into is a room you are pushed through; a plot
- * with a turning off it is a place you decide to visit. Three blocks wide
- * against the main path's four or five, so it reads as lesser -- you can tell
- * which one is the way on.
- *
- * It is a quadratic Bezier rather than a straight run: the control point is
- * pushed along the path's own direction, so the spur LEAVES the path at a
- * shallow angle and turns to meet the plot square. A T-junction at 90 degrees
- * is the one shape in this landscape that would look drawn.
- */
-/*
- * WHERE A SPUR GOES, separated from the drawing of it.
- *
- * THE MERGE IS WHY THIS IS ITS OWN FUNCTION. Chapters renumbered when Harvard
- * and the school work became one plot, and the spurs re-cut themselves from
- * the table -- the curve machinery below reads CHAPTERS and aims at whatever
- * rectangles are in it, so losing a row costs nothing. But the RELIEF pass in
- * src/builds/land.js now has to know where the spurs run BEFORE they are
- * drawn: terrain that rises between the path and a plot entrance is a hill on
- * the one stretch of the walk that has to be an invitation. So the geometry
- * is computed here, once, and both passes read it.
- *
- * REJECTED -- letting the relief pass find the spurs by looking for
- * KIND.SPUR after they are drawn. That is the same ordering trap the header
- * of land.js is about: the ground has to exist before things stand on it, and
- * the spur has to exist before the ground is decided.
- *
- * @returns [{ x, z }] -- a dense list of centreline points along every spur.
+function nearestPathNeighbour(model, x, z, KIND) {
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const nx = x + dx, nz = z + dz
+    if (nx < 0 || nx >= model.W || nz < 0 || nz >= model.D) continue
+    const j = nz * model.W + nx
+    if (model.kind[j] === KIND.PATH) return j
+  }
+  return -1
+}
+
+/**
+ * One spur per chapter: a quadratic curve from the nearest point on the path
+ * to the plot's entrance, which is the north corner of its path-side edge
+ * (z0 + 6, the same row src/builds/chapters.js opens its border at).
  */
 export function spurCurves(samples) {
   const out = []
   for (const c of CHAPTERS) {
-    /* LEFT is the LOW-x side, which in this engine is EAST: Babylon is
-     * left-handed, facing +z puts +x on your right, and the visitor walks
-     * south. See HEADING in test/helpers/world.js, measured in
-     * test/25-orientation.spec.js. The variable is named for the axis rather
-     * than the compass because every coordinate below is an index. */
     const lowX = c.side === 'LEFT'
-    const zTarget = c.z0 + 6                // beside the marker, near the north edge
+    const zTarget = c.z0 + 6
     const edgeX = lowX ? c.x1 + 1 : c.x0 - 1
-
-    // The point on the path nearest the plot's entrance, which is what makes
-    // the spur the SHORT way in rather than a diagonal across the field.
-    let best = samples[0], bestD = Infinity
-    for (const s of samples) {
+    let best = 0, bestD = Infinity
+    samples.forEach((s, i) => {
       const d = Math.hypot(s.x - edgeX, s.z - zTarget)
-      if (d < bestD) { bestD = d; best = s }
-    }
-
-    const ax = best.x, az = best.z
-    const bx = edgeX, bz = zTarget
-    // The handle: half the gap, pushed along the path's tangent so the spur
-    // peels off instead of branching.
-    const cx = ax + (bx - ax) * 0.45 - best.nx * 2
+      if (d < bestD) { bestD = d; best = i }
+    })
+    const a = samples[best]
+    const ax = a.x, az = a.z, bx = edgeX, bz = zTarget
+    const cx = ax + (bx - ax) * 0.45 - a.nx * 2
     const cz = az + (bz - az) * 0.45 + (bz > az ? 5 : -5)
-
     const steps = Math.ceil(Math.hypot(bx - ax, bz - az) * 4)
     const points = []
     for (let k = 0; k <= steps; k++) {
@@ -209,52 +155,228 @@ export function spurCurves(samples) {
       points.push({
         x: (1 - t) ** 2 * ax + 2 * (1 - t) * t * cx + t * t * bx,
         z: (1 - t) ** 2 * az + 2 * (1 - t) * t * cz + t * t * bz,
+        t,
       })
     }
-    out.push({ chapter: c, points })
+    out.push({ chapter: c, from: best, points })
   }
   return out
 }
 
-export function drawSpurs(model, samples, surfaceOf) {
-  for (const { points } of spurCurves(samples)) {
-    for (const { x: x0, z: z0 } of points) {
+/** Mark the spurs' columns, about three blocks wide. A spur stops at the
+ *  plot line and goes over water as a bridge. `model.spurT` keeps how far
+ *  along its spur each column is, for its height. */
+export function rasterSpurs(model, spurs, KIND) {
+  const { W, D } = model
+  spurs.forEach(({ points }, s) => {
+    for (const { x: x0, z: z0, t } of points) {
       for (let dx = -2; dx <= 2; dx++) {
         for (let dz = -2; dz <= 2; dz++) {
           const x = Math.round(x0 + dx), z = Math.round(z0 + dz)
-          if (!onMap(x, z)) continue
+          if (x < 0 || x >= W || z < 0 || z >= D) continue
           if (Math.hypot(x - x0, z - z0) > 1.6 + 0.4 * hash(x, z, 151)) continue
-          const j = at(x, z)
-          /* Stops AT the plot, never in it -- the chapter's own build makes
-           * the entrance on its side of the line. */
-          if (model.kind[j] === KIND.PLOT) continue
-          if (model.kind[j] === KIND.WATER || model.kind[j] === KIND.SHALLOW) continue
-          if (model.kind[j] === KIND.PATH || model.kind[j] === KIND.BRIDGE) continue
-          model.kind[j] = KIND.SPUR
-          model.surface[j] = hash(x, z, 163) < 0.05 ? null : surfaceOf(x, z)
+          const j = z * W + x
+          const k = model.kind[j]
+          if (k === KIND.PLOT || k === KIND.PATH || k === KIND.BRIDGE) continue
+          if (k === KIND.SPUR && model.spurT[j] >= t) continue
+          model.kind[j] = k === KIND.WATER ? KIND.BRIDGE : KIND.SPUR
+          model.spur[j] = s
+          model.spurT[j] = t
         }
       }
     }
+  })
+}
+
+/**
+ * THE HEIGHT OF THE WALK, sample by sample, and it is the land's.
+ *
+ * 1. Read the ground under every sample (water reads as missing and is
+ *    bridged by interpolation).
+ * 2. Average it over SMOOTH samples either side, twice: a path does not
+ *    climb every hummock, it takes the line of the hill.
+ * 3. Pin the samples that must be at a height: the spawn clearing at 0, and
+ *    every sample over water at 1 or more, so a bridge deck clears the
+ *    surface by a block.
+ * 4. Limit the grade to WALK_GRADE, forwards and backwards, holding the pins.
+ *
+ * @returns Float32Array, one height per sample
+ */
+export function walkProfile(model, samples, KIND, spurs = []) {
+  const n = samples.length
+  const raw = new Float32Array(n)
+  const pin = new Float32Array(n).fill(NaN)
+  /*
+   * A CEILING where each spur leaves, and it is what makes a spur walkable.
+   * A spur runs from the path's height down to plot level, and it may only
+   * fall at the walk's grade -- so the path, where a spur leaves it, may be
+   * no higher than the spur is long times WALK_GRADE. Where the land under
+   * the path is higher than that (the climb's plot sits in a bowl in the
+   * peaks), the path comes down to meet its spur, and the grade limit below
+   * carries that dip smoothly along the walk either side.
+   */
+  const cap = new Float32Array(n).fill(Infinity)
+  for (const sp of spurs) {
+    const pts = sp.points
+    let len = 0
+    for (let k = 1; k < pts.length; k++) len += Math.hypot(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z)
+    cap[sp.from] = Math.min(cap[sp.from], Math.floor(len * WALK_GRADE) - 1)
+  }
+  const step = 0.25 * WALK_GRADE
+  let last = 0
+  for (let i = 0; i < n; i++) {
+    const s = samples[i]
+    const x = Math.round(s.x), z = Math.round(s.z)
+    const j = z * model.W + x
+    const inside = x >= 0 && x < model.W && z >= 0 && z < model.D
+    const water = inside && model.kind[j] === KIND.WATER
+    raw[i] = inside && !water ? model.g[j] : NaN
+    if (!Number.isNaN(raw[i])) last = raw[i]
+    if (nearSpawn(s.x, s.z, SPAWN_FLAT)) pin[i] = 0
+    if (water) pin[i] = Math.max(1, last)
+  }
+  /* Fill the gaps (water) by linear interpolation between the banks. */
+  for (let i = 0; i < n; i++) {
+    if (!Number.isNaN(raw[i])) continue
+    const a = i - 1
+    let b = i + 1
+    while (b < n && Number.isNaN(raw[b])) b++
+    const va = a >= 0 ? raw[a] : (b < n ? raw[b] : 0)
+    const vb = b < n ? raw[b] : va
+    for (let k = i; k < b; k++) raw[k] = va + (vb - va) * ((k - a) / (b - a))
+    i = b - 1
+  }
+  /* Box-average twice, with a running sum: a window of 2 * SMOOTH + 1
+   * samples, shrinking at the two ends of the walk. */
+  let p = raw
+  for (let pass = 0; pass < 2; pass++) {
+    const out = new Float32Array(n)
+    let sum = 0, cnt = 0
+    for (let k = 0; k <= Math.min(n - 1, SMOOTH); k++) { sum += p[k]; cnt++ }
+    for (let i = 0; i < n; i++) {
+      out[i] = sum / cnt
+      const add = i + SMOOTH + 1, drop = i - SMOOTH
+      if (add < n) { sum += p[add]; cnt++ }
+      if (drop >= 0) { sum -= p[drop]; cnt-- }
+    }
+    p = out
+  }
+  /* The pins and the ceilings, then the grade limit both ways, holding
+   * both. A ceiling only ever pulls DOWN, so it is applied as a min. */
+  for (let i = 0; i < n; i++) {
+    if (!Number.isNaN(pin[i])) p[i] = pin[i]
+    else p[i] = Math.min(p[i], cap[i])
+  }
+  for (let round = 0; round < 3; round++) {
+    for (let i = 1; i < n; i++) {
+      if (!Number.isNaN(pin[i])) continue
+      p[i] = Math.min(cap[i], p[i - 1] + step, Math.max(p[i - 1] - step, p[i]))
+    }
+    for (let i = n - 2; i >= 0; i--) {
+      if (!Number.isNaN(pin[i])) continue
+      p[i] = Math.min(cap[i], p[i + 1] + step, Math.max(p[i + 1] - step, p[i]))
+    }
+  }
+  /* Never below the shore: a path at the water's level would be a ford. */
+  for (let i = 0; i < n; i++) p[i] = Math.max(p[i], -1)
+  return p
+}
+
+/**
+ * The height of every walk column: the profile at its sample for the path,
+ * and for a spur a smooth run from the path's height where it leaves down
+ * to plot level where it arrives. Over water, never below 1.
+ */
+export function walkHeights(model, profile, spurs, KIND) {
+  const n = model.W * model.D
+  for (let j = 0; j < n; j++) {
+    const k = model.kind[j]
+    if (k === KIND.PATH || (k === KIND.BRIDGE && model.walk[j] >= 0)) {
+      model.walkH[j] = Math.round(profile[model.walk[j]])
+    } else if (k === KIND.SPUR || (k === KIND.BRIDGE && model.spur[j] >= 0)) {
+      /* Linear, not eased: the ceiling in walkProfile guarantees the drop
+       * over the spur's length is within the grade, and an ease would
+       * double the steepest step in the middle. */
+      const sp = spurs[model.spur[j]]
+      model.walkH[j] = Math.round(profile[sp.from] * (1 - model.spurT[j]))
+    } else continue
+    if (k === KIND.BRIDGE) model.walkH[j] = Math.max(1, model.walkH[j])
   }
 }
 
-/*
- * LIGHT AT INTERVALS, and it is worth doing properly now that block light
- * exists.
- *
- * docs/builds/README.md's lighting section is the constraint: light falls one
- * level per block and STOPS DEAD at a solid block, and "a lamp at y = 1 or
- * y = 2 sits exactly at eye level". A torch on top of a three-block post
- * sits at y = 3 -- above the eyeline, with nothing between it and the path,
- * so its 14 levels fall on the ground the walker is using rather than into
- * the walker's face.
- *
- * SPACED 20 BLOCKS AND ALTERNATING SIDES, with the interval jittered by the
- * post's own coordinate so the spacing is not a metronome either. Between
- * them the path is genuinely dark at night, which is the point of lighting a
- * path at intervals rather than lighting a path.
+/**
+ * SETTLE THE WALK so no two neighbouring walk columns differ by more than a
+ * block. The profile guarantees that ALONG the path and along each spur;
+ * where a spur's first columns sit beside path columns drawn from a
+ * different sample, or a spill patch beside an edge, the two can disagree by
+ * two. The higher of such a pair comes down -- never a bridge deck below 1,
+ * never the spawn clearing off 0 -- until nothing moves.
  */
-export function lampPosts(s, model, samples) {
+export function settleWalk(model, KIND) {
+  const { W, D } = model
+  const walk = (k) => k === KIND.PATH || k === KIND.SPUR || k === KIND.BRIDGE
+  for (let round = 0; round < 16; round++) {
+    let moved = 0
+    for (let z = 0; z < D; z++) {
+      for (let x = 0; x < W; x++) {
+        const i = z * W + x
+        if (!walk(model.kind[i])) continue
+        let lo = Infinity
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, nz = z + dz
+          if (nx < 0 || nx >= W || nz < 0 || nz >= D) continue
+          const j = nz * W + nx
+          if (walk(model.kind[j]) && model.walkH[j] < lo) lo = model.walkH[j]
+        }
+        const floor = model.kind[i] === KIND.BRIDGE ? 1 : nearSpawn(x, z, SPAWN_FLAT) ? 0 : -1
+        const want = Math.max(floor, Math.min(model.walkH[i], lo + 1))
+        if (want !== model.walkH[i]) { model.walkH[i] = want; moved++ }
+      }
+    }
+    if (!moved) return round
+  }
+  return 16
+}
+
+/** The slabs a climb is walked up by. See the header: 0.5 is under the
+ *  0.6 step height, so slab-then-block needs no jump. */
+const STEP_SLABS = ['cobblestone_slab', 'mossy_cobblestone_slab', 'cobblestone_slab', 'stone_slab']
+
+/**
+ * Lay a slab on every walk column that has a walk column one block higher
+ * beside it. Returns how many were laid.
+ */
+export function steps(V, model, KIND) {
+  const { W, D } = model
+  let laid = 0
+  for (let z = 0; z < D; z++) {
+    for (let x = 0; x < W; x++) {
+      const j = z * W + x
+      const k = model.kind[j]
+      if (k !== KIND.PATH && k !== KIND.SPUR && k !== KIND.BRIDGE) continue
+      const h = model.h[j]
+      let up = false
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, nz = z + dz
+        if (nx < 0 || nx >= W || nz < 0 || nz >= D) continue
+        const m = nz * W + nx
+        const km = model.kind[m]
+        if ((km === KIND.PATH || km === KIND.SPUR || km === KIND.BRIDGE) && model.h[m] === h + 1) { up = true; break }
+      }
+      if (!up) continue
+      const key = k === KIND.BRIDGE ? 'spruce_slab' : STEP_SLABS[Math.floor(hash(x, z, 811) * STEP_SLABS.length)]
+      if (V.put(x, h, z, key)) { model.standing[j] = 1; laid++ }
+    }
+  }
+  return laid
+}
+
+/*
+ * LAMP POSTS, alternating sides, every 18 to 26 blocks of walking. A post is
+ * three stripped oak logs and a torch. The walk is lit at night and the
+ * spacing is irregular enough not to read as a street.
+ */
+export function lampPosts(V, model, samples, KIND) {
   let since = 40
   let side = 1
   samples.forEach((p, i) => {
@@ -262,56 +384,21 @@ export function lampPosts(s, model, samples) {
     const want = 18 + 8 * smoothNoise(i, 0, 23, 59)
     if (since < want) return
     const [wl, wr] = halves(i)
-    /*
-     * 1.8 BLOCKS OUTSIDE THE EDGE, ON WHICHEVER SIDE, and the sign is the
-     * whole of it.
-     *
-     * This read `(side > 0 ? wr : -wl) + 1.8`, which is the right offset on
-     * the right-hand side and lands INSIDE the path on the left: wl runs 1.0
-     * to 2.15, so -wl + 1.8 is -0.35 to +0.8 -- within a block of the
-     * centreline. The check below then correctly refused to stand a post
-     * there and returned WITHOUT flipping `side`, so from the second lamp
-     * onward `side` was stuck at -1 and every candidate for the rest of the
-     * world landed on the path and was refused. The world had ONE lamp in it,
-     * at the first sample, four rows from the north edge behind spawn, and
-     * 412 blocks of walk with nothing lighting them.
-     *
-     * The guard is what made it invisible. It was added after a post landed
-     * dead centre of the path four blocks from spawn, which is a thing you
-     * trip over; it turned that into no lamps at all, which is a thing you
-     * have to count.
-     */
     const d = side > 0 ? wr + 1.8 : -(wl + 1.8)
     const x = Math.round(p.x + p.nx * d)
     const z = Math.round(p.z + p.nz * d)
-    if (!onMap(x, z)) return
-    const j = at(x, z)
-    const k = model.kind[j]
-    /*
-     * AND NOT ON THE PATH ITSELF, which the first version got wrong in the
-     * most visible place there is: the offset puts the post outside the
-     * measured width, but the SPILL pass widens the path a block or two at
-     * random, so a post landed dead centre of the path four blocks from
-     * spawn -- the first thing any visitor saw, and a thing you had to walk
-     * around. The offset is where a post WANTS to be; this is the check that
-     * it ended up somewhere a post can stand.
-     */
-    if (k !== KIND.FIELD && k !== KIND.BANK) return
+    if (x < 0 || x >= model.W || z < 0 || z >= model.D) return
+    const j = z * model.W + x
+    if (model.kind[j] !== KIND.FIELD || model.standing[j]) return
     if (nearSpawn(x, z, 9)) return
+    const base = model.h[j]
+    /* Never on a hillside the path has cut into: the post would stand a
+     * block above the walk and read as somebody else's fence. */
+    if (Math.abs(base - Math.round(model.walkH[model.near[j]] ?? base)) > 1) return
     since = 0
     side = -side
-    const base = model.h[j]
-    s.pillar(x, z, base, base + 2, 'stripped_oak_log')
-    s.set(x, base + 3, z, 'torch')
-    /*
-     * AND THE COLUMN IS SPOKEN FOR. src/builds/flora.js's ground cover runs
-     * after this and writes a bush, a stump or a boulder at exactly `base` --
-     * the block this post is standing on -- for about eight percent of the
-     * columns it visits. It skips anything with `standing` set, which is the
-     * flag the bamboo pass already uses for the same reason, and a lamp post
-     * never set it. A leaf block where the bottom of a post should be is a
-     * torch floating over a bush.
-     */
+    for (let y = base; y <= base + 2; y++) V.put(x, y, z, 'stripped_oak_log')
+    V.put(x, base + 3, z, 'torch')
     model.standing[j] = 1
   })
 }

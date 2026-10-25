@@ -821,6 +821,27 @@ function chroma(buf) {
 
 const GREY_ENOUGH_TO_TINT = 0.22
 
+/**
+ * Replace each pixel with its luminance, rescaled so the opaque pixels
+ * average REGREY_MEAN -- about where vanilla's own greyscale leaf art sits,
+ * so the biome tint lands at the brightness it was chosen for. In place.
+ */
+const REGREY_MEAN = 165
+function regreyed(buf) {
+  let sum = 0, n = 0
+  for (let i = 0; i < buf.length; i += 4) {
+    if (buf[i + 3] === 0) continue
+    sum += 0.2126 * buf[i] + 0.7152 * buf[i + 1] + 0.0722 * buf[i + 2]
+    n++
+  }
+  const k = n && sum ? REGREY_MEAN / (sum / n) : 1
+  for (let i = 0; i < buf.length; i += 4) {
+    const l = Math.min(255, (0.2126 * buf[i] + 0.7152 * buf[i + 1] + 0.0722 * buf[i + 2]) * k)
+    buf[i] = buf[i + 1] = buf[i + 2] = l
+  }
+  return buf
+}
+
 /** Alpha-composite `over` onto `base`, in place. */
 function composite(base, over) {
   for (let i = 0; i < base.length; i += 4) {
@@ -975,6 +996,11 @@ async function decodeAll(dir, allowSubstitutes) {
   for (const [name, recipe] of Object.entries(MATERIAL_RECIPES)) {
     const buf = raw.get(name)
     if (!buf) continue
+    /* `regrey`: a source the pack drew pre-coloured, where the colour is
+     * WRONG for the block -- CE's birch leaves are autumn orange, vanilla's
+     * are green -- is reduced to its luminance first and then tinted like
+     * any greyscale leaf. See regreyed() below. */
+    if (recipe.tint && recipe.regrey && chroma(buf) >= GREY_ENOUGH_TO_TINT) regreyed(buf)
     if (recipe.tint && chroma(buf) < GREY_ENOUGH_TO_TINT) { multiply(buf, recipe.tint); tinted++ }
     // A flat alpha, for a material whose translucency is a property of the
     // BLOCK rather than of the artwork. Vanilla bakes 180 into water_still.png

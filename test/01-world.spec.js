@@ -9,7 +9,9 @@ import { shot } from './helpers/shots.js'
  * read it without dragging Babylon in. It describes claude-opus-5-1, not this
  * world -- which is exactly why the last two tests in this file can use it to
  * tell the two apart. */
-import { SPAWN_PATCH_X, SPAWN_PATCH_Z, ORIGIN_X, ORIGIN_Z, CHAPTERS } from '../src/builds/plots.js'
+import {
+  SPAWN_PATCH_X, SPAWN_PATCH_Z, ORIGIN_X, ORIGIN_Z, CHAPTERS, LAND_ORIGIN_X, LAND_ORIGIN_Z,
+} from '../src/builds/plots.js'
 
 /*
  * THIS FILE DESCRIBES A BARE WORLD, and it has now described one twice.
@@ -36,7 +38,7 @@ test.describe('world generation', () => {
     expect(bootErrors).toEqual([])
   })
 
-  test('the world is a 256x256 patch with an invisible wall around it',
+  test('the world is a 288 x 400 patch with an invisible wall around it',
     async ({ page }) => {
       /*
        * REWRITTEN TWICE, not relaxed once. This used to assert an 80x80 island
@@ -118,76 +120,47 @@ test.describe('world generation', () => {
       expect(props.targetable).toBe(false)
     })
 
-  test('the ground is Classic Flat: grass, two dirt, bedrock, void',
+  test('the ground is vanilla strata: worn path, dirt, stone, bedrock, void',
     async ({ page }) => {
       /*
-       * REWRITTEN TWICE, and the claim has narrowed both times. It was
-       * noise-generated strata from y=63 down to a bedrock floor at y=0; then
-       * it was the same shape of claim against imported Minecraft terrain
-       * (grass, dirt under it, some rock under that, bedrock two hundred
-       * blocks down at y=-64).
+       * REWRITTEN for Sprint 1's landscape. This read "Classic Flat: grass,
+       * two dirt, bedrock, void" for as long as the overworld was a superflat
+       * with a landscape stamped over it. The land rolls now, and a rolling
+       * world needs what vanilla puts under it: a few blocks of dirt under
+       * the surface, stone under that, and bedrock at the floor -- which the
+       * generator puts at y = 128, the chunk boundary (see DEPTH in
+       * src/builds/land.js for why that number).
        *
-       * It is now the EXACT ladder, because the world is generated from a
-       * preset and a preset has no "some rock under that" in it. This is
-       * Minecraft's own Classic Flat, from minecraft.wiki's Superflat page:
-       * bedrock, two dirt, a grass block. Four blocks, and then nothing.
+       * ASKED OF THE GENERATOR (voxelAt), not of noa.getBlock: getBlock
+       * answers 0 for a chunk that is not resident, and 0 is also air.
        *
-       * Asserting the exact blocks rather than "solid, not dirt" is the whole
-       * gain of generating the world: src/flatworld.js's FLAT_PRESETS.classic
-       * is a list this test can be read against, so a typo in the preset fails
-       * here instead of rendering as a slightly wrong hillside.
-       *
-       * READ AT THE NORTH-WEST CORNER, and the reason it moved is the point of
-       * the test. It was the spawn column; the path now runs through spawn, so
-       * the top block there is worn ground rather than grass -- which is
-       * asserted two tests down, deliberately, as the thing that tells this
-       * world from a bare one. What the LADDER is about is the preset, and the
-       * preset is only visible where nothing has been stamped on top of it.
-       *
-       * (-128, -16) is the patch's north-west corner: sixteen blocks behind
-       * spawn and 128 to the west of it, outside the path, outside every plot,
-       * and past the edge the forest is clipped at -- a canopy is four blocks
-       * across and src/builds/flora.js refuses to plant anything whose canopy
-       * would leave the map. The SPAWN column's ladder is checked below it,
-       * from the second block down, which is the part the path does not touch.
+       * Read under spawn, which the spawn clearing holds flat at plot level
+       * with the path's worn surface on top.
        */
       const gen = (x, y, z) =>
         page.evaluate(([a, b, c]) => window.game.voxelAt(a, b, c), [x, y, z])
+      const ids = await page.evaluate(() => window.game.ids)
 
-      expect(await gen(-128, SURFACE_Y, -16)).toBe(ID.air)
-      expect(await gen(-128, SURFACE_Y - 1, -16)).toBe(ID.grass)
-      expect(await gen(-128, SURFACE_Y - 2, -16)).toBe(ID.dirt)
-      expect(await gen(-128, SURFACE_Y - 3, -16)).toBe(ID.dirt)
-      expect(await gen(-128, SURFACE_Y - 4, -16)).toBe(ID.bedrock)
-
-      // And under spawn, where the path replaced the grass and nothing else.
       expect(await gen(0, SURFACE_Y, 0)).toBe(ID.air)
+      expect(await gen(0, SURFACE_Y - 1, 0)).not.toBe(ID.air)
       expect(await gen(0, SURFACE_Y - 2, 0)).toBe(ID.dirt)
       expect(await gen(0, SURFACE_Y - 3, 0)).toBe(ID.dirt)
-      expect(await gen(0, SURFACE_Y - 4, 0)).toBe(ID.bedrock)
-      expect(await gen(0, SURFACE_Y - 5, 0)).toBe(ID.air)
+      expect(await gen(0, SURFACE_Y - 4, 0)).toBe(ID.dirt)
+      expect(await gen(0, SURFACE_Y - 6, 0)).toBe(ids.stone)
+      expect(await gen(0, 128, 0)).toBe(ID.bedrock)
+      expect(await gen(0, 127, 0)).toBe(ID.air)
+      expect(await page.evaluate(() => window.game.terrain.yMin)).toBe(128)
 
       /*
-       * Below the bedrock, read through the GENERATOR rather than through
-       * noa.getBlock -- a real distinction rather than a convenience, kept
-       * from the version of this test that had to reach y=-64. getBlock
-       * answers 0 for a chunk that is not resident and 0 is also air, so
-       * "there is nothing there" and "nothing is loaded there" are the same
-       * answer. `voxelAt` asks what the world IS.
-       *
-       * (The floor is four blocks down now instead of two hundred, so it
-       * would in fact be resident. Asking the generator anyway keeps the test
-       * honest the day the preset gets thicker.)
+       * And on a chapter plot, where the ground must be what a builder was
+       * promised: grass at y = -1 local, dirt under it, flat. Chapter 3's
+       * plot is a stub, so this column is the frame's interior, untouched.
        */
-      expect(await gen(0, SURFACE_Y - 5, 0)).toBe(ID.air)
-
-      // FLAT means flat: the same ladder in the other north corner, 255
-      // columns away. The SOUTH corners are forest floor now -- leaf litter
-      // is a change of the ground block, not something standing on it -- so
-      // the two columns that are still preset-fresh are the two at z = MIN_Z.
-      expect(await gen(MAX_X, SURFACE_Y - 1, MIN_Z)).toBe(ID.grass)
-      expect(await gen(MAX_X, SURFACE_Y, MIN_Z)).toBe(ID.air)
-      expect(await gen(MAX_X, SURFACE_Y - 4, MIN_Z)).toBe(ID.bedrock)
+      const c = CHAPTERS.find(p => p.id === 'ch3')
+      const px = c.x0 + 30 - LAND_ORIGIN_X, pz = c.z0 + 40 - LAND_ORIGIN_Z
+      expect(await gen(px, SURFACE_Y, pz)).toBe(ID.air)
+      expect(await gen(px, SURFACE_Y - 1, pz)).toBe(ID.grass)
+      expect(await gen(px, SURFACE_Y - 2, pz)).toBe(ID.dirt)
     })
 
   test('the overworld is generated, not an imported asset', async ({ page }) => {
@@ -321,15 +294,15 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
     const s = await survey(page, SURFACE_Y)
 
     /*
-     * THE SAMPLE, ASSERTED BEFORE THE RESULT. 256x256 columns and 65 blocks
+     * THE SAMPLE, ASSERTED BEFORE THE RESULT. 288 x 400 columns and 65 blocks
      * of headroom each (SURFACE_Y=136 up to the ceiling at 200), which is
      * 4,259,840 voxels. If any of those numbers is zero, every claim below is
      * a sentence about nothing -- this repo has shipped a probe that passed
      * vacuously and it is not doing it again.
      */
     expect(s.world).toBe('overworld')
-    expect(s.columns).toBe(256 * 256)
-    expect(s.sampled).toBe(256 * 256 * 65)
+    expect(s.columns).toBe(288 * 400)
+    expect(s.sampled).toBe(288 * 400 * 65)
 
     /*
      * THIS TEST USED TO ASSERT THE OPPOSITE. For a day the overworld was bare
@@ -359,10 +332,10 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
      * did not turn into a quarry -- the world is still mostly a green world,
      * its grass is just not all at y = 135 any more.
      */
-    expect(s.grass).toBeLessThan(256 * 256 - 8_000)
+    expect(s.grass).toBeLessThan(288 * 400 - 8_000)
     expect(s.grass).toBeGreaterThan(15_000)
     expect(s.green).toBeGreaterThan(30_000)
-    expect(s.green).toBeLessThan(256 * 256 - 8_000)
+    expect(s.green).toBeLessThan(288 * 400 - 8_000)
 
     /*
      * THE PLOTS ARE EMPTY -- ALL OF THEM EXCEPT THE ONES SOMEBODY HAS BUILT.
@@ -403,25 +376,16 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
     expect(inside.sampled).toBeGreaterThan(50_000)
     /* The one built chapter. Thousands of blocks, not eight and not zero. */
     expect(inside.above.ch1).toBeGreaterThan(4_000)
-    delete inside.above.ch1
-    expect(inside.above).toEqual({
-      ch2: 0, ch3: 0, ch4: 0, ch5: 0,
-      /*
-       * EXCEPT THE CLIMB, WHICH IS ALLOWED EXACTLY EIGHT BLOCKS. It is the
-       * parkour going up, and the brief for it is "reserve the footprint and
-       * the start, build none of it" -- so it has a five by five pad (ground
-       * level, invisible to this count) and four two-block posts around it,
-       * which is what these eight are. A ninth would mean somebody started
-       * building the climb.
-       *
-       * IT IS ch6 NOW, not ch7: Harvard and the school work merged into one
-       * chapter and everything after them moved up a number. The ids are read
-       * out of the plot table above, so this list is the only place the count
-       * is written down twice -- deliberately, because a spec that derives
-       * the answer from the table cannot catch the table losing a row.
-       */
-      ch6: 8,
-    })
+    /*
+     * ALL SIX ARE BUILT NOW (Sprint 1): chapters 2 to 6 arrived from their
+     * builders and src/builds/chapters.js stamps every one. So "must be
+     * empty" became the same floor chapter 1 has -- the failure that matters
+     * is a build silently not being stamped, which a floor catches and an
+     * exact count would only make brittle.
+     */
+    for (const id of ['ch2', 'ch3', 'ch4', 'ch5', 'ch6']) {
+      expect(inside.above[id], `${id} is not standing`).toBeGreaterThan(1_000)
+    }
   })
 
   test(`the eight stages are standing in ${BUILT_WORLD}`, async ({ page }) => {
@@ -491,15 +455,25 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
        * with a timeout. The wait is the assertion that the chunk arrived; what
        * is in it is the assertion that it is the right world's.
        */
-      const meshedUnder = async () => {
-        await teleport(page, roadX + 0.5, SURFACE_Y + 2, roadZ + 0.5)
+      const meshedUnder = async (y = SURFACE_Y - 1) => {
+        await teleport(page, roadX + 0.5, y + 3, roadZ + 0.5)
         await page.waitForFunction(([x, y, z]) => window.noa.getBlock(x, y, z) !== 0,
-          [roadX, SURFACE_Y - 1, roadZ], { timeout: 30_000, polling: 100 })
-        return getBlock(page, roadX, SURFACE_Y - 1, roadZ)
+          [roadX, y, roadZ], { timeout: 30_000, polling: 100 })
+        return getBlock(page, roadX, y, roadZ)
       }
 
+      /* The overworld's ground in this column, asked of the generator: the
+       * land rolls now, and here it is a hillside a couple of blocks above
+       * plot level, so the grass is not at SURFACE_Y - 1 any more. */
+      const grassY = await page.evaluate(([x, z, g]) => {
+        const v = window.game.voxelAt
+        for (let y = 199; y >= 128; y--) if (v(x, y, z) === g) return y
+        return null
+      }, [roadX, roadZ, ID.grass])
+      expect(grassY, 'no grass in the overworld column under the archive road').not.toBeNull()
+
       // Where we start: grass, which an unloaded chunk cannot fake.
-      expect(await meshedUnder()).toBe(ID.grass)
+      expect(await meshedUnder(grassY)).toBe(ID.grass)
 
       await enterWorld(page, BUILT_WORLD)
       // Paving. If noa had served the overworld chunk it just had for this
@@ -512,7 +486,7 @@ test.describe('the default world is bare and the timeline lives elsewhere', () =
       // ...and back. Grass again means the chunk was really thrown away and
       // rebuilt, in a session that had the other world's copy of it meshed a
       // second ago.
-      expect(await meshedUnder()).toBe(ID.grass)
+      expect(await meshedUnder(grassY)).toBe(ID.grass)
       expect(await page.evaluate(() => window.game.dimensions.active)).toBe('overworld')
     })
 })

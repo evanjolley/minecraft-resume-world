@@ -6,13 +6,11 @@
  * a build (a sign above the eyeline, a dark room, a facade that does not
  * read as the building) are only visible at eye level.
  *
- * SKIPPED UNTIL THE CHAPTERS ARE WIRED. The builders write the plot files;
- * the landscape pass registers them in src/builds/chapters.js and decides
- * where the plots sit. Until a build is stamped into the overworld there is
- * nothing to photograph, so each describe block checks for its own building
- * (a block only that build places, at a plot-local spot) and skips if it is
- * not there. Coordinates come from the CHAPTERS table, so a re-laid-out
- * world moves the camera with the plot.
+ * WIRED. These skipped until the landscape pass registered both builds in
+ * src/builds/chapters.js; now each describe block ASSERTS its own building
+ * is standing (a block only that build places, at a plot-local spot) before
+ * it photographs anything. Coordinates come from the CHAPTERS table, so a
+ * re-laid-out world moves the camera with the plot.
  *
  * OUT_DIR, if set, is where the frames are written; otherwise
  * test/screenshots/ like every other shots spec.
@@ -65,7 +63,7 @@ test.describe('chapter 2, the Science Center', () => {
     await enterWorld(page, 'overworld')
     const c = plotOf('ch2')
     // The observatory's telescope pier: only this build puts iron there.
-    test.skip(!(await has(page, c, [56, 45, 57], 'iron_block')), 'ch2 is not stamped in this world yet')
+    expect(await has(page, c, [56, 45, 57], 'iron_block'), 'ch2 is not stamped in the overworld').toBe(true)
     await useGamemode(page, 'creative')
     await doubleTapFly(page)
 
@@ -93,7 +91,7 @@ test.describe('chapter 2, the Science Center', () => {
     await frame(page, c, '99-ch2-night-plaza', [30, 27], { heading: 0.2, pitch: -0.35 })
     await frame(page, c, '99-ch2-night-yard', [3, 6], { heading: SW, pitch: -0.05 })
     await chatCommand(page, '/time set day')
-    expect(await page.evaluate(() => window.game.terrain.width)).toBe(256)
+    expect(await page.evaluate(() => window.game.terrain.width)).toBe(288)
   })
 })
 
@@ -103,7 +101,7 @@ test.describe('chapter 3, Bilibili', () => {
     await enterWorld(page, 'overworld')
     const c = plotOf('ch3')
     // The today tower's lamp: only this build puts a sea lantern there.
-    test.skip(!(await has(page, c, [12, 28, 52], 'sea_lantern')), 'ch3 is not stamped in this world yet')
+    expect(await has(page, c, [12, 28, 52], 'sea_lantern'), 'ch3 is not stamped in the overworld').toBe(true)
     await useGamemode(page, 'creative')
     await doubleTapFly(page)
 

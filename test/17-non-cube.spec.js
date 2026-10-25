@@ -46,12 +46,13 @@ import {
  * a choice -- trim chunkAddDistance and they start writing into unloaded
  * chunks, which noa drops without a word.
  */
-// 340 cells, 20 a row. It was 14 rows for the 280 slab and stair variants and
+// 380 cells, 20 a row. It was 14 rows for the 280 slab and stair variants and
 // held exactly them, so the five torch ids overflowed it the day they landed;
 // signs going from eight ids to twenty overflowed it again at 305; bamboo's
-// thirteen overflowed it a third time at 322. Every time the check below did
+// thirteen overflowed it a third time at 322, and the landscape's 28 plant ids
+// a fourth at 350. Every time the check below did
 // its job and every time the answer was one more row, not a bigger assertion.
-const IDS_AT = { x: 8, y: 72, z: 0, wide: 20, deep: 17 }
+const IDS_AT = { x: 8, y: 72, z: 0, wide: 20, deep: 19 }
 const ORIENT_AT = { x: -10, y: 76, z: 0 }
 /*
  * The slab/stair rig, built in mid-air well clear of the terrain.

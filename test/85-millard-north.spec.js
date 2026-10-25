@@ -359,6 +359,6 @@ test.describe('the school, photographed', () => {
     await look(page, { heading: HEADING.southPlusZ, pitch: 1.35 })
     await waitFrames(page, 20)
     await page.screenshot({ path: path.join(SHOTS, '85-above.png') })
-    expect(await page.evaluate(() => window.game.terrain.width)).toBe(256)
+    expect(await page.evaluate(() => window.game.terrain.width)).toBe(288)
   })
 })

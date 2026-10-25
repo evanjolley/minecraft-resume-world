@@ -375,7 +375,7 @@ const BLOCK_ITEMS = BLOCK_TYPES
   .filter(b => !b.fluid && !b.invisible && !isOrientationVariant(b))
   .map(b => ({
     id: b.id, key: b.key, name: b.name, places: b.id, block: b,
-    ...(b.flatItem ? { flat: true, texture: b.key, from: b.flatFrom ?? 'block' } : {}),
+    ...(b.flatItem ? { flat: true, texture: b.flatTexture ?? b.key, from: b.flatFrom ?? 'block' } : {}),
   }))
 
 /*
@@ -830,6 +830,11 @@ const DROP_RULES = [
     'shears take the leaf block; a hand or an axe gets 2% sticks'],
 
   /* ---- blocks that turn into something else ---- */
+  [/^(short_grass|fern|tall_grass|large_fern)(_top)?$|^dead_bush$/, NOTHING,
+    'grass and ferns drop seeds (or nothing), and a dead bush sticks, in vanilla; there is no seed item here'],
+  [/^(dandelion|poppy|blue_orchid|allium|azure_bluet|(red|orange|white|pink)_tulip|oxeye_daisy|cornflower|lily_of_the_valley|brown_mushroom|red_mushroom|lily_pad)$|^(lilac|rose_bush|peony)(_top)?$/, self,
+    'a flower, a mushroom or a lily pad drops itself; a tall flower drops one, from either half'],
+
   [/^gravel$/, [[one('flint', 1, 1, 0.1), one('gravel')]],
     '10% flint, OTHERWISE the gravel back -- one roll, two outcomes'],
   [/^clay$/, [[one('clay_ball', 4)]], 'four clay balls'],

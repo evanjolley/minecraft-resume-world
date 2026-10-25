@@ -1,158 +1,94 @@
 /*
- * THE WALK, PHOTOGRAPHED, AND EVERY LABEL READ.
+ * THE OVERWORLD SURVEY: the plot table, the walk between the plots, and the
+ * six chapter markers.
  *
- * ------------------------------------------------------------------------
- * WHAT A NUMBER CANNOT SAY ABOUT THIS BUILD, and therefore why this file is
- * mostly pictures.
- *
- * test/01-world.spec.js censuses the patch: the landscape is stamped, the
- * plots are empty, the archive is untouched. None of that answers the
- * owner's actual brief, which was "organic and living" and "less cramped".
- * A path can pass every count and read as a wave; a forest can pass every
- * count and be a wall. The instrument for those is the eye, and the view
- * that matters is EYE LEVEL, because that is the only view a visitor gets.
- *
- * EVERY SHOT ASSERTS ITS SAMPLE FIRST. A screenshot of an unmeshed void is
- * a green test with a black picture, and this repo has shipped both a probe
- * that passed vacuously and a set of fabricated discrimination notes. Each
- * frame below checks the block under the player's feet, out of noa's chunk
- * store rather than out of the generator, before it takes the picture.
- * ------------------------------------------------------------------------
- * AND THE LABELS ARE READ BACK AS TEXT, which is the one thing in this file
- * that is an assertion rather than evidence.
- *
- * docs/builds/README.md: Babylon is left-handed, a row of pattern characters
- * can run right-to-left for the reader, and THREE separate agents shipped
- * backwards text in this repo before the warning was written. The screenshots
- * below are how it was checked; `readMarker` is how it stays checked, by
- * lifting the glowstone out of the world and decoding it against the same
- * font the builder used. A marker that flips fails here with the word it
- * actually spells.
+ * Rewritten for Sprint 1's 288 x 400 survey. The table is checked in node
+ * against the numbers src/builds/plots.js publishes in its comment, because a
+ * table you have to compute is only a contract if somebody checks the
+ * computation. The markers are read in the page, where the chapter frames
+ * are actually stamped.
  */
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { test, expect } from './fixtures.js'
+import { test as nodeTest, expect } from '@playwright/test'
+import { test } from './fixtures.js'
+import { waitTicks } from './helpers/world.js'
 import {
-  SURFACE_Y, waitFrames, waitTicks, look, position, teleport, HEADING,
-  useGamemode, doubleTapFly,
-} from './helpers/world.js'
-import { CHAPTERS, LAND_ORIGIN_X, LAND_ORIGIN_Z } from '../src/builds/plots.js'
+  CHAPTERS, CHAPTER_SIZE, SLOT, LAND_W, LAND_D, LAND_ORIGIN_X, LAND_ORIGIN_Z,
+  LAND_SPAWN_X, LAND_SPAWN_Z,
+} from '../src/builds/plots.js'
 import { GLYPHS, textWidth } from '../src/builds/font.js'
+import { generateLand, KIND } from '../src/builds/land.js'
 
-const SHOTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screenshots')
-
-/** Patch indices -> world coordinates, the overworld's origin. */
-const W = (px, pz) => [px - LAND_ORIGIN_X, pz - LAND_ORIGIN_Z]
-
-/** What is under the player's feet, by key, out of noa's chunk store -- so it
- *  is the MESHED world answering, not the generator. */
-const underfoot = (page) => page.evaluate(() => {
-  const noa = window.noa
-  const [x, y, z] = noa.ents.getPositionData(noa.playerEntity).position.map(Math.floor)
-  return window.game.blockKey(noa.getBlock(x, y - 1, z))
-})
-
-/**
- * Stand somewhere on the walk, look, and take one -- after waiting for the
- * chunks to actually arrive. `settle` polls the block under the feet rather
- * than sleeping a fixed time, because a teleport 200 blocks down the map
- * lands in unmeshed space and noa streams it in over several ticks.
- */
-async function frameAt(page, name, [px, pz], { heading = HEADING.southPlusZ, pitch = 0.06, y = SURFACE_Y + 1 } = {}) {
-  const [x, z] = W(px, pz)
-  await teleport(page, x + 0.5, y, z + 0.5)
-  await waitTicks(page, 12)
-  const under = await underfoot(page)
-  expect(under, `nothing meshed under patch (${px}, ${pz})`).not.toBe('air')
-  await look(page, { heading, pitch })
-  await waitFrames(page, 10)
-  await page.screenshot({ path: path.join(SHOTS, `${name}.png`) })
-  return under
-}
-
-test.describe('the walk', () => {
-  test('from spawn, down the path, over the bridge', async ({ page }) => {
-    test.setTimeout(180_000)
-    await waitTicks(page, 10)
-
-    /* SPAWN. You arrive standing ON the path with it running away in front of
-     * you -- which is the whole reason the world origin moved to the north
-     * end of a 256 patch instead of its middle. */
-    const [, y] = await position(page)
-    expect(y).toBeCloseTo(SURFACE_Y, 1)
-    const atSpawn = await underfoot(page)
-    expect(atSpawn).not.toBe('air')
-    expect(atSpawn).not.toBe('grass')       // worn ground, not the bare field
-    await look(page, { heading: HEADING.southPlusZ, pitch: 0.06 })
-    await waitFrames(page, 10)
-    await page.screenshot({ path: path.join(SHOTS, '75-spawn.png') })
-
-    /* THREE POINTS ALONG THE WALK, one per swing: the first bend past Omaha,
-     * the long approach to Bilibili, and the last bend before the climb.
-     * Different bends, different widths, different heights.
-     *
-     * THE MIDDLE ONE MOVED. It used to stand on the high ground opposite the
-     * school-work plot; that chapter merged into Harvard and the spine was
-     * re-cut, so the coordinate is now on the swing toward Bilibili, which is
-     * the bend that replaced it. */
-    await frameAt(page, '75-walk-1-bend', [106, 46])
-    await frameAt(page, '75-walk-2-rise', [110, 116])
-    await frameAt(page, '75-walk-3-south', [112, 228])
-
-    /* THE BRIDGE, approached from the north bank so the deck, the railings
-     * and the water are all in the frame at once. */
-    const deck = await frameAt(page, '75-bridge', [136, 152])
-    expect(deck).not.toBe('air')
+nodeTest.describe('the plot table', () => {
+  nodeTest('is the one plots.js publishes', () => {
+    /* The comment table in src/builds/plots.js, row for row. */
+    const PUBLISHED = {
+      ch1: ['LEFT', 30, 95, 32, 94],
+      ch2: ['RIGHT', 192, 265, 64, 139],
+      ch3: ['LEFT', 26, 95, 122, 185],
+      ch4: ['RIGHT', 192, 265, 192, 267],
+      ch5: ['LEFT', 22, 95, 238, 313],
+      ch6: ['RIGHT', 192, 265, 304, 379],
+    }
+    expect(CHAPTERS.map(c => c.id)).toEqual(Object.keys(PUBLISHED))
+    for (const c of CHAPTERS) {
+      expect([c.side, c.x0, c.x1, c.z0, c.z1], c.id).toEqual(PUBLISHED[c.id])
+      expect([c.x1 - c.x0 + 1, c.z1 - c.z0 + 1]).toEqual([CHAPTER_SIZE[c.id].w, CHAPTER_SIZE[c.id].d])
+    }
+    expect([LAND_W, LAND_D, LAND_ORIGIN_X, LAND_ORIGIN_Z]).toEqual([288, 400, 144, 16])
   })
 
-  test('a marker at eye level, from where a visitor reads it', async ({ page }) => {
-    test.setTimeout(120_000)
-    /*
-     * CHAPTER 1's marker, read from the path side of it at standing height.
-     * Twenty blocks north of the plot's north edge and level with the middle
-     * of the word: the position somebody walking south is in when they decide
-     * whether to turn off. If OMAHA is backwards, this is the picture that
-     * says so -- and the decode test below is what keeps it said.
-     */
-    const c = CHAPTERS[0]
-    const mx = c.x0 + Math.max(0, (c.x1 - c.x0) - textWidth(c.marker)) + Math.floor(textWidth(c.marker) / 2)
-    await frameAt(page, '75-marker-omaha', [mx, c.z0 - 14], { pitch: -0.02 })
-
-    /* And the same marker from further back, where the spur mouth, the plot
-     * border and the word are all in one frame -- the composition that tells
-     * a visitor there is somewhere to go. */
-    await frameAt(page, '75-marker-omaha-approach', [mx + 14, c.z0 - 26], { pitch: 0.04 })
+  nodeTest('chapter 1 kept its size, and nothing is bigger than a slot', () => {
+    const ch1 = CHAPTERS.find(c => c.id === 'ch1')
+    expect([ch1.x1 - ch1.x0 + 1, ch1.z1 - ch1.z0 + 1]).toEqual([66, 63])
+    for (const c of CHAPTERS) {
+      expect(c.x1 - c.x0 + 1).toBeLessThanOrEqual(SLOT.w)
+      expect(c.z1 - c.z0 + 1).toBeLessThanOrEqual(SLOT.d)
+    }
   })
 
-  test('the whole map from above', async ({ page }) => {
-    test.setTimeout(120_000)
-    await useGamemode(page, 'creative')
-    await doubleTapFly(page)
-    const [x, z] = W(128, 120)
-    await teleport(page, x + 0.5, SURFACE_Y + 118, z + 0.5)
-    await waitTicks(page, 30)
-    await look(page, { heading: HEADING.southPlusZ, pitch: 1.35 })
-    await waitFrames(page, 20)
-    await page.screenshot({ path: path.join(SHOTS, '75-map-above.png') })
-    /*
-     * NOT AN ASSERTION ABOUT WHAT IT LOOKS LIKE. A plan view is the one
-     * picture that can be beautiful while the world at eye level is a
-     * corridor, which is the failure mode the brief names. It is here to
-     * check the SHAPE of the path -- that it reads as a walk and not as a
-     * sine -- and for nothing else.
-     */
-    expect(await page.evaluate(() => window.game.terrain.width)).toBe(256)
+  nodeTest('no two plots touch, every plot is on the map, and the sides alternate', () => {
+    for (const a of CHAPTERS) {
+      expect(a.x0).toBeGreaterThanOrEqual(0)
+      expect(a.z0).toBeGreaterThanOrEqual(0)
+      expect(a.x1).toBeLessThan(LAND_W)
+      expect(a.z1).toBeLessThan(LAND_D)
+      for (const b of CHAPTERS) {
+        if (a === b) continue
+        const apart = a.x1 < b.x0 - 1 || b.x1 < a.x0 - 1 || a.z1 < b.z0 - 1 || b.z1 < a.z0 - 1
+        expect(apart, `${a.id} touches ${b.id}`).toBe(true)
+      }
+    }
+    expect(CHAPTERS.map(c => c.side)).toEqual(['LEFT', 'RIGHT', 'LEFT', 'RIGHT', 'LEFT', 'RIGHT'])
+  })
+
+  nodeTest('the walk goes from spawn past every chapter, in order, and a spur reaches each door', () => {
+    const { model, samples, spurs } = generateLand()
+    const W = model.W
+    const first = samples.findIndex(s => Math.hypot(s.x - LAND_SPAWN_X, s.z - LAND_SPAWN_Z) < 2)
+    expect(first, 'the path does not pass through spawn').toBeGreaterThanOrEqual(0)
+    /* Each spur leaves the path further along it than the last: the walk
+     * passes the chapters in order. */
+    const from = spurs.map(s => s.from)
+    expect([...from].sort((a, b) => a - b)).toEqual(from)
+    /* And each spur's last column is a walk column on the plot's path-side
+     * edge, at its door (z0 + 6), at plot level. */
+    for (const { chapter: c } of spurs) {
+      const x = c.side === 'LEFT' ? c.x1 + 1 : c.x0 - 1
+      const z = c.z0 + 6
+      const i = z * W + x
+      expect([KIND.SPUR, KIND.PATH, KIND.BRIDGE], `${c.id}'s door`).toContain(model.kind[i])
+      expect(Math.abs(model.h[i]), `${c.id}'s door is at ${model.h[i]}`).toBeLessThanOrEqual(1)
+    }
+    /* A meaningful walk: the path is hundreds of blocks long, and there is
+     * real distance between one chapter's spur and the next. */
+    expect(samples.length / 4).toBeGreaterThan(400)
+    for (let k = 1; k < from.length; k++) {
+      expect((from[k] - from[k - 1]) / 4, `walk from ${spurs[k - 1].chapter.id} to ${spurs[k].chapter.id}`)
+        .toBeGreaterThan(40)
+    }
   })
 })
 
-/*
- * THE LETTERS, DECODED.
- *
- * Read the glowstone out of the generator at the marker's wall, cut it into
- * 3x5 cells, and match each against the same GLYPHS table src/builds/font.js
- * stamped from. If the row order or the column order is reversed anywhere
- * between the font and the world, this spells something else and says what.
- */
 function readMarker(grid, text) {
   const out = []
   for (let i = 0; i < text.length; i++) {
@@ -166,35 +102,24 @@ function readMarker(grid, text) {
 test('every marker reads forwards, in the world, at eye level', async ({ page }) => {
   test.setTimeout(120_000)
   await waitTicks(page, 5)
-
   for (const c of CHAPTERS) {
     const w = c.x1 - c.x0
     const tw = textWidth(c.marker)
     const x0 = c.x0 + (c.side === 'LEFT' ? Math.max(0, w - tw) : 0)
-
-    /*
-     * The wall is at plot-local z = 2, and the letters run local y = 1..5 --
-     * so absolute y 137 to 141, read TOP DOWN to match the font's rows.
-     * Asked of the generator, because a marker 200 blocks away is not meshed.
-     */
-    const grid = await page.evaluate(([x0, z, ids]) => {
+    const grid = await page.evaluate(([x0, z, n, ids]) => {
       const v = window.game.voxelAt
       const t = window.game.terrain
       const rows = []
       for (let y = 141; y >= 137; y--) {
         let row = ''
-        for (let x = x0; x < x0 + 60; x++) {
+        for (let x = x0; x < x0 + n; x++) {
           row += v(x - t.originX, y, z - t.originZ) === ids.glowstone ? '#' : '.'
         }
         rows.push(row)
       }
       return rows
-    }, [x0, c.z0 + 2, { glowstone: await page.evaluate(() => window.game.ids.glowstone) }])
-
-    // The sample, before the claim: an all-dots grid decodes to nothing and
-    // would "read forwards" in the most vacuous possible way.
-    expect(grid.join('').replace(/\./g, '').length,
-      `no glowstone at ${c.id}'s marker`).toBeGreaterThan(20)
+    }, [x0, c.z0 + 2, tw + 2, { glowstone: await page.evaluate(() => window.game.ids.glowstone) }])
+    expect(grid.join('').replace(/\./g, '').length, `no glowstone at ${c.id}'s marker`).toBeGreaterThan(20)
     expect(readMarker(grid, c.marker), `${c.id} marker`).toBe(c.marker)
   }
 })

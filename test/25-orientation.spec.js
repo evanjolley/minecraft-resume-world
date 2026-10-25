@@ -109,13 +109,14 @@ test.describe('world orientation', () => {
    * Asserted because a stale mental model gets exactly this wrong, and because
    * the numbers here and in island.js have to stay in step.
    */
-  test('the patch runs -128..127 in x and -16..239 in z', async ({ page }) => {
+  test('the patch runs -144..143 in x and -16..383 in z', async ({ page }) => {
     /* Was -87..40 / -56..71, when the overworld was a 128 patch at origin
-     * 87/56. It is 256 at origin 128/16 now: centred on x so the path may
-     * wander either side of you, and offset on z so spawn is at the START of
-     * the walk rather than in the middle of it. */
-    expect([MIN_X, MAX_X, MIN_Z, MAX_Z]).toEqual([-128, 127, -16, 239])
-    expect(await page.evaluate(() => window.game.terrain.originX)).toBe(128)
+     * 87/56, then -128..127 / -16..239 at 256 square. Sprint 1 made it
+     * 288 x 400 at origin 144/16: still centred on x so the path may wander
+     * either side of you, still offset on z so spawn is at the START of the
+     * walk, and no longer square. */
+    expect([MIN_X, MAX_X, MIN_Z, MAX_Z]).toEqual([-144, 143, -16, 383])
+    expect(await page.evaluate(() => window.game.terrain.originX)).toBe(144)
     expect(await page.evaluate(() => window.game.terrain.originZ)).toBe(16)
 
     expect(await page.evaluate(([x, y, z]) => window.game.voxelAt(x, y, z),
@@ -205,14 +206,18 @@ test.describe('world orientation', () => {
   test('the massif stands east of the climb, and the compass agrees',
     async ({ page }) => {
       const climb = CHAPTERS.find(c => c.id === 'ch6')
-      const peak = await page.evaluate(([ox, oz, floor]) => {
+      /* The land, not the builds: chapter 6 is a climb whose summit stands
+       * fifty blocks up, taller than the range, so plot columns are skipped. */
+      const plots = CHAPTERS.map(c => [c.x0, c.x1, c.z0, c.z1])
+      const peak = await page.evaluate(([ox, oz, floor, plots]) => {
         const v = window.game.voxelAt
         let best = { h: -999, px: -1, pz: -1 }
         let sampled = 0
-        // The southern quarter, every other column. The peaks biome and both
-        // of its anchors live below patch z = 200.
-        for (let pz = 200; pz < 256; pz += 2) {
-          for (let px = 0; px < 256; px += 2) {
+        // The southern quarter, every other column. The peaks biome's
+        // anchors all live below patch z = 300.
+        for (let pz = 300; pz < 400; pz += 2) {
+          for (let px = 0; px < 288; px += 2) {
+            if (plots.some(([x0, x1, z0, z1]) => px >= x0 && px <= x1 && pz >= z0 && pz <= z1)) continue
             sampled++
             for (let y = 199; y >= floor; y--) {
               if (v(px - ox, y, pz - oz) === 0) continue
@@ -222,7 +227,7 @@ test.describe('world orientation', () => {
           }
         }
         return { ...best, sampled }
-      }, [LAND_ORIGIN_X, LAND_ORIGIN_Z, SURFACE_Y - 4])
+      }, [LAND_ORIGIN_X, LAND_ORIGIN_Z, SURFACE_Y - 4, plots])
 
       // The sample, before the claim. A scan that found nothing has a very
       // clear opinion about where the mountain is.

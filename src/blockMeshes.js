@@ -781,6 +781,59 @@ for (let v = 0; v < BAMBOO_VARIANTS; v++) {
  */
 SHAPE_BOXES[BAMBOO_SAPLING_SHAPE] = [...BAMBOO_LEAF_PLANES]
 
+/* ------------------------------------------------------------------ *
+ * Ground plants: grass, ferns, flowers, mushrooms, the double-tall
+ * plants and the lily pad. Added for the landscape pass, which needed
+ * vanilla's ground cover and found none in this table.
+ *
+ * THE CROSS. `models/block/cross.json` (and `tinted_cross.json`, the same
+ * geometry with tintindex on the faces) is two planes:
+ *
+ *     from [0.8, 0, 8] to [15.2, 16, 8]     rotation y 45, rescale true
+ *     from [8, 0, 0.8] to [8, 16, 15.2]     rotation y 45, rescale true
+ *
+ * This time the 45 degrees IS transcribed, unlike the bamboo sapling above.
+ * A field of grass is the case that note predicted: axis-aligned crosses
+ * moire against the block grid across a meadow, and a meadow is exactly what
+ * this pass plants. `rescale` is the scale term the sapling note says was
+ * missing, and it is now in rotateVertices: vanilla's
+ * FaceBakery.applyElementRotation scales the two axes the rotation moves by
+ * 1 / cos(angle), so a 45-degree plane reaches the cell corners.
+ *
+ * ONE SHAPE KEY PER OUTLINE, because the targeting join in
+ * installNonCubeCollision is by box-list INSTANCE: four keys sharing one
+ * array would collapse into one outline. Each gets its own copy.
+ *
+ * All of them are pass-through. Every plant here is `.noCollission()` in
+ * vanilla's Blocks.java, and a rotated shape may not collide anyway.
+ * ------------------------------------------------------------------ */
+const CROSS_PLANES = [
+  [0.8 / 16, 0, 0.5, 15.2 / 16, 1, 0.5],
+  [0.5, 0, 0.8 / 16, 0.5, 1, 15.2 / 16],
+]
+const CROSS_ROTATION = { axis: 1, deg: 45, origin: [0.5, 0, 0.5], rescale: true }
+
+/** Shape keys for the plants, by outline. */
+export const PLANT_SHAPES = {
+  /* TallGrassBlock / DeadBushBlock: box(2, 0, 2, 14, 13, 14). */
+  grass: 'cross_grass',
+  /* FlowerBlock: box(5, 0, 5, 11, 10, 11). */
+  flower: 'cross_flower',
+  /* MushroomBlock: box(5, 0, 5, 11, 6, 11). */
+  mushroom: 'cross_mushroom',
+  /* DoublePlantBlock halves: the full cell. */
+  tall: 'cross_tall',
+  /* WaterlilyBlock: box(1, 0, 1, 15, 1.5, 15); the model is one flat plane
+   * at y = 0.25 (`models/block/lily_pad.json`, from [0, 0.25, 0] to
+   * [16, 0.25, 16], up and down faces only). */
+  lilyPad: 'lily_pad',
+}
+for (const key of [PLANT_SHAPES.grass, PLANT_SHAPES.flower, PLANT_SHAPES.mushroom, PLANT_SHAPES.tall]) {
+  SHAPE_BOXES[key] = CROSS_PLANES.map((b) => [...b])
+  SHAPE_ROTATION[key] = CROSS_ROTATION
+}
+SHAPE_BOXES[PLANT_SHAPES.lilyPad] = [[0, 0.25 / 16, 0, 1, 0.25 / 16, 1]]
+
 /**
  * The facing name for a block face's outward normal, or null for up and down.
  * The inverse of the FACINGS table, and the thing that turns "which face did
@@ -897,6 +950,16 @@ export function buildShapeMesh(scene, name, boxes, material, rotation = null) {
       const uSpan = box[axisOf(face.u) + 3] - box[axisOf(face.u)]
       const vSpan = box[axisOf(face.v) + 3] - box[axisOf(face.v)]
       if (uSpan === 0 || vSpan === 0) continue
+      /*
+       * AND ONLY ONE OF THE TWO FACES OF A PLANE. The two quads across a
+       * zero-thickness box sit at the same place facing opposite ways, and
+       * every material that draws a plane is a cutout with backface culling
+       * OFF -- so a single quad already shows from both sides, and the
+       * second drew every plant pixel twice. Measured when the landscape's
+       * grass arrived: on SwiftShader the doubled fill was the frame rate.
+       */
+      const na = axisOf(face.n)
+      if (box[na] === box[na + 3] && face.n[na] < 0) continue
 
       const a = axisOf(face.n)
       const plane = face.n[a] > 0 ? box[a + 3] : box[a]
@@ -976,7 +1039,8 @@ export function buildShapeMesh(scene, name, boxes, material, rotation = null) {
  * direction has no position -- rotating them about the origin too would move
  * them off the unit sphere and light the faces wrong.
  */
-function rotateVertices(positions, normals, { axis, deg, origin }) {
+function rotateVertices(positions, normals, rotation) {
+  const { axis, deg, origin } = rotation
   const rad = (deg * Math.PI) / 180
   const sin = Math.sin(rad), cos = Math.cos(rad)
   // The two axes that MOVE, in right-handed order, for each axis of rotation.
@@ -991,6 +1055,16 @@ function rotateVertices(positions, normals, { axis, deg, origin }) {
     const nu = normals[k + i], nv = normals[k + j]
     normals[k + i] = nu * cos - nv * sin
     normals[k + j] = nu * sin + nv * cos
+  }
+  /* Vanilla's `rescale: true`: the two axes the rotation moves are scaled by
+   * 1 / cos(angle) about the origin, so a turned plane still spans the cell.
+   * Positions only; a scaled normal would no longer be unit length. */
+  if (rotation.rescale) {
+    const s = 1 / Math.cos(rad)
+    for (let k = 0; k < positions.length; k += 3) {
+      positions[k + i] = o[i] + (positions[k + i] - o[i]) * s
+      positions[k + j] = o[j] + (positions[k + j] - o[j]) * s
+    }
   }
 }
 
@@ -1120,16 +1194,51 @@ export function installThinInstanceUploadFix(noa) {
   const mesher = noa._objectMesher
   const original = mesher.buildObjectMeshes.bind(mesher)
 
-  mesher.buildObjectMeshes = () => {
-    original()
-    for (const mesh of mesher.allBaseMeshes) {
-      const count = mesh?.thinInstanceCount
-      if (!count) continue
-      const data = mesh._thinInstanceDataStorage?.matrixData
-      if (!data) continue
-      mesh.thinInstanceSetBuffer('matrix', data)
-      mesh.thinInstanceCount = count
+  const reupload = (mesh) => {
+    const count = mesh?.thinInstanceCount
+    if (!count) return
+    const data = mesh._thinInstanceDataStorage?.matrixData
+    if (!data) return
+    mesh.thinInstanceSetBuffer('matrix', data)
+    mesh.thinInstanceCount = count
+  }
+
+  /*
+   * ONLY THE BUFFERS THAT CHANGED, which is the efficiency half of this fix
+   * and was found by profiling a boot.
+   *
+   * The first version re-set EVERY base mesh's buffer after every
+   * buildObjectMeshes call -- and noa calls that each time a chunk's object
+   * blocks change, which during boot is every chunk. So each chunk that
+   * loaded re-uploaded every instance of every plant, slab and torch in the
+   * whole loaded world: quadratic in the number of object blocks. With a
+   * bamboo jungle that was already the single largest cost of booting
+   * (WebGL bufferData, 14.5 s of a 40 s profile under SwiftShader), and the
+   * landscape's grass and flowers doubled it.
+   *
+   * noa marks exactly the meshes that changed: InstanceManager.updateMatrix
+   * calls `thinInstanceBufferUpdated('matrix')` only when its manager is
+   * dirty. So that call -- the one that does nothing on Babylon 6.49 -- is
+   * the one replaced, per mesh, with the re-set that works, and a clean
+   * mesh is never touched. A mesh noa creates between two builds is patched
+   * at the start of the next one, before noa's own pass reaches it.
+   */
+  const patched = new WeakSet()
+  const patch = (mesh) => {
+    if (!mesh || patched.has(mesh)) return false
+    patched.add(mesh)
+    const updated = mesh.thinInstanceBufferUpdated.bind(mesh)
+    mesh.thinInstanceBufferUpdated = (kind) => {
+      if (kind === 'matrix') reupload(mesh)
+      else updated(kind)
     }
+    return true
+  }
+
+  mesher.buildObjectMeshes = () => {
+    for (const mesh of mesher.allBaseMeshes) patch(mesh)
+    original()
+    for (const mesh of mesher.allBaseMeshes) if (patch(mesh)) reupload(mesh)
   }
 }
 
@@ -1225,6 +1334,8 @@ export const PASS_THROUGH_SHAPES = new Set([
   // The sapling is the one that IS vanilla: `Blocks.BAMBOO_SAPLING` carries
   // `.noCollission()` in the same properties chain as `.offsetType(XZ)`.
   BAMBOO_SAPLING_SHAPE,
+  /* And the ground plants, every one `.noCollission()` in vanilla. */
+  ...Object.values(PLANT_SHAPES),
 ])
 
 /** Minecraft's player step height: onto a slab, never onto a full block. */
@@ -1644,6 +1755,13 @@ for (let v = 0; v < BAMBOO_VARIANTS; v++) {
  * sprout does.
  */
 TARGET_BOXES[BAMBOO_SAPLING_SHAPE] = [[4 / 16, 0, 4 / 16, 12 / 16, 12 / 16, 12 / 16]]
+
+/* The plants' outlines, from the vanilla block classes named at PLANT_SHAPES. */
+TARGET_BOXES[PLANT_SHAPES.grass] = [[2 / 16, 0, 2 / 16, 14 / 16, 13 / 16, 14 / 16]]
+TARGET_BOXES[PLANT_SHAPES.flower] = [[5 / 16, 0, 5 / 16, 11 / 16, 10 / 16, 11 / 16]]
+TARGET_BOXES[PLANT_SHAPES.mushroom] = [[5 / 16, 0, 5 / 16, 11 / 16, 6 / 16, 11 / 16]]
+TARGET_BOXES[PLANT_SHAPES.tall] = [[2 / 16, 0, 2 / 16, 14 / 16, 1, 14 / 16]]
+TARGET_BOXES[PLANT_SHAPES.lilyPad] = [[1 / 16, 0, 1 / 16, 15 / 16, 1.5 / 16, 15 / 16]]
 
 /*
  * The invariant, checked at load rather than remembered. A rotated shape's

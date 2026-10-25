@@ -43,9 +43,10 @@ export const SPAWN = [0.5, SURFACE_Y + 2, 0.5]
 
 /**
  * World bounds, in world coordinates, mirroring island.js. The overworld is a
- * 256x256 patch with origin 128/16, so x is symmetric (-128..127, spawn in
- * the middle) and z is NOT (-16..239, spawn sixteen blocks in from the north
- * edge with the whole walk in front of it). The asymmetry is asserted in
+ * 288 x 400 patch with origin 144/16 (Sprint 1's survey; it was 256 square at
+ * 128/16), so x is symmetric (-144..143, spawn in the middle) and z is NOT
+ * (-16..383, spawn sixteen blocks in from the north edge with the whole walk
+ * in front of it). The asymmetry is asserted in
  * test/25-orientation.spec.js because a stale mental model gets exactly this
  * wrong, and because these numbers and island.js's WORLDS row have to stay in
  * step.
@@ -54,10 +55,10 @@ export const SPAWN = [0.5, SURFACE_Y + 2, 0.5]
  * THE NETHER IS STILL THAT PATCH, so any spec probing the Nether's edges
  * wants those numbers and not these.
  */
-export const MIN_X = -128
-export const MAX_X = 127
+export const MIN_X = -144
+export const MAX_X = 143
 export const MIN_Z = -16
-export const MAX_Z = 239
+export const MAX_Z = 383
 
 /*
  * A column with grass at SURFACE_Y - 1 and NOTHING above it, four blocks west
@@ -74,12 +75,11 @@ export const MAX_Z = 239
  * empty, because a drop column inside somebody's roof is a spec that fails
  * for a reason that has nothing to do with what it was testing.
  *
- * The default world is bare superflat now -- no canopy, no buildings, no
- * margins, every column identical and open to the ceiling -- so there is no
- * longer any property to choose a column BY. It goes back to (-4.5, 0.5)
- * purely because that is near spawn, which keeps the fall inside chunks a
- * booted world has already meshed. If builds ever return to the default
- * world, this constant needs an argument again.
+ * It is (-4.5, 0.5) because that is near spawn, which keeps the fall inside
+ * chunks a booted world has already meshed, and because the landscape keeps
+ * a SPAWN_CLEAR circle round spawn (src/builds/path.js) flat at plot level
+ * with nothing standing in it -- the property this column needs, now held
+ * on purpose rather than by the world being empty.
  */
 export const DROP_X = -4.5
 export const DROP_Z = 0.5

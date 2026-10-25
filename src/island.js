@@ -200,7 +200,14 @@ export const WORLDS = {
     /* No spawnX/spawnZ: the origin, which is what `?? 0` in spawnFor means.
      * `drop: 2` is inherited from the old SPAWN constant and is asserted by
      * specs that watch the landing. */
-    size: 256, originX: 128, originZ: 16, surfaceY: 136, drop: 2,
+    /*
+     * 288 x 400 since Sprint 1 grew the chapters to 74 x 76: the first world
+     * that is not square, so it says `sizeX` and `sizeZ` instead of `size`.
+     * See LAND_W / LAND_D in src/builds/plots.js for why those two numbers.
+     * Every reader below goes through `extent()`, which treats `size` as the
+     * square case. World x runs -144..143, world z -16..383.
+     */
+    sizeX: 288, sizeZ: 400, originX: 144, originZ: 16, surfaceY: 136, drop: 2,
   },
   /*
    * THE BUILT WORLD, AND THE NAMING CONVENTION -- read this before adding the
@@ -283,7 +290,14 @@ export const WORLDS = {
  *  when they were both 128, which would have silently regenerated the
  *  archive at 256 the moment this number changed. Both rows now name their
  *  own world's size. */
-export const PATCH_SIZE = WORLDS.overworld.size
+export const PATCH_SIZE = WORLDS.overworld.sizeX
+
+/** [width on x, depth on z] of a WORLDS row. A row says `size` when it is
+ *  square and `sizeX` / `sizeZ` when it is not; this is the one place that
+ *  knows both spellings. */
+export function extent(g) {
+  return [g.sizeX ?? g.size, g.sizeZ ?? g.size]
+}
 
 /*
  * Where the patch sits in world coordinates.
@@ -464,9 +478,10 @@ function install(name, world, source) {
    */
   const g = WORLDS[name]
   if (!g) throw new Error(`no geometry for world ${JSON.stringify(name)} -- add a row to WORLDS`)
-  if (world.width !== g.size || world.depth !== g.size) {
+  const [gw, gd] = extent(g)
+  if (world.width !== gw || world.depth !== gd) {
     throw new Error(`world ${name} is ${world.width}x${world.depth}, `
-      + `but WORLDS says ${g.size}x${g.size}`)
+      + `but WORLDS says ${gw}x${gd}`)
   }
   world.source = source
   world.minX = -g.originX
@@ -582,8 +597,8 @@ export function bounds(name = current) {
   const g = WORLDS[name]
   if (!g) throw new Error(`unknown world ${JSON.stringify(name)}`)
   return {
-    minX: -g.originX, maxX: g.size - g.originX - 1,
-    minZ: -g.originZ, maxZ: g.size - g.originZ - 1,
+    minX: -g.originX, maxX: extent(g)[0] - g.originX - 1,
+    minZ: -g.originZ, maxZ: extent(g)[1] - g.originZ - 1,
   }
 }
 

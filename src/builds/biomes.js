@@ -1,88 +1,72 @@
 /*
- * SIX BIOMES ACROSS 256 BLOCKS, GENERATED RATHER THAN IMPORTED.
+ * THE BIOMES: which Minecraft biome every column of the overworld is in,
+ * and what that biome asks of the ground.
  *
  * ------------------------------------------------------------------------
- * WHAT THE OWNER ASKED FOR: "I'd like the biome to change throughout. Like,
- * each area surrounded by whatever minecraft biome (true-ish generation)
- * would make sense... Because the surroundings look a bit too uniform rn."
+ * WHAT THE OWNER ASKED FOR, twice. First: "each area surrounded by whatever
+ * minecraft biome (true-ish generation) would make sense". Then, in Sprint 1:
+ * "the landscape between plots reads as random noise... it is flat, the trees
+ * look bad, and it does not look like vanilla terrain. Make it believable."
  *
- * So the palettes, the tree species, the foliage and the terrain shapes are
- * Minecraft's. The NOISE IS OURS. That is not taste, it is the only version
- * of this that can ship: DECISIONS.md #1 has `public/terrain/` gitignored,
- * `build:deploy` doing `rm -rf dist/terrain`, and
- * scripts/check-deploy-assets.mjs FAILING THE BUILD if generator output
- * reappears in the artifact. src/flatworld.js exists precisely to have got
- * the imported patch off the overworld's boot path. An imported overworld
- * cannot be served, so an imported overworld is not an option.
+ * So the palettes, tree species, ground cover and the SHAPE of each biome's
+ * land are Minecraft's. The noise is ours, because generator output cannot be
+ * served (DECISIONS.md #1; scripts/check-deploy-assets.mjs fails the build if
+ * it reappears), so an imported overworld is not an option.
  * ------------------------------------------------------------------------
- * THE ARC, and it is the reason the biomes are in this order.
+ * THE ARC, and it is the reason the biomes are in this order down the walk:
  *
- *   plains -> birch forest -> bamboo jungle -> river -> hills -> peaks
+ *   plains -> forest / dark forest -> birch forest -> bamboo jungle
+ *     -> river -> taiga -> windswept hills -> jagged peaks
  *
- * Flat prairie at the start, a literal mountain at the end. The world gets
- * more dramatic as the life does, and the last chapter is a climb up
- * something there is a reason to climb.
- *
- * BAMBOO AND NOT CHERRY BLOSSOM for Bilibili, on the owner's instruction:
- * "dont use cherry blossom for china, too on the nose". The agreed fallback
- * if bamboo proved unworkable was meadow, and it was never needed -- the
- * plant is a real non-cube block as of today. Read BAMBOO below before you
- * place one; there is a recipe and getting it wrong gives bare sticks.
+ * Flat prairie at spawn, a mountain range at the end. Each chapter sits in
+ * the biome that is its surroundings (CHAPTER_BIOME), and the ground between
+ * chapters is whatever is nearest, so moving a plot moves its biome with it.
+ * Bamboo, not cherry, for Bilibili, on the owner's instruction.
  * ------------------------------------------------------------------------
- * HOW A COLUMN GETS ITS BIOME: WARPED, WEIGHTED VORONOI.
+ * HOW A COLUMN GETS ITS BIOME: WARPED, WEIGHTED VORONOI, as before.
  *
- * Each biome owns one or more ANCHOR POINTS, and a column belongs to the
- * nearest anchor. The three things that stop that reading as a diagram:
+ * Each biome owns anchor points and a column belongs to the nearest one,
+ * measured from a position displaced by two slow noise fields (so borders
+ * wander) with x counting 0.55 of z (so regions stretch across the map and
+ * the walk down z passes through them in order). Within BLEND of a border the
+ * column takes the runner-up biome with a probability that falls off with
+ * distance, in clumps, so birch thins into oak rather than stopping at a
+ * line.
  *
- *   1. DOMAIN WARP. The distance is measured from (x, z) displaced by two
- *      slow noise fields, up to 15 blocks each way. A Voronoi boundary is a
- *      straight line; a warped one wanders, doubles back and leaves islands
- *      of one biome inside another, which is what a real border looks like.
- *   2. X IS COMPRESSED. dx counts 0.55 of a block against dz's 1.0, so a
- *      region stretches east-west and the walk down z passes through all six
- *      in order. Without it, two anchors 155 blocks apart in x and 12 apart
- *      in z (chapter 1 and chapter 2 -- they are across the path from each
- *      other) would cut the world in half lengthwise.
- *   3. THE BOUNDARY IS DITHERED, not drawn. Within BLEND blocks of a border
- *      a column takes the SECOND-nearest biome with a probability that falls
- *      from 50% at the border to 0 at the edge of the band, decided by a fine
- *      noise field so the mixing comes out in clumps of two or three blocks.
- *      Birch thins out into oak, oak thickens into birch, and there is no
- *      line anywhere. Minecraft blends; a hard edge reads as a map.
+ * WHAT IS NEW: THE SHAPE OF THE LAND BLENDS SMOOTHLY, AND THE PAINT DOES NOT.
+ * A dither is right for which block is on top and wrong for how high the
+ * ground is: the previous pass learned that the hard way (a dithered summit
+ * left holes in the mountain). So every column also gets SOFT weights over
+ * all nearby anchors, and the terrain parameters (base height, roughness,
+ * ridginess) are the weighted mean. Hills rise out of plains over thirty
+ * blocks instead of at a border, which is what vanilla's climate blending
+ * does with its continentalness and erosion fields.
  *
- * REJECTED -- bands in z, which is the obvious way to lay six biomes along a
- * walk and is one line of code. Chapter 1 (z 22..84) and chapter 2 (z 54..77)
- * OVERLAP in z and are on opposite sides of the path, so a pure z band would
- * have to put Omaha's plains and Harvard's birch at the same latitude. Any
- * scheme that assigns a biome from z alone cannot express this map.
- *
- * REJECTED -- one anchor per chapter. The merged chapter is two places: the
- * Harvard rectangle in the east and the ground the school-work plot used to
- * occupy in the west. Both are birch, so both are anchors, and the forest
- * spans the path the way a forest does.
- * ------------------------------------------------------------------------
- * EVERY NUMBER HERE IS A HASH OF ITS COORDINATE, for the reason
- * src/builds/land.js gives at length: the world is regenerated from source on
- * every page load and a visitor who walked past a birch and came back to find
- * a spruce would be right to think the place was broken.
+ * EVERY NUMBER HERE IS A FUNCTION OF ITS COORDINATE, so the world is
+ * identical on every load.
  */
 import { hash, smoothNoise } from './noise.js'
-import { CHAPTERS, LAND_SIZE } from './plots.js'
+import { CHAPTERS, LAND_W, LAND_D, LAND_SPAWN_X, LAND_SPAWN_Z } from './plots.js'
 
 export const BIOME = {
   PLAINS: 0,
-  BIRCH: 1,
-  BAMBOO: 2,
-  RIVERLANDS: 3,
-  HILLS: 4,
-  PEAKS: 5,
+  FOREST: 1,
+  BIRCH: 2,
+  DARK: 3,
+  BAMBOO: 4,
+  RIVERLANDS: 5,
+  TAIGA: 6,
+  HILLS: 7,
+  PEAKS: 8,
 }
 
-export const BIOME_NAME = ['plains', 'birch forest', 'bamboo jungle', 'river', 'windswept hills', 'jagged peaks']
+export const BIOME_NAME = [
+  'plains', 'forest', 'birch forest', 'dark forest', 'bamboo jungle',
+  'river', 'taiga', 'windswept hills', 'jagged peaks',
+]
 
-/** The chapter each biome is the surroundings OF. Read out of the plot table
- *  rather than typed as coordinates, so moving a chapter moves its biome with
- *  it -- which is the property the owner asked for in as many words. */
+/** The chapter each biome is the surroundings OF. Read off the plot table,
+ *  so moving a chapter moves its biome. */
 const CHAPTER_BIOME = {
   ch1: BIOME.PLAINS,
   ch2: BIOME.BIRCH,
@@ -93,259 +77,196 @@ const CHAPTER_BIOME = {
 }
 
 /*
- * EXTRA ANCHORS, and each one is a place rather than a tuning knob.
+ * EXTRA ANCHORS, and each one is a place:
  *
- *   - PLAINS at spawn. The visitor lands at patch (128, 16) and the first
- *     thing they see has to be the flat prairie chapter 1 sits in, not
- *     whatever the nearest chapter centre happens to be.
- *   - BIRCH over the ground old chapter 3 gave back (z 86..109 in the west).
- *     The merged chapter is both halves of the school years and the forest
- *     covers both.
- *   - RIVERLANDS on the river itself. The water is a biome, not a feature
- *     inside one, so the banks either side of the crossing are sand and
- *     gravel rather than bamboo litter.
- *   - PEAKS at the western massif. Chapter 6's plot has to stay flat (it is
- *     a parkour and the owner builds it), so the mountain the chapter is
- *     named for stands beside it rather than under it.
+ *   - PLAINS at spawn and just south of it: the first frame is open prairie
+ *     with the lake beyond it, and chapter 1 stands in the same grass.
+ *   - FOREST mid-path between Omaha and Harvard, and a DARK FOREST grove on
+ *     the left between Omaha and Bilibili: the first real wood you walk into.
+ *   - BIRCH north-east of Harvard, so the lake shore is birch.
+ *   - BAMBOO either side of the path at Bilibili.
+ *   - RIVERLANDS on the crossing and along the west reach of the river.
+ *   - TAIGA in the corridor after New York: spruce before the hills.
+ *   - PEAKS twice south of San Francisco, so the range is a range.
  */
 const EXTRA = [
-  [BIOME.PLAINS, 128, 4],
-  [BIOME.BIRCH, 54, 98],
-  [BIOME.BAMBOO, 112, 146],
-  [BIOME.RIVERLANDS, 132, 158],
-  [BIOME.HILLS, 108, 200],
-  /* The massif, twice, so the mountain is a RANGE rather than a cone with a
-   * hills border halfway up it. SUMMIT below sits on the first of them.
-   * BOTH MOVED WHEN CHAPTER 6 CHANGED HANDS: the climb's plot landed exactly
-   * on top of where the mountain used to be. */
-  [BIOME.PEAKS, 120, 242],
-  [BIOME.PEAKS, 78, 250],
+  [BIOME.PLAINS, LAND_SPAWN_X, LAND_SPAWN_Z - 12],
+  [BIOME.PLAINS, 150, 44],
+  [BIOME.FOREST, 146, 104],
+  [BIOME.FOREST, 10, 20],
+  [BIOME.DARK, 58, 108],
+  [BIOME.BIRCH, 262, 38],
+  [BIOME.BAMBOO, 124, 148],
+  [BIOME.RIVERLANDS, 146, 186],
+  [BIOME.RIVERLANDS, 50, 216],
+  [BIOME.TAIGA, 150, 262],
+  [BIOME.TAIGA, 276, 292],
+  [BIOME.HILLS, 140, 318],
+  [BIOME.PEAKS, 62, 372],
+  [BIOME.PEAKS, 150, 398],
+  [BIOME.PEAKS, 270, 398],
 ]
 
 /** [biome, x, z] for every anchor: one per chapter centre, plus EXTRA. */
 export const ANCHORS = [
-  ...CHAPTERS.map(c => [
-    CHAPTER_BIOME[c.id],
-    (c.x0 + c.x1) / 2,
-    (c.z0 + c.z1) / 2,
-  ]),
+  ...CHAPTERS.map(c => [CHAPTER_BIOME[c.id], (c.x0 + c.x1) / 2, (c.z0 + c.z1) / 2]),
   ...EXTRA,
 ]
 
-/** How much less a block of x counts than a block of z. See (2) above. */
+/** How much less a block of x counts than a block of z. */
 const X_SQUASH = 0.55
 /** How wide the dithered border band is, in units of the same metric. */
 const BLEND = 10
+/** How far the SOFT terrain weights reach, same metric. A Gaussian of this
+ *  width over (distance - nearest distance). */
+const SOFT = 20
 
-/** The warped position a column's biome is decided at. Two slow fields, at
- *  different scales so the warp itself has no period you can see. */
-function warp(x, z) {
-  return [
-    x + (smoothNoise(x, z, 34, 701) - 0.5) * 30,
-    z + (smoothNoise(x, z, 27, 703) - 0.5) * 30,
-  ]
-}
-
-const metric = (dx, dz) => Math.hypot(dx * X_SQUASH, dz)
+function warpX(x, z) { return x + (smoothNoise(x, z, 34, 701) - 0.5) * 30 }
+function warpZ(x, z) { return z + (smoothNoise(x, z, 27, 703) - 0.5) * 30 }
 
 /**
  * The biome at a column, and the one next door.
  *
  * @returns { id, near, second, gap } -- `id` is what the column IS after
- *          dithering, `near` is the un-dithered nearest biome, `second` is
- *          the runner-up and `gap` is how far outside the border band the
- *          column is, 0 at the border and 1 at the far edge of the blend.
- *
- * Callers that want the palette use `id`. Callers that want to know whether
- * they are in a transition -- the tree pass, mostly -- use `gap`.
+ *          dithering, `near` the un-dithered nearest biome, `second` the
+ *          runner-up and `gap` how far inside its region the column is (0 at
+ *          a border, 1 beyond the blend band).
  */
 export function biomeAt(x, z) {
-  const [wx, wz] = warp(x, z)
+  const wx = warpX(x, z), wz = warpZ(x, z)
   let best = 0, bestD = Infinity, second = 0, secondD = Infinity
-  for (const [id, ax, az] of ANCHORS) {
-    const d = metric(wx - ax, wz - az)
-    if (d < bestD) { secondD = bestD; second = best; bestD = d; best = id }
-    else if (d < secondD && id !== best) { secondD = d; second = id }
+  for (let k = 0; k < ANCHORS.length; k++) {
+    const a = ANCHORS[k]
+    const dx = (wx - a[1]) * X_SQUASH, dz = wz - a[2]
+    const d = Math.sqrt(dx * dx + dz * dz)
+    if (d < bestD) {
+      if (a[0] !== best) { secondD = bestD; second = best }
+      bestD = d; best = a[0]
+    } else if (d < secondD && a[0] !== best) { secondD = d; second = a[0] }
   }
   const gap = Math.min(1, (secondD - bestD) / BLEND)
   if (second === best || gap >= 1) return { id: best, near: best, second, gap: 1 }
-  /*
-   * THE DITHER. A fine field rather than a per-column hash: `hash` is
-   * salt-and-pepper and the border would read as static, which is the exact
-   * failure src/builds/land.js's smoothNoise was written to avoid. At scale
-   * 3.5 the mixing comes out in clumps of two or three columns, which is what
-   * the edge of a real forest looks like.
-   */
   const fine = smoothNoise(x, z, 3.5, 709)
   const id = fine < 0.5 * (1 - gap) ? second : best
   return { id, near: best, second, gap }
 }
 
-/** The whole map at once, as a Uint8Array indexed the way the model is.
- *  One pass of 65,536 warps, cached by the caller, rather than a warp per
- *  question -- the ground pass, the relief pass and the forest pass all want
- *  the same answer and the noise is not free. */
-export function biomeField() {
-  const n = LAND_SIZE * LAND_SIZE
+/* ====================================================================== *
+ * WHAT EACH BIOME DOES TO THE SHAPE OF THE LAND.
+ *
+ * Heights are in blocks above GROUND_Y, where every plot sits. Water stands
+ * at -2 (see WATER_Y in src/builds/land.js), so 0 is two blocks above a
+ * river's surface: a plot is never at the water's edge.
+ *
+ *   base   the biome's mean height. Plains sit at the plot level; the
+ *          windswept hills a dozen blocks up; the peaks twenty.
+ *   amp    how far the fractal noise swings either side of the base.
+ *   ridge  0..1, how much of that swing is RIDGED noise rather than rolling:
+ *          the jagged peaks are crests, the plains are swells.
+ *
+ * The numbers are read off vanilla's look rather than its density
+ * functions (which are a 3D noise router with no 2D equivalent): a plains
+ * biome rolls two or three blocks, a forest five or six, windswept hills
+ * fifteen to twenty-five with bare stone on the shoulders, jagged peaks forty.
+ * ====================================================================== */
+export const SHAPE = [
+  /* PLAINS     */ { base: 1, amp: 3, ridge: 0 },
+  /* FOREST     */ { base: 3, amp: 6, ridge: 0 },
+  /* BIRCH      */ { base: 3, amp: 6, ridge: 0 },
+  /* DARK       */ { base: 3, amp: 5, ridge: 0 },
+  /* BAMBOO     */ { base: 4, amp: 9, ridge: 0.15 },
+  /* RIVERLANDS */ { base: 0.5, amp: 2, ridge: 0 },
+  /* TAIGA      */ { base: 6, amp: 10, ridge: 0.2 },
+  /* HILLS      */ { base: 12, amp: 16, ridge: 0.45 },
+  /* PEAKS      */ { base: 22, amp: 26, ridge: 0.9 },
+]
+
+/**
+ * The whole map at once: the dithered biome, the un-dithered one, the blend
+ * gap, and the three soft terrain parameters. One pass, cached by the caller.
+ *
+ * THE SOFT WEIGHTS ARE COMPUTED ON A 4-BLOCK GRID and interpolated, which is
+ * the efficiency decision in this file. They are Gaussians over distances
+ * tens of blocks wide, so a 4-block lattice cannot alias them, and it is a
+ * sixteenth of the exponentials: 7,500 grid points instead of 115,200
+ * columns, each against every anchor.
+ */
+export function biomeField(W = LAND_W, D = LAND_D) {
+  const n = W * D
   const id = new Uint8Array(n)
   const near = new Uint8Array(n)
-  const second = new Uint8Array(n)
   const gap = new Float32Array(n)
-  for (let z = 0; z < LAND_SIZE; z++) {
-    for (let x = 0; x < LAND_SIZE; x++) {
-      const i = z * LAND_SIZE + x
+  const base = new Float32Array(n)
+  const amp = new Float32Array(n)
+  const ridge = new Float32Array(n)
+
+  for (let z = 0; z < D; z++) {
+    for (let x = 0; x < W; x++) {
+      const i = z * W + x
       const b = biomeAt(x, z)
-      id[i] = b.id; near[i] = b.near; second[i] = b.second; gap[i] = b.gap
+      id[i] = b.id; near[i] = b.near; gap[i] = b.gap
     }
   }
-  return { id, near, second, gap }
+
+  /* The soft parameters, on the coarse grid. */
+  const S = 4
+  const gw = Math.ceil(W / S) + 1, gd = Math.ceil(D / S) + 1
+  const gBase = new Float32Array(gw * gd), gAmp = new Float32Array(gw * gd), gRidge = new Float32Array(gw * gd)
+  const dist = new Float32Array(ANCHORS.length)
+  for (let gz = 0; gz < gd; gz++) {
+    for (let gx = 0; gx < gw; gx++) {
+      const x = gx * S, z = gz * S
+      const wx = warpX(x, z), wz = warpZ(x, z)
+      let dmin = Infinity
+      for (let k = 0; k < ANCHORS.length; k++) {
+        const a = ANCHORS[k]
+        const dx = (wx - a[1]) * X_SQUASH, dz = wz - a[2]
+        dist[k] = Math.sqrt(dx * dx + dz * dz)
+        if (dist[k] < dmin) dmin = dist[k]
+      }
+      let sw = 0, sb = 0, sa = 0, sr = 0
+      for (let k = 0; k < ANCHORS.length; k++) {
+        const t = (dist[k] - dmin) / SOFT
+        if (t > 3) continue
+        const w = Math.exp(-t * t)
+        const s = SHAPE[ANCHORS[k][0]]
+        sw += w; sb += w * s.base; sa += w * s.amp; sr += w * s.ridge
+      }
+      const g = gz * gw + gx
+      gBase[g] = sb / sw; gAmp[g] = sa / sw; gRidge[g] = sr / sw
+    }
+  }
+  for (let z = 0; z < D; z++) {
+    const fz = z / S, z0 = Math.floor(fz), tz = fz - z0
+    for (let x = 0; x < W; x++) {
+      const fx = x / S, x0 = Math.floor(fx), tx = fx - x0
+      const g00 = z0 * gw + x0, g10 = g00 + 1, g01 = g00 + gw, g11 = g01 + 1
+      const i = z * W + x
+      const w00 = (1 - tx) * (1 - tz), w10 = tx * (1 - tz), w01 = (1 - tx) * tz, w11 = tx * tz
+      base[i] = gBase[g00] * w00 + gBase[g10] * w10 + gBase[g01] * w01 + gBase[g11] * w11
+      amp[i] = gAmp[g00] * w00 + gAmp[g10] * w10 + gAmp[g01] * w01 + gAmp[g11] * w11
+      ridge[i] = gRidge[g00] * w00 + gRidge[g10] * w10 + gRidge[g01] * w01 + gRidge[g11] * w11
+    }
+  }
+  return { id, near, gap, base, amp, ridge }
 }
 
 /* ====================================================================== *
- * THE PALETTES.
- *
- * Each is a function from a column to the block on top of it, or null for
- * "leave the generator's grass alone". null is not a shortcut: a column at
- * height 0 with a null surface writes NOTHING, which is what keeps a
- * 65,536-column pass from cloning all 65,536 shared columns (see the COPY ON
- * WRITE note in src/builds/stamp.js).
- *
- * Two noise scales in every one of them, for the reason the path's own mix
- * has two: a slow field picks the region's character and a fast field breaks
- * it up inside the region, so the answer is neither a checker nor a gradient.
- * ====================================================================== */
-
-/** Plains: grass, and the point of plains is that it is grass. A thin
- *  scatter of coarse dirt and podzol reads as ground somebody walks on
- *  without ever competing with the green. */
-function plainsGround(x, z) {
-  const v = smoothNoise(x, z, 21, 811) * 0.7 + smoothNoise(x, z, 5, 812) * 0.3
-  if (v > 0.80) return 'coarse_dirt'
-  if (v > 0.76) return 'podzol'
-  return null
-}
-
-/** Birch forest: grass with a real leaf-litter floor. Podzol and moss in
- *  patches, coarse dirt where the litter thins. */
-function birchGround(x, z) {
-  const v = smoothNoise(x, z, 15, 821) * 0.6 + smoothNoise(x, z, 4.5, 822) * 0.4
-  if (v > 0.72) return 'podzol'
-  if (v > 0.64) return 'moss_block'
-  if (v > 0.58) return 'coarse_dirt'
-  return null
-}
-
-/** Bamboo jungle: a wet floor. Moss is the signature block and podzol is the
- *  vanilla jungle's own ground; mud where it is lowest. */
-function bambooGround(x, z) {
-  const v = smoothNoise(x, z, 13, 831) * 0.6 + smoothNoise(x, z, 4, 832) * 0.4
-  if (v > 0.70) return 'moss_block'
-  if (v > 0.56) return 'podzol'
-  if (v > 0.50) return 'rooted_dirt'
-  if (v < 0.16) return 'mud'
-  return null
-}
-
-/** Riverlands: sand and gravel where the water has been, grass where it has
- *  not. Clay in the low spots, which is where vanilla puts it. */
-function riverGround(x, z) {
-  const v = smoothNoise(x, z, 12, 841) * 0.6 + smoothNoise(x, z, 4, 842) * 0.4
-  if (v > 0.74) return 'sand'
-  if (v > 0.66) return 'gravel'
-  if (v < 0.20) return 'clay'
-  return null
-}
-
-/** Windswept hills: the bones come through. Stone and andesite on the
- *  shoulders, gravel in the scree, grass everywhere else. `h` is the column's
- *  height, because on a hill it is the HIGH ground that is bare. */
-function hillsGround(x, z, h) {
-  const v = smoothNoise(x, z, 16, 851) * 0.55 + smoothNoise(x, z, 4.5, 852) * 0.45
-  const bare = v + Math.max(0, h) * 0.035
-  if (bare > 0.86) return 'stone'
-  if (bare > 0.78) return 'andesite'
-  if (bare > 0.71) return 'gravel'
-  if (bare > 0.66) return 'coarse_dirt'
-  return null
-}
-
-/*
- * Jagged peaks, BY ALTITUDE, which is the whole look of the biome: grass at
- * the foot, stone and gravel up the flanks, snow and calcite on top with
- * packed ice in the shaded seams. The thresholds are heights above the
- * ordinary ground, not absolute y, because the ground here is at y = 136 and
- * a number relative to it is a number a reader can check against the relief.
- */
-function peaksGround(x, z, h) {
-  const v = smoothNoise(x, z, 11, 861) * 0.5 + smoothNoise(x, z, 3.5, 862) * 0.5
-  if (h >= 17) return v > 0.34 ? 'snow_block' : v > 0.18 ? 'calcite' : 'packed_ice'
-  if (h >= 11) return v > 0.55 ? 'snow_block' : v > 0.30 ? 'stone' : 'calcite'
-  if (h >= 6) return v > 0.62 ? 'stone' : v > 0.40 ? 'gravel' : 'andesite'
-  if (h >= 3) return v > 0.70 ? 'stone' : v > 0.52 ? 'gravel' : null
-  return v > 0.84 ? 'gravel' : v > 0.78 ? 'coarse_dirt' : null
-}
-
-/** The surface block for a column, or null to leave the grass. */
-export function groundOf(biome, x, z, h) {
-  switch (biome) {
-    case BIOME.PLAINS: return plainsGround(x, z)
-    case BIOME.BIRCH: return birchGround(x, z)
-    case BIOME.BAMBOO: return bambooGround(x, z)
-    case BIOME.RIVERLANDS: return riverGround(x, z)
-    case BIOME.HILLS: return hillsGround(x, z, h)
-    case BIOME.PEAKS: return peaksGround(x, z, h)
-    default: return null
-  }
-}
-
-/*
- * WHAT IS UNDER THE SURFACE, and it only matters where the ground was
- * RAISED. src/builds/land.js fills a raised column with dirt up to just under
- * its surface block, which is right for a meadow and wrong for a mountain: a
- * twenty-block peak filled with dirt is a twenty-block dirt cliff with a snow
- * hat on it, and you see the whole thing side-on from the path.
- */
-/*
  * THE BAMBOO STALK, AND THE RECIPE FOR BUILDING ONE.
  *
- * WHAT THIS USED TO SAY, recorded because a confidently wrong comment about
- * what a block IS is the expensive kind: it claimed a column of
- * `bamboo_block` was a bamboo stalk. It is not. `bamboo_block` is the 1.20
- * Block of Bamboo -- a solid cube of bundled cane, a building material in the
- * same family as `bamboo_planks` and `bamboo_mosaic`. A column of them is a
- * chunky green pillar and the owner found that out by looking at the world.
- *
- * THE REAL PLANT EXISTS NOW. It is thirteen ids, and the shape of the table
- * is the whole recipe -- three leaf states across, four horizontal-offset
- * variants down:
- *
- *              none                small                         large
- *   v0  bamboo               bamboo_leaves_small           bamboo_leaves_large
- *   v1  bamboo_1             bamboo_leaves_small_1         bamboo_leaves_large_1
- *   v2  bamboo_2             bamboo_leaves_small_2         bamboo_leaves_large_2
- *   v3  bamboo_3             bamboo_leaves_small_3         bamboo_leaves_large_3
- *
- * Three rules, all of them vanilla's `growBamboo`:
+ * Thirteen ids: three leaf states across, four horizontal-offset variants
+ * down. Vanilla's `growBamboo` gives three rules:
  *
  *   1. A STALK IS A COLUMN OF SEPARATE BLOCKS, up to sixteen tall.
  *   2. LEAVES ONLY AT THE TOP. The top block is `_leaves_large`, the one
  *      under it `_leaves_small`, and everything below that is bare cane.
- *   3. ONE OFFSET SUFFIX PER STALK, ALL THE WAY UP. The four variants are a
- *      quarter-block horizontal wander so a stand does not read as a grid;
- *      mixing suffixes WITHIN a stalk makes that stalk zigzag. Pick the
- *      suffix from the stalk's own coordinates, as vanilla does.
+ *   3. ONE OFFSET SUFFIX PER STALK, ALL THE WAY UP, picked from the stalk's
+ *      own coordinates as vanilla does, or the stalk zigzags.
  *
- * `bamboo_sapling` is the ground sprout and is worth scattering under them.
- *
- * WORTH KNOWING BEFORE YOU PLANT A THICKET: the cane has no collision at all
- * (deliberate -- this mesher's translate moves vertices and not the collision
- * boxes, so the honest choice was no collider rather than an invisible post
- * beside the visible cane), it does not grow, and the bare cane is opaque and
- * stays on the opaque atlas page, so only the two leafy blocks in each stalk
- * pay for cutout. A dense stand is cheaper than it looks.
- */
+ * `bamboo_sapling` is the ground sprout. `bamboo_block` is NOT the plant: it
+ * is the 1.20 Block of Bamboo, a solid cube building material.
+ * ====================================================================== */
 export const BAMBOO = {
-  /** The bare cane, by offset variant 0..3. */
   cane: ['bamboo', 'bamboo_1', 'bamboo_2', 'bamboo_3'],
   small: ['bamboo_leaves_small', 'bamboo_leaves_small_1',
     'bamboo_leaves_small_2', 'bamboo_leaves_small_3'],
@@ -354,196 +275,6 @@ export const BAMBOO = {
   sapling: 'bamboo_sapling',
 }
 
-/** The block the bamboo jungle is CENSUSED by, which has to be one key and
- *  has to be one every stalk contains. Every stalk taller than two has bare
- *  cane in it and only the bamboo jungle has any. */
+/** The block the bamboo jungle is censused by: every stalk taller than two
+ *  has bare cane in it and only the bamboo jungle has any. */
 export const BAMBOO_STALK = BAMBOO.cane[0]
-
-export function subsurfaceOf(biome) {
-  if (biome === BIOME.PEAKS) return 'stone'
-  if (biome === BIOME.HILLS) return 'stone'
-  return 'dirt'
-}
-
-/* ====================================================================== *
- * THE RELIEF.
- *
- * One amplitude per biome, in blocks, and the shape is fractal noise --
- * three octaves, so a hillside has a shoulder on it rather than being one
- * smooth dome.
- *
- * "NOTHING CRAZY STEEP", which is the owner's phrase and is enforced
- * somewhere else entirely: src/builds/land.js runs a slope clamp over the
- * finished height field that refuses any step bigger than one block outside
- * the climb. The amplitudes below are therefore a statement of CHARACTER --
- * how much a biome wants to move -- and not a promise about what a walker
- * meets. A 24-block massif at one block per column is a mountain you can walk
- * up, which is exactly the mountain this wants.
- * ====================================================================== */
-const AMPLITUDE = {
-  [BIOME.PLAINS]: 1.2,      // flat. The chapter under it is Omaha.
-  [BIOME.BIRCH]: 3.0,
-  [BIOME.BAMBOO]: 3.5,
-  [BIOME.RIVERLANDS]: 1.6,  // a floodplain is flat, and the water needs it flat
-  [BIOME.HILLS]: 9.0,
-  [BIOME.PEAKS]: 13.0,
-}
-
-/** Three octaves of value noise in [0, 1). Named rather than inlined because
- *  the relief and the summit cone both want the same field. */
-function fbm(x, z, salt) {
-  return smoothNoise(x, z, 46, salt) * 0.58
-    + smoothNoise(x, z, 19, salt + 1) * 0.29
-    + smoothNoise(x, z, 8, salt + 2) * 0.13
-}
-
-/*
- * THE SUMMIT, and why it is not on chapter 6.
- *
- * The climb is a parkour going UP and the owner builds it, so its footprint
- * must stay dead flat at y = 136 like every other plot. A mountain under it
- * would be a mountain he has to demolish. So the massif stands in the last
- * open ground on the map: between San Francisco's plot and the climb's, south
- * of both, with the path threading past its eastern flank. You walk around
- * the mountain to reach the chapter that is about climbing one.
- *
- * IT HAS MOVED TWICE AND BOTH MOVES ARE WORTH KNOWING.
- *
- * It sat ten rows further south once and came out a third shorter: the relief
- * tapers to nothing over the last ten columns of the patch (a hillside that
- * ends at the barrier is a hillside ending at whatever the outside of the
- * world is), and a summit nine rows from the south edge spends most of its
- * height paying that taper. Measured at 12 blocks; moved north it was 20.
- *
- * And it stood at x = 190 until chapter 6 changed hands and its plot landed
- * exactly on top of it. That is the ONE thing in the whole four-plot flip
- * that was not a row in a table -- everything else, the island included, is
- * derived from the plot rectangle.
- */
-const SUMMIT = { x: 96, z: 240, r: 44, h: 13 }
-
-/*
- * AND A FLOOR UNDER THE WHOLE REGION, which is the half of a mountain range
- * a single cone cannot express.
- *
- * Jagged peaks in vanilla are not one hill on a plain; the ground is simply
- * HIGH for a long way and the peaks are the bits of it that stick up. Trying
- * to get that from one cone put the entire height budget in one column and
- * meant the summit had to stand a long way from anything flat -- and with
- * six plots and a 413-block path, the last quarter of this map does not have
- * a spot like that. Lifting the region and putting a smaller cone on top
- * gets the same skyline out of far less clearance.
- *
- * It is lifted BEFORE the path fade multiplies it, so the walk still runs at
- * ordinary ground level through the middle of the highland -- which is what
- * a pass through a mountain range is -- and the chapter plots still sit flat
- * at y = 136 with the clamp ramping the ground down to meet them. Chapter 6
- * is the climb: starting it at the bottom of a bowl is the right place to
- * start a climb from.
- */
-const LIFT = {
-  [BIOME.HILLS]: 2.5,
-  [BIOME.PEAKS]: 8,
-}
-
-/**
- * The height this column wants, in blocks above the ordinary ground, before
- * anything clamps it.
- *
- * @param nearPath 0 at the path's centreline, 1 at PATH_FADE blocks away.
- *        THE RELIEF FADES OUT NEAR THE PATH and that is the single decision
- *        that makes "gentle everywhere, dramatic at the climb" possible at
- *        all. The mountain is beside the walk rather than across it, so the
- *        walk stays level without the mountain having to be small.
- */
-export function reliefAt(biome, x, z, nearPath) {
-  const amp = AMPLITUDE[biome] ?? 1
-  let v = (LIFT[biome] ?? 0) + (fbm(x, z, 871) - 0.5) * 2 * amp
-
-  if (biome === BIOME.PEAKS) {
-    /* A cone on top of the floor, squared off at the edges so the foot of the
-     * mountain is a slope and not a rim. Added to the noise rather than
-     * multiplied by it, so the ridges keep their shape all the way up. */
-    const d = Math.hypot((x - SUMMIT.x) * 0.9, z - SUMMIT.z)
-    const t = Math.max(0, 1 - d / SUMMIT.r)
-    v += SUMMIT.h * t * t * (3 - 2 * t)
-  }
-
-  /* The patch edge stays exactly as the preset generated it. The barrier wall
-   * outside the world is not a block anything can see, and terrain that ends
-   * AT it is terrain ending at whatever the outside of the world is -- the
-   * same argument river.js makes for tapering the river before x = 6. It is
-   * also what keeps the two preset-fresh columns test/01-world.spec.js reads
-   * the Classic Flat ladder out of actually preset-fresh. */
-  const edge = Math.min(x, LAND_SIZE - 1 - x, z, LAND_SIZE - 1 - z)
-  if (edge < 3) return 0
-  v *= Math.min(1, (edge - 2) / 10)
-
-  v *= nearPath
-
-  /* A floor at -2. Below the grass there are two dirt blocks and then bedrock
-   * at local -4, so a surface written at local -3 is the last block that is
-   * not the floor of the world. Deeper than that and the stamper throws. */
-  return Math.max(-2, Math.round(v))
-}
-
-/** Whether a column may be steeper than one block per column. Only the
- *  peaks, only well away from the path, and only where there is nothing to
- *  walk to. See the clamp in src/builds/land.js. */
-export function mayBeSteep(biome, nearPath) {
-  return biome === BIOME.PEAKS && nearPath >= 1
-}
-
-/* ====================================================================== *
- * THE TREES.
- *
- * `speciesAt` answers what a tree HERE is made of, and it replaces the old
- * five-band noise field in src/builds/flora.js wholesale. The bands were a
- * reasonable way to get variety out of one biome; with six biomes the species
- * is a property of the place, which is what the owner was asking for when he
- * said the surroundings looked uniform.
- * ====================================================================== */
-
-/** How many of the candidate tree sites a biome actually takes, 0..1. */
-export const DENSITY = {
-  [BIOME.PLAINS]: 0.14,     // "scattered oak" -- a prairie with trees in it
-  [BIOME.BIRCH]: 0.92,      // a forest, and the densest thing on the map
-  [BIOME.BAMBOO]: 0.95,     // a thicket. Mostly stalks; see bambooStand
-  [BIOME.RIVERLANDS]: 0.34,
-  [BIOME.HILLS]: 0.30,      // windswept: the wind is why there are few trees
-  [BIOME.PEAKS]: 0.16,      // and none above the treeline; see flora.js
-}
-
-/**
- * Which wood a tree at (x, z) is. Deterministic, and it MIXES at the edges of
- * a region on purpose -- the brief asks for birch "softening to mixed forest
- * at the edges", and a hash roll against the blend gap is how a forest stops
- * being one species without a line where it stops.
- */
-export function speciesAt(biome, x, z, gap) {
-  const r = hash(x, z, 877)
-
-  /* In the outer half of a blend band, a tree has a real chance of being the
-   * neighbouring biome's. Nothing else knows this happened, which is the
-   * point: the ground has already dithered, and now the canopy does too. */
-  switch (biome) {
-    case BIOME.PLAINS:
-      return r < 0.88 ? 'oak' : 'birch'
-    case BIOME.BIRCH:
-      /* Softening to mixed forest at the edges: pure birch in the middle of
-       * the wood, a third oak and a little dark oak out where it meets
-       * something else. `gap` is 1 deep inside the region and 0 at a border. */
-      if (r < 0.55 + 0.4 * gap) return 'birch'
-      return r < 0.90 ? 'oak' : 'dark_oak'
-    case BIOME.BAMBOO:
-      return r < 0.80 ? 'jungle' : 'oak'
-    case BIOME.RIVERLANDS:
-      return r < 0.55 ? 'oak' : r < 0.85 ? 'birch' : 'mangrove'
-    case BIOME.HILLS:
-      return r < 0.62 ? 'spruce' : r < 0.92 ? 'oak' : 'birch'
-    case BIOME.PEAKS:
-      return 'spruce'
-    default:
-      return 'oak'
-  }
-}

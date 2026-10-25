@@ -23,9 +23,9 @@ const SHOTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screensho
  * origin used for the mountain patch. Both render a plausible world. So every
  * assertion below names a fact that is true of exactly one of the three:
  *
- *   overworld        256 wide, GENERATED, floor at y=132 (four layers, no
- *                    bedrock below), grass under your feet at y=135, and
- *                    NOTHING standing on it.
+ *   overworld        288 x 400, GENERATED, floor at y=128: the landscape,
+ *                    rolling country with the worn path under your feet at
+ *                    y=135 and a forest standing on it.
  *   claude-opus-5-1  the same generated superflat with the eight-stage
  *                    timeline stamped into it. Same width, same source, same
  *                    floor -- so width and source cannot tell it from the
@@ -107,9 +107,9 @@ test('the registry knows four worlds and the bare superflat is the one you boot 
     const s = await survey(page)
     expect(s.active).toBe('overworld')
     expect(s.terrain.source).toBe('generated')
-    /* 256 since the landscape landed, and the same number as `mountains` --
-     * which is why the mountain tests below check `source` too. */
-    expect(s.terrain.width).toBe(256)
+    /* 288 x 400 since Sprint 1's survey. It was 256, the same number as
+     * `mountains`, which is why the mountain tests below check `source` too. */
+    expect(s.terrain.width).toBe(288)
     /*
      * BOOTING COSTS NO FETCH, which is the reason the imported world is not
      * the default. Only the world you are in has been built; the other two
@@ -221,7 +221,7 @@ test('hopping back and forth does not rebuild anything', async ({ page }) => {
 
   await enter(page, 'overworld')
   await settleChunks(page)
-  expect((await survey(page)).terrain.width).toBe(256)
+  expect((await survey(page)).terrain.width).toBe(288)
 
   /*
    * The second entry must not fetch again. `isLoaded` is what `enter` checks,
@@ -346,7 +346,7 @@ test('/world switches, and it is still operator-only', async ({ page }) => {
   await page.waitForFunction(() => window.game.dimensions.active === 'overworld',
     null, { timeout: 30_000, polling: 100 })
   await settleChunks(page)
-  expect((await survey(page)).terrain.width).toBe(256)
+  expect((await survey(page)).terrain.width).toBe(288)
 })
 
 
