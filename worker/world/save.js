@@ -55,6 +55,39 @@ function validInventory(inv) {
     && (inv.selected === undefined || (Number.isInteger(inv.selected) && inv.selected >= 0 && inv.selected < 9))
 }
 
+/*
+ * Tile data per world (src/persistence.js "Tile data"):
+ *   signs     [[x, y, z, [line x4], colour|null], ...]
+ *   paintings [[x, y, z, facing, name], ...]
+ *   furnaces  [[x, y, z, kind, [stack|null x3], burn, burnTotal, cook, cookTotal], ...]
+ *   cleared   [['sign'|'painting', x, y, z], ...]
+ * Bounded so a save cannot smuggle a novel in as sign text.
+ */
+const MAX_TILES = 2_000
+const xyz = (t) => isInt(t[0]) && isInt(t[1]) && isInt(t[2])
+const NAME = /^[A-Za-z0-9_ :-]{1,48}$/
+function invalidTiles(t) {
+  if (typeof t !== 'object') return 'bad tiles'
+  const list = (a) => a === undefined || (Array.isArray(a) && a.length <= MAX_TILES)
+  if (!list(t.signs) || !list(t.paintings) || !list(t.furnaces) || !list(t.cleared)) return 'too many tiles'
+  for (const s of t.signs ?? []) {
+    if (!Array.isArray(s) || !xyz(s) || !Array.isArray(s[3]) || s[3].length > 4
+      || !s[3].every((l) => typeof l === 'string' && l.length <= 64)
+      || !(s[4] == null || (typeof s[4] === 'number' || (typeof s[4] === 'string' && s[4].length <= 16)))) return 'bad sign'
+  }
+  for (const p of t.paintings ?? []) {
+    if (!Array.isArray(p) || !xyz(p) || !/^(north|south|east|west)$/.test(p[3]) || !NAME.test(p[4])) return 'bad painting'
+  }
+  for (const f of t.furnaces ?? []) {
+    if (!Array.isArray(f) || !xyz(f) || !/^[a-z_]{1,24}$/.test(f[3]) || !Array.isArray(f[4]) || f[4].length > 3
+      || !f[4].every(validStack) || ![f[5], f[6], f[7], f[8]].every((n) => isNum(n) && n >= 0 && n < 1e6)) return 'bad furnace'
+  }
+  for (const c of t.cleared ?? []) {
+    if (!Array.isArray(c) || !/^(sign|painting)$/.test(c[0]) || !xyz(c.slice(1))) return 'bad cleared tile'
+  }
+  return null
+}
+
 /** @returns {string|null} the reason it is refused, or null if it is fine */
 export function invalidSave(save) {
   if (!save || typeof save !== 'object') return 'not an object'
@@ -81,6 +114,10 @@ export function invalidSave(save) {
     for (const e of w.edits) {
       if (!Array.isArray(e) || e.length !== 5 || !isInt(e[0]) || !isInt(e[1]) || !isInt(e[2])
         || !KEY.test(e[3]) || !KEY.test(e[4])) return 'bad edit'
+    }
+    if (w.tiles != null) {
+      const why = invalidTiles(w.tiles)
+      if (why) return why
     }
   }
   return null

@@ -386,6 +386,61 @@ test.describe('saved worlds', () => {
   })
 })
 
+test.describe('tile data and forget me', () => {
+  const TILES = {
+    signs: [[1, 137, 2, ['Casey', 'was', 'here', ''], '#000000']],
+    paintings: [[3, 138, 2, 'north', 'kebab']],
+    furnaces: [[5, 137, 2, 'furnace', [{ key: 'cobblestone', count: 5 }, null, null], 0, 0, 0, 200]],
+    cleared: [['sign', 9, 137, 9]],
+  }
+
+  test('a save carries sign text, paintings and furnace contents; junk is refused', async () => {
+    const env = makeEnv()
+    const { res } = await signUp(env, await createAuthenticator())
+    const save = SAVE()
+    save.worlds.overworld.tiles = TILES
+    await call(env, '/api/world', { method: 'PUT', token: res.body.token, body: { baseRev: 0, save } })
+    const got = await call(env, '/api/world', { method: 'GET', token: res.body.token })
+    expect(got.body.save.worlds.overworld.tiles).toEqual(TILES)
+
+    const bad = (tiles) => { const s = SAVE(); s.worlds.overworld.tiles = tiles; return invalidSave(s) }
+    expect(bad({ signs: [[1, 2, 3, ['x'.repeat(65)], null]] })).toBe('bad sign')
+    expect(bad({ paintings: [[1, 2, 3, 'up', 'kebab']] })).toBe('bad painting')
+    expect(bad({ furnaces: [[1, 2, 3, 'furnace', [{ key: 'dirt', count: 99 }], 0, 0, 0, 0]] })).toBe('bad furnace')
+    expect(bad({ cleared: [['chest', 1, 2, 3]] })).toBe('bad cleared tile')
+  })
+
+  test('forget me wipes the saved world, the passkey and AI Evan\'s memory, then starts a stranger', async () => {
+    const forgotten = []
+    const env = makeEnv({ VISITOR_MEMORY: {
+      idFromName: (name) => name,
+      get: (id) => ({ fetch: async (url) => {
+        forgotten.push([id, new URL(url).pathname])
+        return new Response('{}', { headers: { 'content-type': 'application/json' } })
+      } }),
+    } })
+    const auth = await createAuthenticator()
+    const { guest, res } = await signUp(env, auth)
+    await call(env, '/api/world', { method: 'PUT', token: res.body.token, body: { baseRev: 0, save: SAVE() } })
+
+    const gone = await call(env, '/api/account/forget', { token: res.body.token })
+    expect(gone.status).toBe(200)
+    expect(gone.body).toMatchObject({ account: false, forgot: { account: true, memory: true } })
+    expect(gone.body.visitor).not.toBe(guest.visitor)
+    expect(forgotten).toEqual([[guest.visitor, '/forget']])
+
+    // Nothing left on the server under the old id.
+    const store = env.VISITOR.objects.get(guest.visitor).store
+    expect(store.getSave()).toEqual({ rev: 0, save: null })
+    expect(store.getProfile()).toBeNull()
+    auth.counter = 9
+    expect((await login(env, auth)).status).toBe(401)
+
+    // And it can only ever forget the caller: no session, no forgetting.
+    expect((await call(env, '/api/account/forget')).status).toBe(401)
+  })
+})
+
 test.describe('AI Evan is keyed by the session, not by what the body claims', () => {
   /* The rate limiter is the first thing handleEvan does with the visitor id,
    * so a limiter that records its key and says no shows which id was used

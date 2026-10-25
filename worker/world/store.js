@@ -29,7 +29,7 @@
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS worlds (dim TEXT PRIMARY KEY, gen TEXT NOT NULL, edits TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS worlds (dim TEXT PRIMARY KEY, gen TEXT NOT NULL, edits TEXT NOT NULL, tiles TEXT);
   CREATE TABLE IF NOT EXISTS credentials (
     id TEXT PRIMARY KEY, public_key TEXT NOT NULL,
     sign_count INTEGER NOT NULL, created INTEGER NOT NULL);
@@ -93,8 +93,8 @@ export class VisitorStore {
     const meta = this.#get('save')
     if (!meta) return { rev: 0, save: null }
     const worlds = {}
-    for (const row of this.sql.exec('SELECT dim, gen, edits FROM worlds').toArray()) {
-      worlds[row.dim] = { gen: row.gen, edits: JSON.parse(row.edits) }
+    for (const row of this.sql.exec('SELECT dim, gen, edits, tiles FROM worlds').toArray()) {
+      worlds[row.dim] = { gen: row.gen, edits: JSON.parse(row.edits), ...(row.tiles ? { tiles: JSON.parse(row.tiles) } : {}) }
     }
     return { rev: meta.rev, save: { v: meta.v, updatedAt: meta.updatedAt, state: meta.state, worlds } }
   }
@@ -113,14 +113,16 @@ export class VisitorStore {
     const rev = meta?.rev ?? 0
     if (baseRev !== rev) return { ok: false, conflict: true, ...this.getSave() }
 
-    const existing = new Map(this.sql.exec('SELECT dim, gen, edits FROM worlds').toArray()
+    const existing = new Map(this.sql.exec('SELECT dim, gen, edits, tiles FROM worlds').toArray()
       .map((r) => [r.dim, r]))
     for (const [dim, w] of Object.entries(save.worlds)) {
       const edits = JSON.stringify(w.edits)
+      const tiles = w.tiles ? JSON.stringify(w.tiles) : null
       const was = existing.get(dim)
-      if (was && was.gen === w.gen && was.edits === edits) continue
-      this.sql.exec(`INSERT INTO worlds (dim, gen, edits) VALUES (?, ?, ?)
-        ON CONFLICT(dim) DO UPDATE SET gen = excluded.gen, edits = excluded.edits`, dim, w.gen, edits)
+      if (was && was.gen === w.gen && was.edits === edits && was.tiles === tiles) continue
+      this.sql.exec(`INSERT INTO worlds (dim, gen, edits, tiles) VALUES (?, ?, ?, ?)
+        ON CONFLICT(dim) DO UPDATE SET gen = excluded.gen, edits = excluded.edits, tiles = excluded.tiles`,
+      dim, w.gen, edits, tiles)
     }
     for (const dim of existing.keys()) {
       if (!(dim in save.worlds)) this.sql.exec('DELETE FROM worlds WHERE dim = ?', dim)
@@ -128,6 +130,12 @@ export class VisitorStore {
     const next = rev + 1
     this.#set('save', { rev: next, v: save.v, updatedAt: save.updatedAt, state: save.state ?? null })
     return { ok: true, rev: next }
+  }
+
+  /** "Forget me": every row this visitor has, passkeys included. */
+  forget() {
+    for (const table of ['kv', 'worlds', 'credentials']) this.sql.exec(`DELETE FROM ${table}`)
+    return { forgotten: true }
   }
 }
 

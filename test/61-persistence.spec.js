@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { bootWorld, reloadWorld, chatCommand, waitTicks } from './helpers/world.js'
+import { bootWorld, reloadWorld, waitForWorld, chatCommand, waitTicks } from './helpers/world.js'
 
 /*
  * A WORLD THAT STAYS CHANGED, and the names a visitor may give themselves.
@@ -195,5 +195,87 @@ test.describe('nicknames', () => {
     await page.click('#profile-done')
     await expect(page.locator('#profile')).toBeHidden()
     await expect(page.locator('#profile-open')).toHaveText('Profile: Casey')
+  })
+})
+
+test.describe('what blocks hold', () => {
+  test('sign text, a hung painting and a furnace\'s contents survive a reload', async ({ page }) => {
+    await boot(page)
+    const plan = await page.evaluate(() => {
+      const g = window.game
+      const { ids } = g
+      const facing = ['north', 'south', 'east', 'west'].find((f) => ids[`painting_wall_${f}`] !== undefined)
+      // A sign, a painting and a furnace, each where the generator put air.
+      window.noa.setBlock(ids.oak_sign, 2, 137, 9)
+      g.signs.setSignText(2, 137, 9, ['Casey', 'was', 'here', ''])
+      window.noa.setBlock(ids[`painting_wall_${facing}`], 4, 138, 9)
+      g.paintings.registerPainting(4, 138, 9, facing, 'kebab')
+      window.noa.setBlock(ids.furnace, 6, 137, 9)
+      const f = g.inventory.furnaces.at([6, 137, 9], 'furnace')
+      // Fuel and output but no input, so it cannot burn while the test waits.
+      f.slots[2] = { id: g.itemId('stone'), count: 3 }
+      f.slots[1] = { id: g.itemId('coal'), count: 2 }
+      return { facing, tiles: g.persist.tiles() }
+    })
+    expect(plan.tiles.signs).toHaveLength(1)
+    expect(plan.tiles.paintings).toEqual([[4, 138, 9, plan.facing, 'kebab']])
+    expect(plan.tiles.furnaces).toHaveLength(1)
+    await page.evaluate(() => window.game.persist.saveLocal())
+
+    await reloadWorld(page)
+
+    const after = await page.evaluate(() => {
+      const g = window.game
+      const f = g.inventory.furnaces.peek([6, 137, 9])
+      return {
+        sign: g.signs.signTextAt?.(2, 137, 9)?.lines ?? null,
+        painting: g.paintings.paintingAt(4, 138, 9)?.name ?? null,
+        furnace: f && f.slots.map((s) => s && { key: g.blockKey(s.id) === 'air' ? s.id : g.blockKey(s.id), count: s.count }),
+      }
+    })
+    expect(after.sign).toEqual(['Casey', 'was', 'here', ''])
+    expect(after.painting).toBe('kebab')
+    expect(after.furnace?.[2]).toEqual({ key: 'stone', count: 3 })
+    expect(after.furnace?.[1]?.count).toBe(2)
+  })
+})
+
+test.describe('forget me', () => {
+  test('confirms in-game, then wipes the world, the name and the visitor id', async ({ page }) => {
+    await boot(page)
+    let dialogs = 0
+    page.on('dialog', (d) => { dialogs++; d.dismiss() })
+    await chatCommand(page, '/nick Robin')
+    const key = await otherThan(page, 3, 137, 3)
+    await page.evaluate((key) => {
+      window.noa.setBlock(window.game.ids[key], 3, 137, 3)
+      return window.game.persist.saveLocal()
+    }, key)
+    // AI Evan's local visitor id, as aiEvan.js would have minted it.
+    const idBefore = 'AAAAAAAAAAAAAAAAAAAAAAAA'
+    await page.evaluate((id) => localStorage.setItem('world:v1:visitor-id', id), idBefore)
+
+    await page.evaluate(() => window.game.menu.open())
+    await page.click('#profile-open')
+    await page.click('#profile-forget')
+    await expect(page.locator('#profile-confirm')).toBeVisible()
+    // Cancel really cancels.
+    await page.click('#profile-forget-no')
+    await expect(page.locator('#profile-confirm')).toBeHidden()
+    expect(await page.evaluate(() => window.game.roster.displayNameOf(window.game.LOCAL_ID))).toBe('Robin')
+
+    await page.click('#profile-forget')
+    await Promise.all([
+      page.waitForEvent('load', { timeout: 30_000 }),
+      page.click('#profile-forget-yes'),
+    ])
+    await waitForWorld(page)
+
+    expect(dialogs).toBe(0)
+    expect(await page.evaluate(() => window.game.roster.displayNameOf(window.game.LOCAL_ID))).toBe('Guest')
+    expect(await blockKeyAt(page, 3, 137, 3)).not.toBe(key)
+    expect(await page.evaluate(() => window.game.persist.editCount())).toBe(0)
+    const idAfter = await page.evaluate(() => localStorage.getItem('world:v1:visitor-id'))
+    expect(idAfter).not.toBe(idBefore)
   })
 })
