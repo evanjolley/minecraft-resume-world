@@ -214,6 +214,11 @@ const GROUP_RULES = [
   // "walking on leaves sounds like stone". Azalea leaves have their own family
   // in vanilla; this world has no azalea.
   [/_leaves$/, 'grass', 'SoundType.GRASS'],
+  // The landscape's ground cover. Vanilla gives grass, ferns, dead bushes and
+  // flowers SoundType.GRASS; the lily pad is SoundType.LILY_PAD, folded.
+  [/^(short_grass|tall_grass|fern|large_fern|dead_bush|lily_pad)(_top)?$/, 'grass', 'SoundType.GRASS'],
+  [/^(dandelion|poppy|blue_orchid|allium|azure_bluet|(red|orange|white|pink)_tulip|oxeye_daisy|cornflower|lily_of_the_valley|lilac|rose_bush|peony)(_top)?$/,
+    'grass', 'SoundType.GRASS'],
 
   /* ---- the nether, before the wood and stone rules eat it ---- */
   [/nylium$/, 'nylium', 'SoundType.NYLIUM'],

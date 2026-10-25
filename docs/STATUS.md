@@ -15,7 +15,7 @@ The brief is `docs/SPRINT-1.md`.
 
 ### Still open
 - **Frame rate.** The bigger forested world drops spawn fps from about 25 to 18 under software rendering. Check on a real GPU before thinning plants (`PLANT_REACH` in `src/builds/flora.js`). Spec 68's 20 fps budget fails on a loaded machine
-- **Review pass.** Wide shots of all six chapters are in `~/.agent-library/minecraft-resume-world/2026-10-25-wide-shots/`. Trees on the path hide the ch2 Science Center and the base of ch5. Thinning them waits on Evan. Towers reaching the clouds (tops at y 199, clouds at 192) is fine by Evan
+- **Review pass.** Wide shots of all six chapters are in `~/.agent-library/minecraft-resume-world/2026-10-25-wide-shots/`. Trees in front of ch2 and ch5 are thinned along the sight line from the path (`SIGHT_LINES` in `src/builds/plots.js`), shots in `2026-10-25-tree-thinning/`. Towers reaching the clouds (tops at y 199, clouds at 192) is fine by Evan
 - Run the full suite once on a quiet machine
 
 ### Evan's items
@@ -31,6 +31,8 @@ The brief is `docs/SPRINT-1.md`.
 - Video screens with proximity audio and multiplayer presence are cancelled
 
 ### Known gaps
+- This Mac has no Minecraft install. Vanilla textures and sounds are rebuilt from the official 1.21.8 files kept in `~/.agent-library/minecraft-resume-world/2026-10-25-minecraft-1.21.8-assets/`, with `HOME=<that folder>/home npm run textures:vanilla` (same for `sounds:vanilla`). Any `npm run build:deploy` switches `public/` back to the free sets, so rerun both afterwards
+- `test/99-chapters-4-6.spec.js` fails 6 of 8 on main with "Unknown dimension 'preview-chapters'"
 - `public/terrain` (the mountains and Nether assets) is not in the repo, so those worlds and 7 specs fail on a fresh clone
 - Spec 12's fingerprint test fails on the free sound set, same as before the sprint
 
