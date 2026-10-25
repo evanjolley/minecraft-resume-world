@@ -1340,6 +1340,12 @@ so that nobody re-derives it and nobody mistakes a decision for an oversight.
 
 ## Also worth building
 
+- **Pig sounds.** Pigs are silent in the free sound set. The TenPlus1
+  samples (MIT, from mobs_animal) were pulled on 2026-10-25 because their
+  copyright line had no year. Find a CC0 or fully credited pig recording, map
+  it to `mob/pig/say1..3` and `mob/pig/death` in `scripts/build-sounds.mjs`,
+  and add its credit to `sounds-src/free/NOTICE.txt`.
+
 - **The CE deploy is losing a feature per day, and it is now a class rather
   than a list.** Every feature shipped in the last two days has hit the same
   wall: `textures-src/ce/` is an 89-file subset with **no plant cross-sprites,
