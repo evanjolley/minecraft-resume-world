@@ -474,6 +474,8 @@ export function installNPC(noa, {
   }
 
   let talking = false
+  /* Talking because you typed from out of range; see hear(). */
+  let remote = false
 
   /*
    * GONE: he has left the game (worker/agent/conduct.js). The entity is not
@@ -493,7 +495,16 @@ export function installNPC(noa, {
    * your message as an ordinary chat line instead.
    */
   const hear = (text) => {
-    if (gone || !talking || !session) return false
+    if (gone || !session) return false
+    /*
+     * FROM ANYWHERE. Minecraft chat is server-wide: every player hears you,
+     * however far apart you are. The first version only listened inside
+     * LEAVE_RADIUS, so a visitor who reloaded into a saved world away from
+     * him typed "hello" into silence. Out of range he still hears you, and
+     * the conversation is marked remote so walking further away does not
+     * end it under you; it becomes an ordinary one once you walk up.
+     */
+    if (!talking) { talking = true; remote = true }
     session.send(text, handle)
     return true
   }
@@ -869,6 +880,7 @@ export function installNPC(noa, {
 
     steer(secs)
     const near = distanceTo()
+    if (remote && near < GREET_RADIUS) remote = false
     if (!talking && near < GREET_RADIUS) {
       talking = true
       /*
@@ -878,7 +890,7 @@ export function installNPC(noa, {
        * is a character that pauses before it reacts.
        */
       if (script.greet) say(script.greet)
-    } else if (talking && near > LEAVE_RADIUS && !walk && !session?.busy) {
+    } else if (talking && !remote && near > LEAVE_RADIUS && !walk && !session?.busy) {
       /* Not while he is walking, and not while a turn is still running --
        * which covers a tour, where he walks ahead and then stands waiting
        * for you at a checkpoint. The gap is HIS doing then, and ending the
@@ -1053,7 +1065,7 @@ export function installNPC(noa, {
     /** The tools he actually has, in Anthropic's format. For the console. */
     get toolSchemas() { return tools.schemas },
     /** Force a conversation from a test or the console, without walking. */
-    _setTalking(v) { talking = !!v; if (!v) session?.reset() },
+    _setTalking(v) { talking = !!v; remote = false; if (!v) session?.reset() },
     /**
      * Put him down in a column in whatever world is loaded now.
      *
