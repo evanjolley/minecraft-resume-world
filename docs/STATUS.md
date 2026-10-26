@@ -26,6 +26,10 @@ The brief is `docs/SPRINT-1.md`.
 - Pick the live domain, then set `PASSKEY_RP_ID` and `PASSKEY_ORIGIN` to turn sign-in on
 - Decide whether memory becomes AI Evan's default brain (today it needs `?brain=evan`). Recommendation is yes, after a test with the real key
 
+### AI Evan conduct (merged 2026-10-25)
+- One friendly warning, then "Evan left the game". Signed-in visitors stay blocked for good, guests for the visit (30 quiet minutes). Server owns the state, in the visitor's Durable Object. Spec 113
+- Evan to approve the warning line in `worker/agent/conduct.js`. It only runs once the memory brain is the default
+
 ### Rules Evan set this sprint
 - Never tell visitors which floor the Patronus office is on, in code, commits or AI Evan
 - No trivia signs in builds
@@ -33,7 +37,6 @@ The brief is `docs/SPRINT-1.md`.
 
 ### Known gaps
 - This Mac has no Minecraft install. Vanilla textures and sounds are rebuilt from the official 1.21.8 files kept in `~/.agent-library/minecraft-resume-world/2026-10-25-minecraft-1.21.8-assets/`, with `HOME=<that folder>/home npm run textures:vanilla` (same for `sounds:vanilla`). Any `npm run build:deploy` switches `public/` back to the free sets, so rerun both afterwards
-- `test/99-chapters-4-6.spec.js` fails 6 of 8 on main with "Unknown dimension 'preview-chapters'"
 - `public/terrain` (the mountains and Nether assets) is not in the repo, so those worlds and 7 specs fail on a fresh clone
 - Spec 12's fingerprint test fails on the free sound set, same as before the sprint
 

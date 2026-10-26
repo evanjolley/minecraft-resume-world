@@ -215,6 +215,13 @@ test.describe('the climb, jumped', () => {
       b.velocity[0] = b.velocity[1] = b.velocity[2] = 0
       window.game.survival.clearFallTracking()
     }, [x, y, z])
+    /* Wait for the fall to be under way before waiting for the landing.
+     * atRestY() can still read grounded from before the teleport, which used
+     * to end the wait at once and read y mid-fall. */
+    await page.waitForFunction((startY) => {
+      const noa = window.noa
+      return noa.ents.getPositionData(noa.playerEntity).position[1] < startY - 1
+    }, y, { timeout: 15_000, polling: 50 })
     await page.waitForFunction(() => {
       const noa = window.noa
       return noa.ents.getPhysics(noa.playerEntity).body.atRestY() < 0
