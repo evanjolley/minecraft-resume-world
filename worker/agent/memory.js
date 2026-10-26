@@ -290,8 +290,37 @@ export class MemoryStore {
       history,
       incoming,
       observed,
-      memoryBlock: this.render(now, { excludeVisit: visit.id }),
+      memoryBlock: this.visitBlock(now, visit, newVisit),
     }
+  }
+
+  /*
+   * THE MEMORY BLOCK IS FROZEN FOR THE LIFE OF A VISIT.
+   *
+   * It sits in the system prompt, and on current models a thinking block is
+   * bound to the exact conversation that produced it -- system prompt
+   * included. Rendering it fresh every turn meant the first message of a
+   * visit (which creates the visit, so "never met" becomes visits="1") or a
+   * name set mid-visit changed the system prompt under the model's own
+   * earlier thinking, and the API refused the next turn with a 400. Found by
+   * Evan on the first live run: one good reply, then "Something broke on my
+   * end" every turn after.
+   *
+   * So it is rendered once, when the visit starts, and replayed byte for byte
+   * until the visit ends. Nothing is lost: what changes during a visit (a
+   * name, a chapter walked to) is already in the transcript the model reads,
+   * and the next visit renders it fresh. A new visit has no id until
+   * commit() inserts it, so the block is parked under 'new' and claimed
+   * there.
+   */
+  visitBlock(now, visit, newVisit) {
+    if (!newVisit && visit.id && this.get('block_visit') === String(visit.id)) {
+      return this.get('block_text')
+    }
+    const block = this.render(now, { excludeVisit: visit.id })
+    this.set('block_text', block)
+    this.set('block_visit', newVisit ? 'new' : visit.id)
+    return block
   }
 
   /**
@@ -306,6 +335,7 @@ export class MemoryStore {
       id = this.sql.all('SELECT MAX(id) AS id FROM visits')[0].id
       this.set('visits', Number(this.get('visits') ?? 0) + 1)
       if (!this.get('first_seen')) this.set('first_seen', now)
+      if (this.get('block_visit') === 'new') this.set('block_visit', id)
     }
     /* VERBATIM. Redaction happens at consolidation, on the summary and the
      * facts, not here: rewriting a turn the model has already seen is a

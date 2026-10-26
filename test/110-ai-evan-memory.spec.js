@@ -397,3 +397,24 @@ test('the Worker entry module exports only things workerd accepts as entrypoints
   }
   expect(M.VisitorMemory).toBeDefined()
 })
+
+/*
+ * The memory block is in the system prompt, and a thinking block is bound to
+ * the exact conversation that produced it. If the block changes mid-visit the
+ * API refuses the next turn (the first live run: one good reply, then a 400
+ * every turn). So every turn of one visit must see the same bytes, even after
+ * the visit is created and the visitor names themselves mid-visit.
+ */
+test('the memory block stays byte-identical for every turn of one visit', async () => {
+  const v = visitor()
+  const blocks = []
+  const spy = async (req) => { blocks.push(req.memoryBlock); return mockUpstream(req) }
+  const send = async (message, dt) => handleEvan(new Request('https://world.example/api/evan', {
+    method: 'POST', body: JSON.stringify({ visitorId: VID, message, tools: ['walk_to_plot', 'set_player_name'] }),
+  }), {}, { memory: v.memory, upstream: spy, chunks: [], now: v.now + dt, gate: FAKE_GATE })
+  await send('hi', 1000)
+  await send('I recruit engineers for a fintech in Berlin', 3000)
+  await send('what is this place', 5000)
+  expect(blocks.length).toBeGreaterThanOrEqual(3)
+  expect(new Set(blocks).size).toBe(1)
+})

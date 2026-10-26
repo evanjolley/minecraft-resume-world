@@ -78,6 +78,31 @@ const LEAVE_RADIUS = 7
  * stretched head. Everything below scales UNIFORMLY -- he is 2.8% taller and
  * 2.8% broader, which is what a taller person is.
  */
+/*
+ * ONE REPLY, SEVERAL CHAT LINES. chat.js holds every line to Minecraft's 256
+ * characters, which is the right cap for what a player types and the wrong
+ * one for a model's answer: the first live run cut replies off mid-word
+ * ("answer ques"). A server talking in vanilla sends a long message as
+ * several lines, so this splits on paragraphs, then sentences, then words,
+ * and never inside a word.
+ */
+export const CHAT_LINE_MAX = 256
+export function chatParts(text, max = CHAT_LINE_MAX) {
+  const out = []
+  for (const para of String(text ?? '').split(/\n+/).map((p) => p.trim()).filter(Boolean)) {
+    let line = ''
+    for (const sentence of para.match(/[^.!?]+[.!?]*\s*/g) ?? [para]) {
+      for (const word of sentence.split(/(?<=\s)/)) {
+        if ((line + word).trimEnd().length <= max) { line += word; continue }
+        if (line.trim()) out.push(line.trim())
+        line = word.length > max ? word.slice(0, max) : word
+      }
+    }
+    if (line.trim()) out.push(line.trim())
+  }
+  return out
+}
+
 export const NPC_HEIGHT_SCALE = 74 / 72
 
 /** ...and what that is in blocks. 1.85. */
@@ -435,7 +460,7 @@ export function installNPC(noa, {
   /** Everything this character says goes through here, so it always looks the
    *  same in chat. The entry carries his rank; chat.js is what turns an entry
    *  into `[Admin] <Evan> ...`, and this file never formats a name. */
-  const say = (text) => chat.addMessage({ text, from: entry })
+  const say = (text) => { for (const part of chatParts(text)) chat.addMessage({ text: part, from: entry }) }
 
   const handle = (ev) => {
     if (ev.type === 'say') say(ev.text)
