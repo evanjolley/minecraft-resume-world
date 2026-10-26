@@ -165,9 +165,10 @@ const ALL_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'Control
  * model, which is neither free nor repeatable. Naming the stub in the URL
  * keeps every spec on the deterministic brain however the server is set up,
  * and costs no request. Specs that want the memory route still route
- * /api/evan and call game.useBrain('evan'), which wins over this.
+ * /api/evan and call game.useBrain('evan'), which wins over this. `typing=off`
+ * makes his lines post at once (src/npc.js, TYPING): specs check what he says.
  */
-export const BOOT_URL = '/?brain=stub'
+export const BOOT_URL = '/?brain=stub&typing=off'
 
 /**
  * Boot a page to a genuinely playable world.

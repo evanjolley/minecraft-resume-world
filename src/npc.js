@@ -83,22 +83,37 @@ const LEAVE_RADIUS = 7
  * characters, which is the right cap for what a player types and the wrong
  * one for a model's answer: the first live run cut replies off mid-word
  * ("answer ques"). A server talking in vanilla sends a long message as
- * several lines, so this splits on paragraphs, then sentences, then words,
- * and never inside a word.
+ * several lines, so this splits on paragraphs, then whole sentences, and
+ * only breaks a sentence (at a word) when it is longer than a line.
  */
 export const CHAT_LINE_MAX = 256
+/* Typing pace for say(). ~35 ms a character is a fast phone typist; the
+ * clamp keeps a one-word line from snapping in and a long one from dragging. */
+export const TYPING = { msPerChar: 35, minMs: 800, maxMs: 4000, gapMs: 600 }
+/* `?typing=off` posts lines at once. For the specs, which assert on what he
+ * says, not on how fast; test/helpers/world.js boots every spec with it. */
+const TYPING_OFF = typeof location !== 'undefined'
+  && new URLSearchParams(location.search).get('typing') === 'off'
 export function chatParts(text, max = CHAT_LINE_MAX) {
   const out = []
+  const push = (line) => { if (line.trim()) out.push(line.trim()) }
   for (const para of String(text ?? '').split(/\n+/).map((p) => p.trim()).filter(Boolean)) {
     let line = ''
     for (const sentence of para.match(/[^.!?]+[.!?]*\s*/g) ?? [para]) {
+      /* Whole sentences first: a line break in the middle of a sentence
+       * reads as two messages ("...something specific" / "you're curious
+       * about?"). Only a sentence longer than a line is split, at words. */
+      if ((line + sentence).trimEnd().length <= max) { line += sentence; continue }
+      push(line)
+      line = ''
+      if (sentence.trimEnd().length <= max) { line = sentence; continue }
       for (const word of sentence.split(/(?<=\s)/)) {
         if ((line + word).trimEnd().length <= max) { line += word; continue }
-        if (line.trim()) out.push(line.trim())
+        push(line)
         line = word.length > max ? word.slice(0, max) : word
       }
     }
-    if (line.trim()) out.push(line.trim())
+    push(line)
   }
   return out
 }
@@ -454,13 +469,32 @@ export function installNPC(noa, {
   const tools = createToolRegistry()
   if (agent) for (const [def, run] of agent.tools) tools.register(def, run)
   const session = agent
-    ? createAgentSession({ backend: agent.backend, tools, system: agent.system })
+    ? createAgentSession({ backend: agent.backend, tools, system: agent.system, announce: agent.announce })
     : null
 
   /** Everything this character says goes through here, so it always looks the
    *  same in chat. The entry carries his rank; chat.js is what turns an entry
    *  into `[Admin] <Evan> ...`, and this file never formats a name. */
-  const say = (text) => { for (const part of chatParts(text)) chat.addMessage({ text: part, from: entry }) }
+  /*
+   * HE TYPES. A reply that lands the instant you hit Enter, or four lines at
+   * once, reads as a bot (Evan, on the first live run). So every line waits
+   * as long as a quick typist would take to write it, counted from when you
+   * sent yours -- the model's own latency is time he was "typing" -- and a
+   * second line waits its own length plus a beat after the first.
+   */
+  let heardAt = -Infinity
+  let typingUntil = 0
+  const say = (text) => {
+    for (const part of chatParts(text)) {
+      if (TYPING_OFF) { chat.addMessage({ text: part, from: entry }); continue }
+      const now = performance.now()
+      const typing = Math.min(TYPING.maxMs, Math.max(TYPING.minMs, part.length * TYPING.msPerChar))
+      const base = typingUntil > now ? typingUntil + TYPING.gapMs : heardAt
+      const at = Math.max(now, base + typing)
+      typingUntil = at
+      setTimeout(() => chat.addMessage({ text: part, from: entry }), at - now)
+    }
+  }
 
   const handle = (ev) => {
     if (ev.type === 'say') say(ev.text)
@@ -496,6 +530,7 @@ export function installNPC(noa, {
    */
   const hear = (text) => {
     if (gone || !session) return false
+    heardAt = performance.now()
     /*
      * FROM ANYWHERE. Minecraft chat is server-wide: every player hears you,
      * however far apart you are. The first version only listened inside
@@ -889,6 +924,7 @@ export function installNPC(noa, {
        * said anything, and the one thing docs/FUTURE.md is most worried about
        * is a character that pauses before it reacts.
        */
+      heardAt = performance.now()
       if (script.greet) say(script.greet)
     } else if (talking && !remote && near > LEAVE_RADIUS && !walk && !session?.busy) {
       /* Not while he is walking, and not while a turn is still running --

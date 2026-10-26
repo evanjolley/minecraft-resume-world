@@ -133,9 +133,11 @@ export function createToolRegistry() {
  * works, and a promise that resolves with everything at the end cannot show
  * you that.
  */
-export function createAgentSession({ backend, tools, system = '', maxTurns = 8 }) {
+export function createAgentSession({ backend, tools, system = '', maxTurns = 8, announce = {} }) {
   const messages = []
   let busy = false
+  const queued = []
+  let queuedEvent = null
 
   /**
    * @param {string} text  what the player said
@@ -146,11 +148,18 @@ export function createAgentSession({ backend, tools, system = '', maxTurns = 8 }
      * One turn at a time. A player can type faster than a model replies, and
      * two overlapping loops would interleave assistant messages into the
      * shared array and produce a history no API will accept (a tool_use with
-     * someone else's tool_result after it). Dropping the second message is
-     * the honest answer at this size; a queue is the answer once latency is
-     * real.
+     * someone else's tool_result after it). So the second message waits.
      */
-    if (busy) return { dropped: true }
+    if (busy) {
+      /* Queued, not dropped. This used to drop it, which was fine while the
+       * brain answered instantly; a live model takes seconds, and a visitor
+       * who types "take me on the tour" while he is still answering their
+       * name was ignored. Everything typed meanwhile goes as one message
+       * when he is free. */
+      queued.push(text)
+      queuedEvent = onEvent
+      return { queued: true }
+    }
     busy = true
     try {
       messages.push({ role: 'user', content: text })
@@ -165,6 +174,16 @@ export function createAgentSession({ backend, tools, system = '', maxTurns = 8 }
         }
 
         const calls = content.filter((b) => b.type === 'tool_use')
+        /*
+         * A LINE BEFORE A LONG ACTION. The model is asked to say "follow me"
+         * before it walks, and on the first live runs it often just walked:
+         * half a minute of a silent man striding off. So a tool named in
+         * `announce` gets its line from here whenever the reply said nothing.
+         */
+        if (!content.some((b) => b.type === 'text' && b.text)) {
+          const line = calls.map((c) => announce[c.name]).find(Boolean)
+          if (line) onEvent({ type: 'say', text: line })
+        }
         if (reply.stop_reason !== 'tool_use' || calls.length === 0) {
           return { turns: turn + 1 }
         }
@@ -198,6 +217,12 @@ export function createAgentSession({ backend, tools, system = '', maxTurns = 8 }
       return { turns: maxTurns, exhausted: true }
     } finally {
       busy = false
+      if (queued.length) {
+        const next = queued.splice(0).join('\n')
+        const ev = queuedEvent
+        queuedEvent = null
+        send(next, ev ?? onEvent)
+      }
     }
   }
 
@@ -206,6 +231,6 @@ export function createAgentSession({ backend, tools, system = '', maxTurns = 8 }
     get busy() { return busy },
     /** Read-only, for the console and for tests that assert on the loop. */
     get transcript() { return messages.map((m) => ({ ...m })) },
-    reset() { messages.length = 0 },
+    reset() { messages.length = 0; queued.length = 0 },
   }
 }

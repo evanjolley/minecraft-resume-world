@@ -1081,6 +1081,8 @@ const aiEvan = installNPC(noa, {
   caps: authority.caps,
   script: { greet: LINES.greet },
   agent: {
+    /* Said when he starts the tour walk without a word (agent.js). */
+    announce: { walk_to_plot: LINES.tourStart },
     /*
      * THE SWAP POINT. `stubBackend` is a deterministic state machine with no
      * model behind it; replacing this one line with a fetch to the Worker is
