@@ -24,11 +24,12 @@ The brief is `docs/SPRINT-1.md`.
 - Describe what the No Logo and Patronus offices look like inside
 - Name the "other interests" the climb should touch
 - Pick the live domain, then set `PASSKEY_RP_ID` and `PASSKEY_ORIGIN` to turn sign-in on
-- Decide whether memory becomes AI Evan's default brain (today it needs `?brain=evan`). Recommendation is yes, after a test with the real key
+- Put an Anthropic API key in `.dev.vars` (gitignored) so AI Evan can be tested live under `wrangler dev`
 
 ### AI Evan conduct (merged 2026-10-25)
 - One friendly warning, then "Evan left the game". Signed-in visitors stay blocked for good, guests for the visit (30 quiet minutes). Server owns the state, in the visitor's Durable Object. Spec 113
-- Evan to approve the warning line in `worker/agent/conduct.js`. It only runs once the memory brain is the default
+- Warning line approved by Evan
+- AI Evan runs on Claude Haiku 5.5 and the memory brain is the default. If the Worker or key is missing, visitors silently get the stub. `corpus/profile.md` was rebuilt from the brain dump and the resume (the September quiz corpus is not on this Mac; Evan said the brain dump is enough). Not yet tested against the real API
 
 ### Rules Evan set this sprint
 - Never tell visitors which floor the Patronus office is on, in code, commits or AI Evan
