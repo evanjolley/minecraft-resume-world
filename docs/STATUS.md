@@ -24,12 +24,13 @@ The brief is `docs/SPRINT-1.md`.
 - Describe what the No Logo and Patronus offices look like inside
 - Name the "other interests" the climb should touch
 - Pick the live domain, then set `PASSKEY_RP_ID` and `PASSKEY_ORIGIN` to turn sign-in on
-- Put an Anthropic API key in `.dev.vars` (gitignored) so AI Evan can be tested live under `wrangler dev`
 
 ### AI Evan conduct (merged 2026-10-25)
 - One friendly warning, then "Evan left the game". Signed-in visitors stay blocked for good, guests for the visit (30 quiet minutes). Server owns the state, in the visitor's Durable Object. Spec 113
 - Warning line approved by Evan
-- AI Evan runs on Claude Haiku 5.5 and the memory brain is the default. If the Worker or key is missing, visitors silently get the stub. `corpus/profile.md` was rebuilt from the brain dump and the resume (the September quiz corpus is not on this Mac; Evan said the brain dump is enough). Not yet tested against the real API
+- AI Evan runs on Claude Haiku 5.5 and the memory brain is the default. If the Worker or key is missing, visitors silently get the stub. `corpus/profile.md` was rebuilt from the brain dump and the resume (the September quiz corpus is not on this Mac; Evan said the brain dump is enough). Tested live on 2026-10-25 with Evan's key in `.dev.vars` (gitignored, also holds a local SESSION_SECRET). Run it with `npx vite build && npx wrangler@4 dev --port 8787`, not `build:deploy`, which swaps in the free textures
+- Fixed from live play: the per-visit memory block is frozen (a changing system prompt broke preserved thinking), Evan hears chat from anywhere, lines are paced like typing and split at sentences, messages typed while he answers are queued, and he says "Follow me." before a walk
+- Open: the first reply takes about 8 seconds (two model round trips when he sets your name). Evan to decide whether he talks about himself in first person. Swap the API key before going live, since it was pasted into a chat session
 
 ### Rules Evan set this sprint
 - Never tell visitors which floor the Patronus office is on, in code, commits or AI Evan
@@ -41,4 +42,4 @@ The brief is `docs/SPRINT-1.md`.
 - `public/terrain` (the mountains and Nether assets) is not in the repo, so those worlds and 7 specs fail on a fresh clone
 - Spec 12's fingerprint test fails on the free sound set, same as before the sprint
 
-Next session start. "Read docs/STATUS.md and CLAUDE.md in ~/Personal/minecraft-resume-world. Check whether the old quiz corpus is back on this Mac, merge the brain dump boundaries into profile.md, then let us go through the open items"
+Next session start. "Read docs/STATUS.md and CLAUDE.md in ~/Personal/minecraft-resume-world. Start the live local server and let us keep testing AI Evan, starting with the slow first reply"
