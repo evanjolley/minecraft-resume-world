@@ -145,7 +145,12 @@ export const CAPS = {
  * because there is finally somewhere to keep a number the client cannot edit.
  */
 
-const MODEL = 'claude-sonnet-4-5'
+/*
+ * The browser no longer calls this route (src/main.js talks to /api/evan),
+ * but worker/main.js still serves it, so it runs on the same cheap model as
+ * worker/agent/upstream.js rather than an older, pricier one nobody chose.
+ */
+const MODEL = 'claude-haiku-5-5'
 const API = 'https://api.anthropic.com/v1/messages'
 
 /* ------------------------------------------------------------------ *
@@ -441,9 +446,11 @@ async function callAnthropic({ env, system, messages, tools }) {
     body: JSON.stringify({
       model: MODEL,
       max_tokens: CAPS.maxTokens,
+      /* Haiku 5.5 thinks by default at medium effort; chat wants low. */
+      output_config: { effort: 'low' },
       /*
-       * Cache the resident prompt. ~1,560 tokens, comfortably over Sonnet's
-       * 1,024-token minimum cacheable prefix, which matters because a prompt
+       * Cache the resident prompt. ~1,560 tokens, comfortably over Haiku
+       * 5.5's 512-token minimum cacheable prefix, which matters because a prompt
        * under that minimum caches silently not at all and you find out from
        * the bill. A 1h TTL because visitors arrive in clusters when Evan
        * posts a link, and 5 minutes would miss most of a cluster.

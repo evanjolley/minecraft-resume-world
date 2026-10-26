@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { bootWorld, reloadWorld, waitForWorld, chatCommand, waitTicks } from './helpers/world.js'
+import { BOOT_URL, bootWorld, reloadWorld, waitForWorld, chatCommand, waitTicks } from './helpers/world.js'
 
 /*
  * A WORLD THAT STAYS CHANGED, and the names a visitor may give themselves.
@@ -106,7 +106,7 @@ test.describe('persistence', () => {
 
   test('an edit whose ground changed under it is dropped; the rest survive', async ({ page }) => {
     await optIn(page)
-    await page.goto('/', { waitUntil: 'domcontentloaded' })
+    await page.goto(BOOT_URL, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => !!window.game, null, { timeout: 30_000 })
 
     const plan = await page.evaluate(() => {
@@ -139,7 +139,7 @@ test.describe('persistence', () => {
 
   test('a changed generation id sends you to spawn instead of your old position', async ({ page }) => {
     await optIn(page)
-    await page.goto('/', { waitUntil: 'domcontentloaded' })
+    await page.goto(BOOT_URL, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => !!window.game, null, { timeout: 30_000 })
     const gen = await page.evaluate(() => window.game.persist.generationId())
 

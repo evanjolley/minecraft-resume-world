@@ -654,24 +654,60 @@ export async function forgetVisitor({ visitorId = () => localVisitorId(), url = 
 }
 
 /**
- * Is Evan here for this visitor? Asked once at boot, so a visitor he left
- * (see worker/agent/conduct.js) does not find him standing there until they
- * speak. Answers 'present' on any failure: the server refuses every message
+ * Is Evan here for this visitor? Asked once at boot (main.js asks through
+ * evanStatus below), so a visitor he left (see worker/agent/conduct.js) does
+ * not find him standing there until they speak. Answers 'present' on any
+ * failure: the server refuses every message
  * from someone he left regardless, so a missed check costs one exchange, and
  * a world where he silently vanishes because the network blinked would be
  * the worse bug.
  *
  * @returns {Promise<'present'|'left'>}
  */
-export async function evanPresence({ visitorId = () => localVisitorId(), url = '/api/evan', fetch: f = globalThis.fetch } = {}) {
+export async function evanPresence(opts) {
+  return (await evanStatus(opts)).evan
+}
+
+/**
+ * The whole boot question, of which presence is half: is there a brain on
+ * the other end at all?
+ *
+ * `brain: 'ready'` only for a Worker that answered the status request in
+ * its own shape and did not say 'none' (worker/agent/route.js says 'none'
+ * when it has no key or only the stub prompt). Everything else is 'none':
+ * no Worker (a 404, or vite's dev server), a network failure, a 5xx, a body
+ * that is not JSON, or no answer inside `timeoutMs`. Missing the brain is
+ * the cheap mistake, since the stub still talks; trusting one that is not
+ * there leaves a visitor with an Evan who only apologises.
+ *
+ * A Worker from before the `brain` field answers { evan } alone, and counts
+ * as ready: it had a status route, so it was the memory deploy.
+ *
+ * @returns {Promise<{ brain: 'ready'|'none', evan: 'present'|'left' }>}
+ */
+export async function evanStatus({
+  visitorId = () => localVisitorId(), url = '/api/evan', fetch: f = globalThis.fetch, timeoutMs = 5000,
+} = {}) {
+  const none = { brain: 'none', evan: 'present' }
+  const ask = (async () => {
+    try {
+      const res = await f(url, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ visitorId: visitorId(), status: true }),
+      })
+      if (!res.ok) return none
+      const j = await res.json()
+      if (typeof j?.evan !== 'string') return none
+      return { brain: j.brain === 'none' ? 'none' : 'ready', evan: j.evan === 'left' ? 'left' : 'present' }
+    } catch {
+      return none
+    }
+  })()
+  let timer
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(none), timeoutMs) })
   try {
-    const res = await f(url, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ visitorId: visitorId(), status: true }),
-    })
-    if (!res.ok) return 'present'
-    return (await res.json())?.evan === 'left' ? 'left' : 'present'
-  } catch {
-    return 'present'
+    return await Promise.race([ask, late])
+  } finally {
+    clearTimeout(timer)
   }
 }

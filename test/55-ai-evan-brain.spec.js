@@ -385,8 +385,9 @@ test.describe('the prompt built from the real corpus', () => {
     // docs/ai-evan/02-operations.md: 8k resident is ~$9-14/month at 100
     // conversations and 25k is ~$25-30 for the same traffic.
     expect(est).toBeLessThan(8000)
-    // And over Sonnet's 1,024-token minimum cacheable prefix, or the
-    // cache_control in worker/index.js silently does nothing.
+    // And over the minimum cacheable prefix (512 tokens on Haiku 5.5, 1,024
+    // on older models), or the cache_control in worker/index.js silently
+    // does nothing.
     expect(est).toBeGreaterThan(1024)
   })
 })

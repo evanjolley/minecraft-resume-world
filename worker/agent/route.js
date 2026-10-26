@@ -119,21 +119,28 @@ export async function handleEvan(request, env = {}, deps = {}) {
    */
   const account = session?.account === true
 
-  /*
-   * "Is he here for me?" Asked once at boot so a visitor he left does not
-   * see him standing there until they say something. Read-only: it does not
-   * count as an attempt and does not move a guest's window.
-   */
-  if (body.status === true) {
-    const st = await memory.standing({ now: deps.now ?? Date.now(), account })
-    return json({ evan: st.state === STANDING.left ? STANDING.left : 'present' })
-  }
-
   /* The mock is for local development only. A real key always wins, so a
    * stray AGENT_MOCK_MODEL in production cannot replace the real brain. */
   const mock = !env.ANTHROPIC_API_KEY && env.AGENT_MOCK_MODEL === '1'
   const upstream = deps.upstream
     ?? (mock ? mockUpstream : env.ANTHROPIC_API_KEY ? (a) => callChat({ env, ...a }) : null)
+  /* Whether a message would reach a model, by the same two refusals below. */
+  const wired = !!upstream && !(IS_STUB && !deps.upstream && !mock)
+
+  /*
+   * "Is he here for me?" Asked once at boot so a visitor he left does not
+   * see him standing there until they say something. Read-only: it does not
+   * count as an attempt and does not move a guest's window.
+   *
+   * `brain: 'none'` is the other half of the boot question: this deploy has
+   * no key, or only the stub prompt, so every message would get a 503
+   * sentence. src/main.js hears that and runs the offline stub instead.
+   */
+  if (body.status === true) {
+    const st = await memory.standing({ now: deps.now ?? Date.now(), account })
+    return json({ evan: st.state === STANDING.left ? STANDING.left : 'present', brain: wired ? 'ready' : 'none' })
+  }
+
   if (!upstream) {
     return refuse('No brain wired up on this deploy yet. Ask the real Evan at evanjjolley@gmail.com.', 503)
   }
