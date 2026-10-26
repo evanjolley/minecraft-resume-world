@@ -48,13 +48,16 @@ Re-run it whenever `corpus/profile.md` changes. Nothing else caches it.
 AI Evan with memory is `POST /api/evan` (`worker/agent/`, design in
 `docs/ai-evan/04-memory.md`). The page picks its brain at runtime:
 
-- default: `stubBackend`, the offline script. No key, no Worker, no network.
-- `?brain=evan`, or `game.useBrain('evan')` in the console: `evanBackend()`,
-  which posts one message at a time to `/api/evan`. The server holds the
-  transcript in the visitor's Durable Object.
+- default: `evanBackend()`, which posts one message at a time to `/api/evan`.
+  The server holds the transcript in the visitor's Durable Object.
+- `?brain=stub`, or `game.useBrain('stub')` in the console: `stubBackend`, the
+  offline script. No key, no Worker, no network.
 
-To make memory the default, change the `stub` fallback in `BRAINS` in
-`src/main.js` to `evan`. The older stateless `/api/agent` and `workerBackend`
+The default falls back to the stub on its own. At boot the page asks
+`/api/evan` for `{ status: true }`, and if there is no answer, an error, or
+`brain: 'none'` (no `ANTHROPIC_API_KEY`, or a stub prompt), it runs the stub
+for that visit without saying so. Plain `npm run dev` has no API and boots
+the stub without asking. The older stateless `/api/agent` and `workerBackend`
 still work and can be removed once `/api/evan` is live.
 
 ### Trying it locally without a key
@@ -63,7 +66,7 @@ still work and can be removed once `/api/evan` is live.
 npm run prompt:ci                       # or npm run prompt, with corpus/
 echo 'AGENT_MOCK_MODEL=1' >> .dev.vars
 npm run build:deploy && npx wrangler@4 dev
-# open http://localhost:8787/?brain=evan
+# open http://localhost:8787/
 ```
 
 `AGENT_MOCK_MODEL=1` answers from `worker/agent/mock.js` and is ignored

@@ -673,6 +673,13 @@ resident system prompt under 8,000 tokens with the long tail of the corpus behin
 lookup tool. That single decision is worth more than everything else on this list.
 Cache the prefix with `ttl: "1h"`.
 
+Update, the model in use. Evan asked for the cheapest workable model, so AI Evan runs
+on Claude Haiku 5.5, at $0.10 input and $0.50 output per million tokens for prompts up
+to 100K and cache reads at a tenth of input. That is a thirtieth of the $3 and $15 this
+document assumes for Sonnet 5. Haiku 5.5 has no server side refusal fallback, so the
+Worker asks for one only when `AGENT_MODEL` names a model that has it. See
+`worker/agent/upstream.js`.
+
 **The gate.** Cloudflare Turnstile in invisible mode, verified when the world boots,
 exchanged for a short-lived signed session token that `/api/chat` requires. Origin
 check as a one-line freebie. No login, ever.
@@ -834,6 +841,11 @@ maybe half of conversations arriving cache-cold.
 Same traffic with a 25,000 token resident prompt instead of 8,000 is roughly **$25 to
 $30 a month**, which is the prompt-size lever from 3.2 showing up in the only place
 that matters.
+
+On Claude Haiku 5.5, the model now chosen, every model line above is a thirtieth of
+the figure shown, since both its input and output prices are a thirtieth of the $3 and
+$15 assumed here. The same 100 conversations come to roughly **$0.30 a month** in model
+calls and cache writes, plus the Workers plan, and the bad day below is roughly **$3**.
 
 The bad day, where the link does well and a thousand conversations happen in
 twenty-four hours, is roughly **$90 to $100** if nothing throttles. With the AI Gateway

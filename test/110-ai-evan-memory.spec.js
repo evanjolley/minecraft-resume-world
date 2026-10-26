@@ -6,7 +6,7 @@ import { consolidatePending, parseConsolidation } from '../worker/agent/consolid
 import { searchKnowledge, chapterNotes, tokens } from '../worker/agent/knowledge.js'
 import { handleEvan, STATIC_SYSTEM } from '../worker/agent/route.js'
 import { toolsFor, TOUR_RULES } from '../worker/agent/tools.js'
-import { chatBody } from '../worker/agent/upstream.js'
+import { chatBody, callChat, summariserFor } from '../worker/agent/upstream.js'
 import { mockUpstream, mockSummariser } from '../worker/agent/mock.js'
 import { createGate } from '../worker/allowlist.js'
 import { CHAPTERS } from '../src/builds/plots.js'
@@ -330,7 +330,7 @@ test('chapter notes find a chapter\'s stories, and say so plainly when there are
 
 test('the cached prefix is byte-stable and visitor memory sits after the breakpoint', () => {
   const body = chatBody({ env: {}, staticSystem: STATIC_SYSTEM, memoryBlock: 'THIS VISITOR', messages: [], tools: toolsFor(['walk_to_plot']) })
-  expect(body.model).toBe('claude-sonnet-5-5')
+  expect(body.model).toBe('claude-haiku-5-5')
   expect(body.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' })
   expect(body.system[1].cache_control).toBeUndefined()
   expect(body.system[1].text).toBe('THIS VISITOR')
@@ -339,6 +339,39 @@ test('the cached prefix is byte-stable and visitor memory sits after the breakpo
   expect(STATIC_SYSTEM).not.toMatch(/\b20\d\d-\d\d-\d\d\b/)
   /* Tool order does not depend on the order the client listed them in. */
   expect(toolsFor(['walk_to_plot', 'set_player_name'])).toEqual(toolsFor(['set_player_name', 'walk_to_plot']))
+})
+
+/*
+ * Haiku 5.5 has no server-side refusal fallback, and the field or its beta
+ * header sent to it is a request error. A bigger model named by AGENT_MODEL
+ * still gets both. The fetch is stubbed: nothing here reaches the API.
+ */
+test('the refusal fallback goes only to a model that has one, header and field together', async () => {
+  const seen = []
+  const real = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    seen.push({ headers: init.headers, body: JSON.parse(init.body) })
+    return new Response(JSON.stringify({ content: [{ type: 'text', text: '{}' }], stop_reason: 'end_turn' }), { status: 200 })
+  }
+  try {
+    const args = { staticSystem: STATIC_SYSTEM, memoryBlock: '', messages: [{ role: 'user', content: 'hi' }], tools: [] }
+    await callChat({ env: { ANTHROPIC_API_KEY: 'k' }, ...args })
+    await callChat({ env: { ANTHROPIC_API_KEY: 'k', AGENT_MODEL: 'claude-sonnet-5-5' }, ...args })
+    await summariserFor({ ANTHROPIC_API_KEY: 'k' })({ system: 's', messages: [{ role: 'user', content: 'x' }], schema: { type: 'object' } })
+  } finally {
+    globalThis.fetch = real
+  }
+  const [haiku, sonnet, summary] = seen
+  expect(haiku.body.model).toBe('claude-haiku-5-5')
+  expect(haiku.body.fallbacks).toBeUndefined()
+  expect(haiku.headers['anthropic-beta']).toBeUndefined()
+  expect(haiku.body.output_config).toEqual({ effort: 'low' })
+  expect(sonnet.body.model).toBe('claude-sonnet-5-5')
+  expect(sonnet.body.fallbacks).toBe('default')
+  expect(sonnet.headers['anthropic-beta']).toBe('server-side-fallback-2026-07-01')
+  expect(summary.body.model).toBe('claude-haiku-5-5')
+  expect(summary.body.output_config.format.type).toBe('json_schema')
+  expect(summary.headers['anthropic-beta']).toBeUndefined()
 })
 
 test('the newest message carries the second cache breakpoint, on a copy', () => {

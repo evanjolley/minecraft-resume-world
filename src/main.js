@@ -68,10 +68,10 @@ import { installDimensions, prepare as prepareDimension } from './dimensions.js'
 import { createRoster, GUEST_NAME } from './identity.js'
 import { installNPC } from './npc.js'
 import { installDebugScreen } from './debugScreen.js'
-import { createEvanTools, stubBackend, evanBackend, evanPresence, localVisitorId, LINES } from './aiEvan.js'
+import { createEvanTools, stubBackend, evanBackend, evanStatus, localVisitorId, LINES } from './aiEvan.js'
 import { createGuide, plotStops } from './tour.js'
 import { CHAPTERS, toLandWorld } from './builds/plots.js'
-import { createAccount } from './account.js'
+import { createAccount, apiEnabled } from './account.js'
 import { loadSave, installPersistence, savedStart } from './persistence.js'
 import { installProfile } from './profileScreen.js'
 
@@ -984,24 +984,43 @@ const guide = createGuide({
 })
 
 /*
- * WHICH BRAIN. The stub stays the default (no key, no Worker, works on a
- * plane). `?brain=evan` talks to /api/evan -- the Worker with per-visitor
- * memory -- which is how it is exercised under `wrangler dev` before Evan
- * flips the default. See worker/README.md.
- */
-/*
  * The visitor id AI Evan's memory is keyed by: the signed session's id when
  * the Worker has issued one (account.js), else aiEvan.js's local id. The
  * Worker prefers the session cookie over this value anyway (route.js asks
  * getVisitor first), so this is only what an unsigned deploy falls back to.
  */
 const visitorId = () => account.state.visitor ?? localVisitorId()
+/*
+ * WHICH BRAIN. The memory brain is the default: /api/evan, the Worker with
+ * per-visitor memory, on Haiku 5.5 (worker/agent/upstream.js). The stub (no
+ * key, no Worker, works on a plane) is what a visitor gets whenever that
+ * brain is not really there, and `?brain=stub` asks for it outright.
+ *
+ * NOT THERE is decided once, at boot, by the status request the boot check
+ * already sends (aiEvan.js evanStatus): no answer, an error, a 404, or a
+ * Worker that says `brain: 'none'` because it has no key or only the stub
+ * prompt. Any of those swaps the stub in silently, before anyone has spoken,
+ * because a missing brain is a deploy problem and not the visitor's. The
+ * backend below waits on that check, so the first message can never reach
+ * a brain the check is about to replace.
+ *
+ * A build with no API at all (plain `vite dev`, where account.js's
+ * apiEnabled() is false) skips the question and boots the stub: there is
+ * nothing to ask, and a 404 on every dev boot would be noise.
+ *
+ * useBrain is an explicit choice, so it wins over the boot check even if the
+ * check lands afterwards. Specs rely on that (112, 113 route /api/evan and
+ * then useBrain('evan')).
+ */
 const BRAINS = { stub: () => stubBackend, evan: () => evanBackend({ visitorId }) }
 const brainName = (name) => (BRAINS[name] ? name : 'stub')
-const BOOT_BRAIN = brainName(new URLSearchParams(location.search).get('brain'))
+const askedBrain = new URLSearchParams(location.search).get('brain')
+const BOOT_BRAIN = BRAINS[askedBrain] ? askedBrain : apiEnabled() ? 'evan' : 'stub'
 let brain = BRAINS[BOOT_BRAIN]()
+let brainChosen = false
+let bootCheck = Promise.resolve()
 /** Switch brains at runtime, from the console or a spec: game.useBrain('evan'). */
-const useBrain = (name) => { brain = BRAINS[brainName(name)]() }
+const useBrain = (name) => { brainChosen = true; brain = BRAINS[brainName(name)]() }
 
 /*
  * EVAN LEAVES THE GAME. worker/agent/conduct.js has the rule: one friendly
@@ -1013,15 +1032,19 @@ const useBrain = (name) => { brain = BRAINS[brainName(name)]() }
  *
  * Nothing in the browser brings him back. The server refuses the visitor for
  * the rest of the session (a guest) or for good (signed in), so a reload or a
- * hand-made request finds him gone too, and checkEvanPresence below keeps a
+ * hand-made request finds him gone too, and checkEvanAtBoot below keeps a
  * reload from showing him standing there in the meantime.
  */
 const evanLeaves = () => {
   if (aiEvan.leave()) chat.announceLeave(roster.displayNameOf(EVAN_ID))
 }
-const checkEvanPresence = () => {
-  evanPresence({ visitorId }).then((p) => { if (p === 'left') evanLeaves() })
-}
+const checkEvanAtBoot = () => evanStatus({ visitorId }).then((st) => {
+  if (st.brain === 'none') {
+    if (!brainChosen) brain = BRAINS.stub()
+    return
+  }
+  if (st.evan === 'left') evanLeaves()
+})
 
 const aiEvan = installNPC(noa, {
   roster,
@@ -1065,6 +1088,7 @@ const aiEvan = installNPC(noa, {
      * and for why the API key cannot be on this side of that fetch.
      */
     backend: async (request) => {
+      await bootCheck
       const reply = await brain(request)
       if (reply?.evan === 'left') evanLeaves()
       return reply
@@ -1107,7 +1131,8 @@ chat.announceJoin(roster.displayNameOf(LOCAL_ID))
 // Only the memory brain has a server to ask. The stub has no standing to lose.
 // Once, at boot: a runtime useBrain('evan') is a console and spec switch, and
 // the server refuses a visitor he left whichever way the page got there.
-if (BOOT_BRAIN === 'evan') checkEvanPresence()
+// Here rather than up at BRAINS because evanLeaves needs aiEvan to exist.
+if (BOOT_BRAIN === 'evan') bootCheck = checkEvanAtBoot()
 
 /*
  * Your saved inventory, time, game mode and place in the world, if there is

@@ -10,7 +10,7 @@ import { toolsFor } from '../worker/agent/tools.js'
 import { CONDUCT_TOOL, CONDUCT_RULES, WARNING_LINE } from '../worker/agent/conduct.js'
 import { issueSession, newVisitorId } from '../worker/account/session.js'
 import { createGate } from '../worker/allowlist.js'
-import { evanPresence } from '../src/aiEvan.js'
+import { evanPresence, evanStatus } from '../src/aiEvan.js'
 
 /*
  * ONE WARNING, THEN EVAN LEAVES THE GAME (worker/agent/conduct.js).
@@ -168,7 +168,7 @@ test('once he has left he stays gone, and the model is never called again', asyn
   const t = await v.post({ toolResults: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] })
   expect(t.body.evan).toBe('left')
   expect(v.model.calls).toBe(calls)
-  expect((await v.status()).body).toEqual({ evan: 'left' })
+  expect((await v.status()).body).toEqual({ evan: 'left', brain: 'ready' })
 })
 
 test('a jailbroken model cannot skip the warning, even by flagging twice in one reply', async () => {
@@ -240,7 +240,7 @@ test('a guest is refused for the rest of the session, and poking keeps the sessi
   }
   /* Walk away for a full visit gap: a fresh Evan, who has no warning on file. */
   v.advance(LIMITS.visitGapMs + 1000)
-  expect((await v.status()).body).toEqual({ evan: 'present' })
+  expect((await v.status()).body).toEqual({ evan: 'present', brain: 'ready' })
   const r = await v.say('hi again')
   expect(r.status).toBe(200)
   expect(r.body.evan).toBeUndefined()
@@ -262,7 +262,7 @@ test('a signed-in visitor stays blocked across a new session, a new device token
   const r = await later.say('hi, fresh start?')
   expect(r.status).toBe(403)
   expect(r.body.evan).toBe('left')
-  expect((await later.status()).body).toEqual({ evan: 'left' })
+  expect((await later.status()).body).toEqual({ evan: 'left', brain: 'ready' })
   expect(model.calls).toBe(calls)
 
   /* Forget me and the 30-day expiry both leave the block in place. */
@@ -326,6 +326,32 @@ test('the boot check reads the server, and treats any failure as "he is here"', 
   expect(await evanPresence({ visitorId: () => VID, fetch: viaHandler })).toBe('left')
   expect(await evanPresence({ visitorId: () => VID, fetch: async () => { throw new Error('offline') } })).toBe('present')
   expect(await evanPresence({ visitorId: () => VID, fetch: async () => new Response('nope', { status: 500 }) })).toBe('present')
+})
+
+/*
+ * The other half of the boot check: is there a brain at all. src/main.js
+ * swaps the stub in on 'none', so every way a deploy can be missing its
+ * brain has to land there, and a wired one must not.
+ */
+test('the boot check says "no brain" for a keyless deploy, no Worker, or no answer', async () => {
+  const v = visitor()
+  const handler = (env, deps) => (url, init) => handleEvan(new Request(`https://world.example${url}`, init), env,
+    { memory: v.memory, chunks: [], now: T0, gate: FAKE_GATE, ...deps })
+  const ask = (fetch, more = {}) => evanStatus({ visitorId: () => VID, fetch, ...more })
+
+  expect(await ask(handler({}, { upstream: v.model.upstream }))).toEqual({ brain: 'ready', evan: 'present' })
+  /* No key and no mock: every message would be a 503 sentence. */
+  expect((await ask(handler({}, {}))).brain).toBe('none')
+  /* The local mock counts as a brain; that is what it is for. */
+  expect((await ask(handler({ AGENT_MOCK_MODEL: '1' }, {}))).brain).toBe('ready')
+  /* No Worker: vite answers 404, or the HTML of a page. */
+  expect((await ask(async () => new Response('Not Found', { status: 404 }))).brain).toBe('none')
+  expect((await ask(async () => new Response('<!doctype html>', { status: 200 }))).brain).toBe('none')
+  expect((await ask(async () => { throw new Error('offline') })).brain).toBe('none')
+  /* A Worker that never answers does not hold the first message forever. */
+  expect(await ask(() => new Promise(() => {}), { timeoutMs: 50 })).toEqual({ brain: 'none', evan: 'present' })
+  /* A Worker from before the field: it has a status route, so it is the memory deploy. */
+  expect((await ask(async () => new Response(JSON.stringify({ evan: 'present' }), { status: 200 }))).brain).toBe('ready')
 })
 
 /* ------------------------------------------------------------------ *

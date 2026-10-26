@@ -156,6 +156,19 @@ const TAP_MS = 80
 /** Every key this suite ever holds down. reset() releases all of them. */
 const ALL_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ControlLeft']
 
+/*
+ * THE STUB BRAIN, ASKED FOR BY NAME. AI Evan's default is the memory brain,
+ * which falls back to the stub when there is no API (src/main.js, WHICH
+ * BRAIN). Under plain vite dev that fallback alone would land on the stub,
+ * but only because apiEnabled() is false: run the suite with VITE_WORLD_API=1
+ * against a `wrangler dev` holding a real key and the default would talk to a
+ * model, which is neither free nor repeatable. Naming the stub in the URL
+ * keeps every spec on the deterministic brain however the server is set up,
+ * and costs no request. Specs that want the memory route still route
+ * /api/evan and call game.useBrain('evan'), which wins over this.
+ */
+export const BOOT_URL = '/?brain=stub'
+
 /**
  * Boot a page to a genuinely playable world.
  *
@@ -169,7 +182,7 @@ const ALL_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'Control
  */
 export async function bootWorld(page) {
   await muteHmr(page)
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await page.goto(BOOT_URL, { waitUntil: 'domcontentloaded' })
   return waitForWorld(page)
 }
 
