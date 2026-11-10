@@ -19,8 +19,8 @@ The brief is `docs/SPRINT-1.md`.
 - Run the full suite once on a quiet machine
 
 ### Evan's items
-- Find the September quiz corpus (`corpus/profile.md` and `corpus/answers.json`). It is not on this Mac and not in this claude.ai account's artifacts. It was made under Evan's personal account. `npm run prompt` cannot build AI Evan's brain without `profile.md`
-- The brain dump (private artifact "AI Evan Brain Dump", two rounds on 2026-10-25) is pulled into the gitignored corpus. Facts are in `corpus/extra/brain-dump-2026-10-25.md`, voice in `corpus/knowledge/voice.md`, boundaries in `corpus/interview/boundaries-to-merge.md` (merge into `profile.md` once it is back). Resume chunks it contradicted are corrected. Opinions and a few voice answers are still thin
+- The September quiz corpus was never found. Evan said the brain dump is enough, and `corpus/profile.md` was rebuilt from it and the resume on 2026-10-25 (see AI Evan conduct below; file present 2026-11-10)
+- The brain dump (private artifact "AI Evan Brain Dump", two rounds on 2026-10-25) is pulled into the gitignored corpus. Facts are in `corpus/extra/brain-dump-2026-10-25.md`, voice in `corpus/knowledge/voice.md`, boundaries in `corpus/interview/boundaries-to-merge.md` (merge into the rebuilt `profile.md`). Resume chunks it contradicted are corrected. Opinions and a few voice answers are still thin
 - Describe what the No Logo and Patronus offices look like inside
 - Name the "other interests" the climb should touch
 - Pick the live domain, then set `PASSKEY_RP_ID` and `PASSKEY_ORIGIN` to turn sign-in on
